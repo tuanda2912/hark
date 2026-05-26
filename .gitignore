@@ -1,0 +1,19 @@
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
+
+# Editor / IDE — personal workspace settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code — per-machine settings (allowlists etc.)
+.claude/settings.local.json
+
+# Swift build outputs (engine/.gitignore covers nested)
+.build/
+
+# Temp & system
+*.log
+*~

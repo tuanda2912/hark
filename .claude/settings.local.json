@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(mkdir -p /Users/quynhanhquach/Documents/project/hark/.claude/agents /Users/quynhanhquach/Documents/project/hark/docs/decisions)",
-      "Bash(ls -la /Users/quynhanhquach/Documents/vault/hark 2>&1 || echo \"VAULT_MISSING\")"
-    ]
-  }
-}
