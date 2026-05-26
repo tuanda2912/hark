@@ -2,6 +2,8 @@
 
 Hark is a **local-first, macOS-only** meeting transcription tool. Live captions, translation, speaker diarization, and a markdown second-brain — all running on the user's Mac, no cloud ASR.
 
+**Resuming a session?** Read [STATUS.md](STATUS.md) first — it's the current-state snapshot (what's done, what's next, what not to re-litigate). Then this file for the operating manual.
+
 Full design rationale: [meetingmind-handoff.md](meetingmind-handoff.md)
 Decision log: [docs/decisions/](docs/decisions/)
 Vault location: `/Users/quynhanhquach/Documents/vault/hark` — **outside this repo**.
