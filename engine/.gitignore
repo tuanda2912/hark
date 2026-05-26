@@ -1,0 +1,18 @@
+# SwiftPM build artifacts — equivalent to Maven's target/
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj/
+
+# Benchmark results are local history, not source of truth.
+# Keep the directory (via .gitkeep) but ignore the JSON files.
+Results/*.json
+
+# Audio fixtures stay LOCAL. Never commit real meeting audio or PII.
+Fixtures/*.wav
+Fixtures/*.mp3
+Fixtures/*.m4a
+Fixtures/*.flac
+
+# macOS junk
+.DS_Store
