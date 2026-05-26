@@ -33,9 +33,11 @@ These are non-negotiable. Privacy and trust ARE the product.
 
 ## Workflow
 
+- **Solo pre-v1 development:** direct commits and pushes to `main` are acceptable. Single developer, no production users yet, no external contributors. PR ceremony would be theater.
+- **Switch to feature-branch + PR flow when:** v1 ships publicly, external contributors join, or production users depend on `main` stability. At that point this section gets rewritten.
 - Branch from `main`. Never branch from another feature branch.
 - Don't commit without explicit instruction from the user.
-- Never push to `main` or force-push to any branch.
+- **Never force-push** to any branch, ever. Force-pushing rewrites shared history.
 - Always ask before `reset --hard`, `clean -fd`, branch deletion, or anything that overwrites uncommitted work.
 
 ### Commit style
