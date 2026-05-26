@@ -38,13 +38,13 @@ Estimated effort: 3–5 days per the roadmap.
 ## Resuming on a fresh Mac — setup steps
 
 1. **Install Xcode Command Line Tools** (if not already): `xcode-select --install`. Full Xcode is not required — Swift Package Manager works from the CLI.
-2. **Clone both repos:**
+2. **Clone both repos to the canonical paths:**
    ```bash
    mkdir -p ~/Documents/project ~/Documents/vault
    git clone git@github.com:tuanda2912/hark.git ~/Documents/project/hark
    git clone git@github.com:tuanda2912/hark-docs.git ~/Documents/vault/hark
    ```
-   **Important:** the vault location is referenced by absolute path in `CLAUDE.md` and many docs as `/Users/quynhanhquach/Documents/vault/hark`. If the new machine has a different username (`/Users/<other>/`), update the path references in `CLAUDE.md`, `.claude/agents/*.md`, and the docs OR symlink (`ln -s ~/Documents/vault/hark /Users/quynhanhquach/Documents/vault/hark`).
+   All path references in `CLAUDE.md`, agents, and docs use `~/Documents/...` so they resolve correctly on any Mac regardless of username.
 3. **Verify the engine builds:**
    ```bash
    cd ~/Documents/project/hark/engine

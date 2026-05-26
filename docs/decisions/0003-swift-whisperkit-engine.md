@@ -77,5 +77,5 @@ The engine runs as a **separate sidecar binary** managed by the Electron main pr
 
 - Enabled by [ADR-0002](0002-macos-only-scope.md) (macOS-only scope cut the Rust justification)
 - Stack details in [handoff doc](../../meetingmind-handoff.md) — "Stack" section
-- Performance targets: [vault/docs/qa/10-performance-benchmarks.md](file:///Users/quynhanhquach/Documents/vault/hark/docs/qa/10-performance-benchmarks.md)
+- Performance targets: [vault/docs/qa/10-performance-benchmarks.md](~/Documents/vault/hark/docs/qa/10-performance-benchmarks.md)
 - Phase 0 will validate this ADR's central performance assumption

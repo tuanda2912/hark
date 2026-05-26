@@ -64,7 +64,7 @@ double-check before pushing.
 ## Recommended fixture set (eventually)
 
 The full benchmark suite per
-[`vault/docs/qa/10-performance-benchmarks.md`](file:///Users/quynhanhquach/Documents/vault/hark/docs/qa/10-performance-benchmarks.md)
+[`vault/docs/qa/10-performance-benchmarks.md`](~/Documents/vault/hark/docs/qa/10-performance-benchmarks.md)
 calls for:
 
 - `long-en.wav` — clean English, ~10 min

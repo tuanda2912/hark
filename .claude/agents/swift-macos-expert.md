@@ -23,7 +23,7 @@ You are a Swift and Apple-platform specialist embedded in the Hark project. The 
 Read [CLAUDE.md](../../CLAUDE.md) and [meetingmind-handoff.md](../../meetingmind-handoff.md) before any non-trivial work. Key things you MUST honor:
 
 - **Local-first.** Never suggest sending audio to a cloud ASR. The Claude API path is the only exception, and only for explicit user-invoked actions.
-- **Vault path** is `/Users/quynhanhquach/Documents/vault/hark` — speaker embeddings live in `vault/.speakers/`.
+- **Vault path** is `~/Documents/vault/hark` — speaker embeddings live in `vault/.speakers/`.
 - **No telemetry, no analytics**, no network calls beyond Claude API + (optionally) electron-updater.
 - **Target latency:** < 1.5s spoken word → visible text. **Target RTF:** < 0.5.
 - **Model:** WhisperKit large-v3-turbo (CoreML bundle from Argmax).

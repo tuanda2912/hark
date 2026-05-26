@@ -45,7 +45,7 @@ Measured on `engine/Results/` from two consecutive runs of the harness in [`engi
 Be honest about scope:
 
 1. **English-only sample.** Thai ↔ English code-switching (the developer's actual use case) is unmeasured. Rare token paths in Whisper can be 1.5–2× slower per word; code-switch may have worse WER. Even a 3× slowdown would still pass with 2× margin under threshold, so this is not a stack-blocker, but it's an open performance question for v1.
-2. **WER unmeasured.** Phase 0 measured speed only. Accuracy on real meeting audio (noisy, multi-speaker, code-switch) is a Phase 1+ concern, gated by the WER targets in [vault/docs/qa/10-performance-benchmarks.md](file:///Users/quynhanhquach/Documents/vault/hark/docs/qa/10-performance-benchmarks.md) §"Benchmark 4".
+2. **WER unmeasured.** Phase 0 measured speed only. Accuracy on real meeting audio (noisy, multi-speaker, code-switch) is a Phase 1+ concern, gated by the WER targets in [vault/docs/qa/10-performance-benchmarks.md](~/Documents/vault/hark/docs/qa/10-performance-benchmarks.md) §"Benchmark 4".
 3. **One hardware data point.** M4 is the current top of the line. M1 base (8 GB RAM, oldest still-supported Apple Silicon) may run 2–3× slower → estimated RTF ~0.15–0.22, which still passes by 2× margin. Worth a sanity check during Phase 7 hardening, not a blocker now.
 4. **One audio case.** The full perf spec lists 5 fixture cases (clean / noisy / code-switch / 3-speaker / cold start). Phase 0 validated case 1. The others get measured naturally during Phase 1+ dogfooding on real meetings.
 
@@ -78,5 +78,5 @@ None of these are on the table. Filed for posterity in case future hardware or l
 
 - Raw results: `engine/Results/2026-05-26T092104-21cfbe4.json`, `engine/Results/2026-05-26T092425-21cfbe4.json`
 - Harness source: `engine/Sources/HarkBench/main.swift`
-- Performance spec: [vault/docs/qa/10-performance-benchmarks.md](file:///Users/quynhanhquach/Documents/vault/hark/docs/qa/10-performance-benchmarks.md)
+- Performance spec: [vault/docs/qa/10-performance-benchmarks.md](~/Documents/vault/hark/docs/qa/10-performance-benchmarks.md)
 - Validates assumptions in [ADR-0002](0002-macos-only-scope.md), [ADR-0003](0003-swift-whisperkit-engine.md), [ADR-0004](0004-no-cloud-asr.md)

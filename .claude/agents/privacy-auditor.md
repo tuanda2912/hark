@@ -24,7 +24,7 @@ Read [CLAUDE.md](../../CLAUDE.md) "Hard rules (project-specific)" first. Those a
 
 ### File I/O
 - Writes to anywhere **outside** these allowed locations:
-  - `/Users/quynhanhquach/Documents/vault/hark` (the vault)
+  - `~/Documents/vault/hark` (the vault)
   - `~/Library/Application Support/Hark/` (app data, models cache)
   - `~/Library/Logs/Hark/` (local logs only)
   - `~/Library/Caches/Hark/`

@@ -60,7 +60,7 @@ The only outbound network path for user-generated content is the explicit **Clau
 **Negative / tradeoffs accepted:**
 - More engineering work. We build the Swift engine ourselves (see [ADR-0003](0003-swift-whisperkit-engine.md)) instead of integrating a vendor SDK.
 - Quality ceiling is whatever local Whisper variants achieve. Cloud providers often have proprietary models fine-tuned on more data. We accept being ~5–10% behind on WER for the trust win.
-- Local diarization (FluidAudio) is less polished than Soniox's. Manual speaker tagging UX absorbs this gap (see [vault/docs/analysis/05-user-stories.md](file:///Users/quynhanhquach/Documents/vault/hark/docs/analysis/05-user-stories.md) Epic B).
+- Local diarization (FluidAudio) is less polished than Soniox's. Manual speaker tagging UX absorbs this gap (see [vault/docs/analysis/05-user-stories.md](~/Documents/vault/hark/docs/analysis/05-user-stories.md) Epic B).
 - Translation in "fast" mode uses local NLLB-200 which is genuinely lower quality than cloud translation. Mitigated by the user-toggle to Claude API high-quality mode (acknowledged cloud-touch, explicit user action).
 - We're tied to the Apple Silicon performance envelope. If on-device transcription stops being viable (it won't, but if), the product dies. Acceptable risk.
 
@@ -77,5 +77,5 @@ The only outbound network path for user-generated content is the explicit **Clau
 
 - [Project handoff doc](../../meetingmind-handoff.md) — "Rejected" section
 - [CLAUDE.md hard rule #1](../../CLAUDE.md) — "Audio never leaves the machine"
-- [vault/docs/product/01-vision-and-personas.md](file:///Users/quynhanhquach/Documents/vault/hark/docs/product/01-vision-and-personas.md) — the trust thesis
+- [vault/docs/product/01-vision-and-personas.md](~/Documents/vault/hark/docs/product/01-vision-and-personas.md) — the trust thesis
 - This ADR exists specifically to prevent this discussion from recurring. Point future sessions here.

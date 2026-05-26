@@ -6,7 +6,7 @@ Hark is a **local-first, macOS-only** meeting transcription tool. Live captions,
 
 Full design rationale: [meetingmind-handoff.md](meetingmind-handoff.md)
 Decision log: [docs/decisions/](docs/decisions/)
-Vault location: `/Users/quynhanhquach/Documents/vault/hark` — **outside this repo**.
+Vault location: `~/Documents/vault/hark` — **outside this repo**.
 
 ## Don't re-debate
 
@@ -27,7 +27,7 @@ See the "rejected" section in the handoff doc and the ADRs for the full reasonin
 These are non-negotiable. Privacy and trust ARE the product.
 
 1. **Audio never leaves the machine** except through the explicit Claude API path (summary, translation-high-quality mode, in-meeting Q&A). The user must have invoked the action.
-2. **Never write transcripts, audio, or PII to disk outside the vault folder** (`/Users/quynhanhquach/Documents/vault/hark`). Models cache and app data go in `~/Library/Application Support/Hark/`.
+2. **Never write transcripts, audio, or PII to disk outside the vault folder** (`~/Documents/vault/hark`). Models cache and app data go in `~/Library/Application Support/Hark/`.
 3. **No telemetry, no analytics, no crash reporters that exfiltrate content.** Local-only logs are fine.
 4. **The vault is sacred.** Never auto-delete or auto-rewrite vault files. All changes go through git commits so history is recoverable.
 5. **Speaker enrollment data stays local.** Voice embeddings in `vault/.speakers/` never go to any API.
@@ -97,8 +97,8 @@ Empty until Phase 0 lands. Fill in as commands stabilize.
 
 | Thing | Location |
 |---|---|
-| Source repo | `/Users/quynhanhquach/Documents/project/hark` |
-| Vault (user's notes + transcripts + speaker enrollments) | `/Users/quynhanhquach/Documents/vault/hark` |
+| Source repo | `~/Documents/project/hark` |
+| Vault (user's notes + transcripts + speaker enrollments) | `~/Documents/vault/hark` |
 | App data (models cache, prefs) | `~/Library/Application Support/Hark/` |
 | Logs (local only) | `~/Library/Logs/Hark/` |
 | Handoff doc (design rationale) | `meetingmind-handoff.md` |
