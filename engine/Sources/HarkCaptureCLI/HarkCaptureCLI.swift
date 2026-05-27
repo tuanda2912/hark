@@ -11,6 +11,8 @@
 
 import ArgumentParser
 import Foundation
+import HarkCore
+import HarkCapture
 
 @available(macOS 14.4, *)
 @main

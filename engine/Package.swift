@@ -9,10 +9,14 @@
 //   - HarkEngine  — Phase 1 batch transcribe binary (`hark-engine`).
 //   - HarkCapture — Phase 2 audio capture binary (`hark-capture`):
 //                   ScreenCaptureKit/Core Audio + AVAudioEngine → WAV.
+//   - Harkd       — Phase 3 streaming engine daemon (`harkd`): capture
+//                   in-process, VAD-gate, sliding-window WhisperKit,
+//                   localhost WebSocket server (Swift NIO).
 //
 // Dependencies:
 //   - argmax-oss-swift (WhisperKit) — pinned v1.0.0 (SemVer-compatible).
 //   - swift-argument-parser — already resolved transitively via WhisperKit.
+//   - swift-nio — WebSocket server (Phase 3, ADR-0008 §1).
 //
 // Platforms: macOS 14 — bumped from 13 in Phase 2 (ADR-0006) to enable
 // Core Audio Process Taps for system-audio capture. The 14.4 minor floor
@@ -28,7 +32,8 @@ let package = Package(
     products: [
         .executable(name: "hark-bench", targets: ["HarkBench"]),
         .executable(name: "hark-engine", targets: ["HarkEngine"]),
-        .executable(name: "hark-capture", targets: ["HarkCapture"])
+        .executable(name: "hark-capture", targets: ["HarkCaptureCLI"]),
+        .executable(name: "harkd", targets: ["Harkd"])
     ],
     dependencies: [
         .package(
@@ -38,6 +43,13 @@ let package = Package(
         .package(
             url: "https://github.com/apple/swift-argument-parser.git",
             from: "1.5.0"
+        ),
+        // Swift NIO for the localhost WebSocket server (ADR-0008 §1).
+        // Apple-maintained, semver. NIOPosix + NIOHTTP1 + NIOWebSocket
+        // is the minimum surface for a single-endpoint loopback server.
+        .package(
+            url: "https://github.com/apple/swift-nio.git",
+            from: "2.65.0"
         )
     ],
     targets: [
@@ -65,14 +77,40 @@ let package = Package(
             ],
             path: "Sources/HarkEngine"
         ),
-        .executableTarget(
+        // HarkCapture is now a library (Phase 3): both the standalone
+        // `hark-capture` CLI and the `harkd` daemon link against it.
+        .target(
             name: "HarkCapture",
             dependencies: [
-                "HarkCore",
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
+                "HarkCore"
             ],
             path: "Sources/HarkCapture",
             exclude: ["README.md"]
+        ),
+        // Thin executable that drives the HarkCapture library — preserves
+        // the `hark-capture` binary as a batch-test path (per ADR-0008 §2).
+        .executableTarget(
+            name: "HarkCaptureCLI",
+            dependencies: [
+                "HarkCore",
+                "HarkCapture",
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ],
+            path: "Sources/HarkCaptureCLI"
+        ),
+        .executableTarget(
+            name: "Harkd",
+            dependencies: [
+                "HarkCore",
+                "HarkCapture",
+                .product(name: "WhisperKit", package: "argmax-oss-swift"),
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOWebSocket", package: "swift-nio")
+            ],
+            path: "Sources/Harkd"
         ),
         .testTarget(
             name: "HarkCaptureTests",

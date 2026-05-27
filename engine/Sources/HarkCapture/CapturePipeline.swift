@@ -28,24 +28,37 @@ import HarkCore
 
 @available(macOS 14.4, *)
 public final class CapturePipeline {
+    /// Sink for the mixed 16 kHz mono Float32 stream (post-mix, pre-Int16).
+    /// Phase 3's `harkd` uses this to feed VAD + WhisperKit without ever
+    /// touching disk. `frames` is the per-tick batch (typically 1600 = 100 ms).
+    /// Called on the pump queue — keep work short; offload heavy lifting.
+    public typealias FloatFrameSink = (_ frames: [Float]) -> Void
+
     public struct Options {
         public var captureMic: Bool
         public var captureSystem: Bool
-        public var outputURL: URL
+        /// If non-nil, mixed Int16 samples are written here as a WAV. If nil,
+        /// no WAV is produced (streaming-only mode for harkd).
+        public var outputURL: URL?
+        /// If set, called once per pump tick with the mixed Float32 frames.
+        /// Independent of `outputURL` — you can do both (debug) or just one.
+        public var floatFrameSink: FloatFrameSink?
         /// 100 ms at 16 kHz = 1600 frames. The pump batches at this size.
         public var pumpFrames: Int = 1_600
         /// If a source has < this many frames buffered when the pump fires,
         /// we count the deficit as underrun and emit silence for it.
         public var underrunGraceFrames: Int = 1_600
-        public init(captureMic: Bool, captureSystem: Bool, outputURL: URL) {
+        public init(captureMic: Bool, captureSystem: Bool, outputURL: URL?,
+                    floatFrameSink: FloatFrameSink? = nil) {
             self.captureMic = captureMic
             self.captureSystem = captureSystem
             self.outputURL = outputURL
+            self.floatFrameSink = floatFrameSink
         }
     }
 
     private let options: Options
-    private let writer: WAVWriter
+    private let writer: WAVWriter?
     private let mixer = Mixer()
 
     // Per-source state.
@@ -67,7 +80,11 @@ public final class CapturePipeline {
 
     public init(options: Options) throws {
         self.options = options
-        self.writer = try WAVWriter(url: options.outputURL)
+        if let url = options.outputURL {
+            self.writer = try WAVWriter(url: url)
+        } else {
+            self.writer = nil
+        }
     }
 
     public func start() throws {
@@ -116,7 +133,7 @@ public final class CapturePipeline {
 
         // Drain whatever's left in the FIFOs.
         drainOnce()
-        try writer.close()
+        try writer?.close()
     }
 
     // MARK: - Source callbacks (Core Audio threads)
@@ -194,13 +211,34 @@ public final class CapturePipeline {
         // filling with leading silence while sources warm up.
         if micSlice == nil && sysSlice == nil { return }
 
+        // Build the mixed Float32 stream first (post-soft-clip). Both the WAV
+        // writer and the floatFrameSink consume this — Int16 conversion is
+        // just a quantization step for the WAV path.
+        var mixedFloat = [Float](repeating: 0, count: frames)
+        for i in 0..<frames {
+            let m = micSlice?[i] ?? 0
+            let s = sysSlice?[i] ?? 0
+            mixedFloat[i] = tanhf((m + s) * 0.9)
+        }
+
+        // Update stats + WAV writer via the existing Mixer for consistency
+        // (underrun counters, peak amplitude, frames-written all live there).
         let samples: [Int16] = micSlice.withUnsafeBufferPointerOrNil { micPtr in
             sysSlice.withUnsafeBufferPointerOrNil { sysPtr in
                 mixer.mix(mic: micPtr, system: sysPtr, frames: frames)
             }
         }
 
-        try? writer.append(samples)
+        if let writer = writer {
+            try? writer.append(samples)
+        }
+
+        // Hand the mixed Float32 buffer to the streaming consumer (harkd).
+        // Callback runs on the pump queue — keep cheap work here; heavy
+        // processing must move to its own actor/queue.
+        if let sink = options.floatFrameSink {
+            sink(mixedFloat)
+        }
     }
 
     // MARK: - Heartbeat
