@@ -10,10 +10,23 @@
 //   - Segments in the older 25 s are re-transcribed; if text changes, emit
 //     a replacement `segment.partial` with the SAME utterance_id.
 //
-// Identity rule (per the prompt's implementation hint):
+// Identity rule (overlap-based — supersedes the original 100ms bucket rule):
+//
 //   Two segments from consecutive windows are "the same utterance" iff
-//   their `t_start` (anchored to absolute session time) rounds to the
-//   same 100 ms bucket. We keep a `UtteranceLedger` mapping bucket → UUID.
+//   their absolute-session-time intervals overlap by ≥ 50% of the shorter
+//   interval. WhisperKit can shift its segment boundaries by 1–3 seconds
+//   between consecutive windows (the decoder re-segments the full 30 s
+//   buffer each pass), so a 100 ms bucket on tStart routinely misses
+//   matches that are obviously the same utterance to a human reader.
+//
+//   Smoke-test evidence (2026-05-27): bucket rule produced 4+ distinct
+//   utterance_ids for "And on the backend, the API spec…" across three
+//   windows — UI would render duplicates instead of replacing in place.
+//
+//   Overlap rule trades a tiny risk of false-merging two distinct
+//   utterances that happen to share ≥50% time range (rare; speech
+//   doesn't usually time-share) for robust identity continuity. See
+//   `UtteranceLedger.resolve` below.
 //
 // Threading: this type is NOT thread-safe on its own. It lives inside
 // `EngineSession`'s actor, which serializes all mutations.
@@ -43,44 +56,99 @@ struct ReconciledEmission {
 
 /// Tracks identity of utterances across consecutive window transcriptions.
 ///
-/// Bucket = `Int(round(tStart * 10))` — 100 ms resolution. Java analogue:
-/// a `HashMap<Long, UUID>` with the key being `Math.round(tStart * 10)`.
+/// Each entry holds an UUID + the latest known [tStart, tEnd] interval
+/// + the latest emitted text + a finalized flag. New segments resolve
+/// against entries by **interval-overlap score** (overlap seconds /
+/// length of the shorter interval). The best-scoring entry wins if its
+/// score crosses `overlapThreshold` (default 0.5). Otherwise a fresh
+/// entry is minted.
+///
+/// Java analogue: a `List<Entry>` (we don't need hash lookup — N is small
+/// per session, typically < 100 utterances over an hour). Linear scan
+/// dominated by speech; not a perf concern.
 final class UtteranceLedger {
-    /// bucket → utterance UUID. Persists for the session.
-    private var idByBucket: [Int: String] = [:]
-    /// bucket → last-emitted text. Used to detect "still the same partial".
-    private var lastTextByBucket: [Int: String] = [:]
-    /// bucket → has been emitted as final. Once final, don't downgrade.
-    private var finalized: Set<Int> = []
+    /// Threshold for "same utterance" — overlap-of-shorter ratio. 0.5
+    /// means: the two intervals must share at least half of the shorter
+    /// one's duration. Lower this if Phase 4 dogfooding shows missed
+    /// matches; raise it if false merges become a problem.
+    private let overlapThreshold: Double = 0.5
 
-    private func bucket(_ t: Double) -> Int {
-        Int((t * 10.0).rounded())
+    private struct Entry {
+        let id: String
+        var tStart: Double
+        var tEnd: Double
+        var lastText: String
+        var finalized: Bool
     }
 
-    /// Look up or mint the utterance ID for this segment start.
-    func idFor(tStart: Double) -> String {
-        let b = bucket(tStart)
-        if let existing = idByBucket[b] { return existing }
-        let fresh = UUID().uuidString
-        idByBucket[b] = fresh
-        return fresh
+    private var entries: [Entry] = []
+
+    /// Look up or mint the utterance ID for a segment occupying [tStart, tEnd].
+    /// The matched entry's interval is updated to the new range (the latest
+    /// transcription pass is treated as the most accurate belief).
+    func resolve(tStart: Double, tEnd: Double, text: String) -> String {
+        let segLen = max(0.0, tEnd - tStart)
+        if segLen <= 0 {
+            // Degenerate (zero-length) segment — give it a fresh ID rather
+            // than risk falsely matching a real one with overlap=0/0.
+            return mint(tStart: tStart, tEnd: tEnd, text: text)
+        }
+
+        // Best non-finalized overlap. We never reuse a finalized entry's
+        // ID because emitting a partial after a final would confuse the UI.
+        var bestIdx: Int? = nil
+        var bestScore: Double = 0.0
+        for (i, e) in entries.enumerated() where !e.finalized {
+            let overlapStart = max(tStart, e.tStart)
+            let overlapEnd = min(tEnd, e.tEnd)
+            let overlap = max(0.0, overlapEnd - overlapStart)
+            let eLen = max(0.0, e.tEnd - e.tStart)
+            let shorter = min(segLen, eLen)
+            guard shorter > 0 else { continue }
+            let score = overlap / shorter
+            if score > bestScore {
+                bestScore = score
+                bestIdx = i
+            }
+        }
+
+        if let i = bestIdx, bestScore >= overlapThreshold {
+            entries[i].tStart = tStart
+            entries[i].tEnd = tEnd
+            // lastText is updated by `updateText`, not here — so a caller
+            // can still ask "did the text change since last emit?".
+            return entries[i].id
+        }
+
+        return mint(tStart: tStart, tEnd: tEnd, text: text)
     }
 
-    /// Returns true if the text at this bucket has changed since last emit.
-    /// Updates the ledger as a side effect.
-    func updateText(_ text: String, tStart: Double) -> Bool {
-        let b = bucket(tStart)
-        let changed = lastTextByBucket[b] != text
-        lastTextByBucket[b] = text
+    private func mint(tStart: Double, tEnd: Double, text: String) -> String {
+        let id = UUID().uuidString
+        entries.append(Entry(id: id, tStart: tStart, tEnd: tEnd, lastText: "", finalized: false))
+        return id
+    }
+
+    /// Returns true if `text` differs from the last text emitted for this
+    /// utterance ID. Updates the stored text as a side effect.
+    /// Java analogue: `Map.put` returning the previous value, then compare.
+    func updateText(_ text: String, utteranceId: String) -> Bool {
+        guard let i = entries.firstIndex(where: { $0.id == utteranceId }) else {
+            return true  // unknown ID — treat as changed (caller will emit partial)
+        }
+        let changed = entries[i].lastText != text
+        entries[i].lastText = text
         return changed
     }
 
-    func isFinalized(tStart: Double) -> Bool {
-        finalized.contains(bucket(tStart))
+    func isFinalized(utteranceId: String) -> Bool {
+        entries.first(where: { $0.id == utteranceId })?.finalized ?? false
     }
 
-    func markFinalized(tStart: Double) {
-        finalized.insert(bucket(tStart))
+    func markFinalized(utteranceId: String) {
+        if let i = entries.firstIndex(where: { $0.id == utteranceId }) {
+            entries[i].finalized = true
+        }
     }
 }
 

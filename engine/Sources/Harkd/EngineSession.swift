@@ -382,16 +382,18 @@ actor EngineSession {
         }
 
         for seg in winSegments {
-            let uid = ledger.idFor(tStart: seg.tStart)
-            if ledger.isFinalized(tStart: seg.tStart) {
+            // Resolve utterance identity by overlap, not by t_start bucket.
+            // See SlidingWindow.swift comments for rationale.
+            let uid = ledger.resolve(tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text)
+            if ledger.isFinalized(utteranceId: uid) {
                 continue
             }
-            let textChanged = ledger.updateText(seg.text, tStart: seg.tStart)
+            let textChanged = ledger.updateText(seg.text, utteranceId: uid)
             let isInOlderZone = seg.tStart < oldestOldEnd
             // Final: a segment in the older zone that didn't change is
             // confirmed by this window; emit `segment.final` and lock it.
             if isInOlderZone && !textChanged {
-                ledger.markFinalized(tStart: seg.tStart)
+                ledger.markFinalized(utteranceId: uid)
                 emitSegment(uid: uid, isFinal: true, seg: seg)
             } else {
                 // Partial: either fresh (tail) or refined (text changed).
@@ -429,9 +431,9 @@ actor EngineSession {
                 // Best-effort time mapping (anchors may have been trimmed).
                 let tStart = Double(s.start)
                 let tEnd = Double(s.end)
-                let uid = ledger.idFor(tStart: tStart)
-                if ledger.isFinalized(tStart: tStart) { continue }
-                ledger.markFinalized(tStart: tStart)
+                let uid = ledger.resolve(tStart: tStart, tEnd: tEnd, text: cleaned)
+                if ledger.isFinalized(utteranceId: uid) { continue }
+                ledger.markFinalized(utteranceId: uid)
                 emitSegment(uid: uid, isFinal: true, seg: WindowSegment(
                     tStart: tStart, tEnd: tEnd, text: cleaned, language: language
                 ))
