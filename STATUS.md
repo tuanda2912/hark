@@ -1,7 +1,7 @@
 # Hark — Current Status
 
 **Last updated:** 2026-05-27
-**Current phase:** Phase 2 complete · Phase 3 is next
+**Current phase:** Phase 3 complete · Phase 4 (Electron + Angular UI) is next
 **Stack:** validated (Phase 0 RTF 0.075 on M4 — see [ADR-0005](docs/decisions/0005-phase-0-rtf-validated.md))
 
 > This file is the **session handoff**. It gets updated every time work pauses so the next session (or the next machine) can pick up without re-deriving context.
@@ -20,17 +20,22 @@
 - **Phase 2** — `hark-capture` CLI complete and **smoke-passed end-to-end** on M4 with a Vietnamese audio source (2026-05-27). Pipeline: Core Audio Process Taps (system audio) + AVAudioEngine (mic) → per-source resampler → FIFO → tanh soft-clip mixer → 16 kHz mono s16le WAV via `HarkCore.WAVWriter`. Active TCC permission request on first run ([ADR-0007](docs/decisions/0007-active-permission-request.md)), SIGINT graceful stop, stderr JSON heartbeat. **macOS floor pinned to 14.4+** ([ADR-0006](docs/decisions/0006-phase-2-capture-architecture.md)).
   - Smoke run: 29.9s WAV → 11 clean Vietnamese segments, `language_detected="vi"`, no underruns.
   - One cosmetic fix landed: `ProgressRenderer` no longer renders `0 MB / 0 MB · 0.0 MB/s` when the Progress producer reports non-byte unit counts.
+- **Phase 3** — `harkd` streaming engine + WebSocket server complete ([ADR-0008](docs/decisions/0008-phase-3-streaming-architecture.md)). Long-lived daemon: HarkCapture (in-process library) → VAD gate → 30s sliding window with 5s hop → WhisperKit → Swift NIO localhost WebSocket. Loopback-only bind, port written to `~/Library/Application Support/Hark/engine.port`. Implements meta.hello + 5s heartbeat, capture lifecycle (start/stop/pause/resume), segment.partial→final with utterance_id replacement across windows, bookmark.created, backpressure (drop oldest unprocessed if RTF > 1 → warning `rtf_high`).
+  - `HarkCapture` refactored from executable into a library; `HarkCaptureCLI` is now the thin wrapper preserving the batch CLI.
+  - `harkd --help` runs, build clean for all four binaries (hark-bench, hark-engine, hark-capture, harkd).
+  - **DEVIATION from ADR-0008 §3:** ships an energy-based VAD with hangover (behind a `VAD` protocol), NOT Silero CoreML. ADR-0008 §3's open question #1 acknowledged Silero sourcing was uncertain. Energy gate covers the steady-silence hallucination case which is what §3 actually motivates. Silero is now an upgrade path — see Open Threads.
 
-### ⏳ Next up: Phase 3 — Streaming engine + WebSocket server
+### ⏳ Next up: Phase 4 — Electron + Angular UI
 
-The batch pipeline (`hark-capture | hark-engine`) is complete and usable. Phase 3 turns this into a live pipeline:
+The full engine pipeline is complete and accepting WebSocket connections. Phase 4 builds the user-facing surface:
 
-- Wire a sliding-window driver in front of WhisperKit (production setting: 30s window, 5s hop, drop oldest segment if RTF > 1)
-- Add Silero VAD for chunk boundaries
-- Stand up a localhost WebSocket server (Swift NIO or Vapor — TBD ADR) that streams the engine's JSON segments matching the contract in `vault/docs/design/08-websocket-api-contract.md`
-- Engine consumes from `hark-capture` instead of a file: either via a shared library boundary, a Unix socket, or `hark-capture` writing rolling chunks the engine can tail
+- Electron + Angular 21 shell (per [ADR-0001](docs/decisions/0001-electron-over-tauri.md))
+- Electron main process spawns `harkd` as a child process; reads `engine.port`; connects WebSocket
+- Renderer: menu-bar tray, main window with live transcript view (per the UI design in `vault/hark/docs/design/ui/`), Q&A side panel, settings with privacy page
+- Manual speaker tag UI (Phase 5 will do voice fingerprint persistence)
+- electron-builder config for unsigned dev builds (signed builds deferred per the 2026-05-24 open-source local-devs decision)
 
-Estimated effort: 3–5 days per the roadmap.
+Estimated effort: 1–2 weeks per the roadmap. Largest phase by line count but most familiar territory (Angular is the developer's strength).
 
 ---
 
@@ -87,6 +92,9 @@ The session will then have the same context budget I have right now.
 8. **Phase 2 — sample-rate changes mid-capture** (plug/unplug an audio interface) untested. Listed as ADR-0006 open question.
 9. **Phase 2 — Process Tap drift compensation is off** (`kAudioSubTapDriftCompensationKey: 0`). Flip on if needed.
 10. **Model upgrade path — not blocking.** `large-v3-turbo` is the speed/quality Pareto pick today. If Vietnamese / Thai / code-switch WER turns out to be unacceptable in dogfooding, the cheapest upgrade is undistilled **`large-v3`** (Argmax ships a CoreML bundle) — ~10–15% WER improvement on hard languages at ~5× compute. Still fits the 0.5 RTF budget with current Phase 0 headroom (projected ~0.37). Fine-tunes like PhoWhisper (Vietnamese) or biodatlab whisper-th-* (Thai) require manual `whisperkittools` conversion and lose code-switching. **Decide *after* trying initial-prompt vocab injection from the vault** — that's a cheaper accuracy win we haven't cashed in. If we swap, capture the WER delta in a new ADR.
+11. **Phase 3 VAD is energy-based, not Silero.** `Sources/Harkd/VAD.swift` ships behind a `VAD` protocol so the upgrade is a one-file swap. Trigger to upgrade: if Phase 4 dogfooding shows hallucination on low-energy speech, OR if `large-v3-turbo` swap (open thread #10) brings the same hallucination class back. Silero CoreML model sourcing is the unresolved sub-question — likely an ONNX→CoreML conversion via `coremltools`, or accept ONNX Runtime as a dependency. Capture in a new ADR when we act.
+12. **Phase 3 WebSocket has no auth.** Loopback-only bind makes this acceptable per the threat model (only processes on the same Mac can connect). If a future feature ever opens the WS beyond loopback, this assumption breaks immediately and needs ADR-level rework. Don't let it slide.
+13. **`harkd` smoke test against a live WS client** is not yet done — the API drop interrupted the agent before it could `websocat` itself. `--help` works and the build is clean, but the full path "client connects → capture.start → segment.partial flows" was never exercised end-to-end. Do this before Phase 4 starts wiring Electron.
 
 ---
 
