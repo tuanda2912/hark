@@ -49,27 +49,46 @@ public final class ProgressRenderer: @unchecked Sendable {
 
             let frac = progress.fractionCompleted
             let done = progress.completedUnitCount
-            let total = max(progress.totalUnitCount, 1)
+            let totalRaw = progress.totalUnitCount
 
-            let dt = max(now.timeIntervalSince(lastBytesAt), 0.001)
-            let bps = Double(done - lastBytes) / dt
-            lastBytes = done
-            lastBytesAt = now
-
+            // Some Progress producers (notably HuggingFace's bundled
+            // downloader as wired through WhisperKit) don't report bytes:
+            // they use small abstract unit counts (file count, 0–100, etc.)
+            // alongside a valid fractionCompleted. If totalUnitCount is too
+            // small to be a byte count for any real download, treat the
+            // units as opaque and render only bar + % so we don't show a
+            // misleading "0 MB / 0 MB · 0.0 MB/s" line.
+            //
+            // 1 MiB threshold: any real file download we care about is
+            // bigger than that; anything smaller is almost certainly a unit
+            // count, not a byte count.
+            let hasByteCounts = totalRaw >= 1_048_576 && done >= 0
             let bar = renderBar(frac: frac, width: 20)
-            let mbDone = Double(done) / 1_048_576.0
-            let mbTotal = Double(total) / 1_048_576.0
-            let mbps = bps / 1_048_576.0
-            let etaStr: String
-            if bps > 1024 && frac < 1.0 {
-                let remaining = Double(total - done) / bps
-                etaStr = "ETA \(formatDuration(remaining))"
-            } else {
-                etaStr = "ETA --"
-            }
 
-            let line = String(format: "%@: %@ %3d%% · %.0f MB / %.0f MB · %.1f MB/s · %@",
+            let line: String
+            if hasByteCounts {
+                let total = max(totalRaw, 1)
+                let dt = max(now.timeIntervalSince(lastBytesAt), 0.001)
+                let bps = Double(done - lastBytes) / dt
+                lastBytes = done
+                lastBytesAt = now
+
+                let mbDone = Double(done) / 1_048_576.0
+                let mbTotal = Double(total) / 1_048_576.0
+                let mbps = bps / 1_048_576.0
+                let etaStr: String
+                if bps > 1024 && frac < 1.0 {
+                    let remaining = Double(total - done) / bps
+                    etaStr = "ETA \(formatDuration(remaining))"
+                } else {
+                    etaStr = "ETA --"
+                }
+                line = String(format: "%@: %@ %3d%% · %.0f MB / %.0f MB · %.1f MB/s · %@",
                               label, bar, Int(frac * 100), mbDone, mbTotal, mbps, etaStr)
+            } else {
+                line = String(format: "%@: %@ %3d%%",
+                              label, bar, Int(frac * 100))
+            }
             output.write(Data("\r\(line)   ".utf8))
         }
     }

@@ -2,39 +2,39 @@
 //
 // SPM manifest. Think of this as `pom.xml` / `build.gradle` for Swift.
 //
-// Three targets:
-//   - HarkCore   — internal library: shared model loader + progress UX.
-//                  No product exported; only consumed by sibling targets.
-//   - HarkBench  — Phase 0 RTF harness binary.
-//   - HarkEngine — Phase 1 batch transcribe binary (`hark-engine`).
+// Targets:
+//   - HarkCore    — internal library: shared model loader, progress UX,
+//                   WAV writer.
+//   - HarkBench   — Phase 0 RTF harness binary.
+//   - HarkEngine  — Phase 1 batch transcribe binary (`hark-engine`).
+//   - HarkCapture — Phase 2 audio capture binary (`hark-capture`):
+//                   ScreenCaptureKit/Core Audio + AVAudioEngine → WAV.
 //
 // Dependencies:
 //   - argmax-oss-swift (WhisperKit) — pinned v1.0.0 (SemVer-compatible).
-//   - swift-argument-parser — already resolved transitively via WhisperKit
-//     (see Package.resolved). We declare it explicitly so HarkEngine can
-//     `import ArgumentParser`; we DON'T add a new third-party dependency
-//     surface, we surface an existing one.
+//   - swift-argument-parser — already resolved transitively via WhisperKit.
 //
-// Platforms: macOS 13 — floor required by argmax-oss-swift v1.0.0.
+// Platforms: macOS 14 — bumped from 13 in Phase 2 (ADR-0006) to enable
+// Core Audio Process Taps for system-audio capture. The 14.4 minor floor
+// the API actually requires is enforced with `@available` at the call site,
+// since SPM platform pins only accept major versions.
 import PackageDescription
 
 let package = Package(
     name: "HarkEngine",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
         .executable(name: "hark-bench", targets: ["HarkBench"]),
-        .executable(name: "hark-engine", targets: ["HarkEngine"])
+        .executable(name: "hark-engine", targets: ["HarkEngine"]),
+        .executable(name: "hark-capture", targets: ["HarkCapture"])
     ],
     dependencies: [
         .package(
             url: "https://github.com/argmaxinc/argmax-oss-swift.git",
             from: "1.0.0"
         ),
-        // ArgumentParser is already pulled in transitively by WhisperKit
-        // (1.7.1 in Package.resolved). Declaring it here gives HarkEngine
-        // a direct import; SwiftPM will resolve to the same pinned version.
         .package(
             url: "https://github.com/apple/swift-argument-parser.git",
             from: "1.5.0"
@@ -64,6 +64,20 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ],
             path: "Sources/HarkEngine"
+        ),
+        .executableTarget(
+            name: "HarkCapture",
+            dependencies: [
+                "HarkCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ],
+            path: "Sources/HarkCapture",
+            exclude: ["README.md"]
+        ),
+        .testTarget(
+            name: "HarkCaptureTests",
+            dependencies: ["HarkCore", "HarkCapture"],
+            path: "Tests/HarkCaptureTests"
         )
     ]
 )
