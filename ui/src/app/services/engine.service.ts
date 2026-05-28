@@ -57,6 +57,13 @@ export class EngineService {
   readonly hello: Signal<MetaHelloPayload | null> = this._hello.asReadonly();
 
   /**
+   * Latest error envelope from the engine. Cleared when capture starts
+   * again. Drives the inline error banner in the UI.
+   */
+  private readonly _lastError = signal<ErrorPayload | null>(null);
+  readonly lastError: Signal<ErrorPayload | null> = this._lastError.asReadonly();
+
+  /**
    * Internal segments map keyed by utterance_id. Mutated by handlers,
    * snapshotted into the signal so Angular can detect changes.
    */
@@ -134,10 +141,15 @@ export class EngineService {
   // ─── Commands ───────────────────────────────────────────────────────
 
   startCapture(opts?: { mic?: boolean; system?: boolean }): void {
-    const sources = opts ? { mic: opts.mic ?? true, system: opts.system ?? true } : undefined;
-    const cmd: EngineCommand = sources
-      ? { type: 'capture.start', payload: { sources } }
-      : { type: 'capture.start' };
+    // Payload is required by the engine's decoder even when empty —
+    // see CaptureStartCommand type. Default to both sources unless the
+    // caller explicitly opts out.
+    const sources = { mic: opts?.mic ?? true, system: opts?.system ?? true };
+    const cmd: EngineCommand = {
+      type: 'capture.start',
+      payload: { sources },
+    };
+    this._lastError.set(null);
     this._capture.set({ kind: 'starting' });
     this.send(cmd);
   }
@@ -222,9 +234,21 @@ export class EngineService {
       case 'warning':
         this.warnings$.next(env.payload as WarningPayload);
         break;
-      case 'error':
-        this.errors$.next(env.payload as ErrorPayload);
+      case 'error': {
+        const err = env.payload as ErrorPayload;
+        this.errors$.next(err);
+        this._lastError.set(err);
+        // If capture was mid-start when this error landed, revert
+        // state so the UI doesn't get stuck on "starting". Same for
+        // mid-stop.
+        const cap = this._capture();
+        if (cap.kind === 'starting') this._capture.set({ kind: 'idle' });
+        else if (cap.kind === 'stopping') {
+          // Engine refused stop — stay running.
+          // (Best-effort; real recovery is reconnect.)
+        }
         break;
+      }
       default:
         // Unknown type — ignore for forward compatibility.
         break;

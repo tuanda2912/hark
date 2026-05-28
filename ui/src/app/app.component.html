@@ -28,7 +28,7 @@
 
     <button
       type="button"
-      class="px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text disabled:opacity-50 disabled:cursor-not-allowed"
+      class="px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed no-drag"
       [disabled]="!isConnected() || isCapturing()"
       (click)="onStart()"
     >
@@ -36,7 +36,7 @@
     </button>
     <button
       type="button"
-      class="px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text disabled:opacity-50 disabled:cursor-not-allowed"
+      class="px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed no-drag"
       [disabled]="!isCapturing()"
       (click)="onStop()"
     >
@@ -57,6 +57,19 @@
       RTF {{ rtfDisplay() }} · buf {{ ringFillDisplay() }}
     </span>
   </header>
+
+  <!-- Engine error banner. The lastError signal is cleared at the next
+       capture start; until then this stays visible so the user isn't
+       wondering why "starting" reverted to "idle". Opacity modifiers
+       don't work on CSS-var colors in Tailwind v3 without a
+       <alpha-value> placeholder, so we use solid border + text. -->
+  @if (lastError(); as err) {
+    <div
+      class="px-4 py-2 text-xs bg-bg-2 border-b border-recording text-recording font-mono"
+    >
+      engine refused: {{ err.code }} — {{ err.message }}
+    </div>
+  }
 
   <!-- Live transcript list. Replace-by-utterance-id semantics handled
        in EngineService — every segment.partial / segment.final feeds

@@ -1,8 +1,15 @@
 /* Component-scoped styles. Most of the layout lives in Tailwind
  * utility classes in app.component.html; this file is reserved for
- * effects that don't fit the utility model (keyframes, ::deep selectors,
- * etc.). Empty until we have one — keeps the build graph honest. */
+ * effects that don't fit the utility model. */
 :host {
   display: block;
   height: 100vh;
+}
+
+/* macOS titlebar drag-region handling. With `titleBarStyle: 'hiddenInset'`
+ * Electron does NOT auto-make the page draggable, but interactive
+ * elements in the top ~28px should still explicitly opt out as a
+ * defensive measure for any drag region we may add later. */
+.no-drag {
+  -webkit-app-region: no-drag;
 }

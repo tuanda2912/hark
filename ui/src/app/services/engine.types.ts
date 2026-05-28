@@ -73,7 +73,13 @@ export interface ErrorPayload {
 
 export interface CaptureStartCommand {
   readonly type: 'capture.start';
-  readonly payload?: {
+  /**
+   * Required (even if empty) — the engine's decoder reads the top-level
+   * `payload` field and rejects the envelope if it's missing. Inner
+   * fields (sources, translation) are all optional. See ADR-0010 / the
+   * 2026-05-28 dev-loop fix.
+   */
+  readonly payload: {
     readonly sources?: { readonly mic?: boolean; readonly system?: boolean };
     readonly translation?: {
       readonly enabled?: boolean;

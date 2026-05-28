@@ -23,6 +23,7 @@ export class AppComponent implements OnInit {
   readonly heartbeat = this.engine.heartbeat;
   readonly hello = this.engine.hello;
   readonly segments = this.engine.segments;
+  readonly lastError = this.engine.lastError;
 
   ngOnInit(): void {
     void this.engine.connect();
