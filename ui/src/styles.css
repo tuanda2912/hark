@@ -1,0 +1,30 @@
+/* Global styles for the Hark renderer.
+ *
+ * Order matters:
+ *   1. Tokens (CSS custom properties) defined under :root + [data-theme=...]
+ *   2. Tailwind layers that reference those vars via tailwind.config.js
+ *   3. Component-scoped CSS via Angular's encapsulation (separate files).
+ */
+@import './styles/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03";
+  letter-spacing: -0.005em;
+}
+
+/* Selection color follows the active accent. */
+::selection {
+  background: var(--selection);
+}

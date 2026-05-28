@@ -1,7 +1,7 @@
 # Hark — Current Status
 
 **Last updated:** 2026-05-28
-**Current phase:** Phase 3 complete + smoke-verified · Phase 4 (Electron + Angular UI) is next
+**Current phase:** Phase 4 in progress · thin-slice UI scaffold landed · adding surfaces incrementally
 **Stack:** validated (Phase 0 RTF 0.075 on M4 — see [ADR-0005](docs/decisions/0005-phase-0-rtf-validated.md))
 
 > This file is the **session handoff**. It gets updated every time work pauses so the next session (or the next machine) can pick up without re-deriving context.
@@ -25,18 +25,23 @@
   - `harkd --help` runs, build clean for all four binaries (hark-bench, hark-engine, hark-capture, harkd).
   - **DEVIATION from ADR-0008 §3:** ships an energy-based VAD with hangover (behind a `VAD` protocol), NOT Silero CoreML. ADR-0008 §3's open question #1 acknowledged Silero sourcing was uncertain. Energy gate covers the steady-silence hallucination case which is what §3 actually motivates. Silero is now an upgrade path — see Open Threads.
 - **Phase 3 follow-up — utterance_id v2** ([ADR-0009](docs/decisions/0009-utterance-id-overlap-rule-v2.md)). Smoke test 2026-05-28 on M1 caught an engulfment failure mode in the v1 (min-denominator) overlap rule from commit `be31c52`: when WhisperKit produced a coarser segmentation, long new segments hijacked the UUIDs of short engulfed entries, causing identity drift to alien content (e.g. `1C4B2CBA` "Okay." mutating into "the scheme where they provide the secure…"). Fix: max-denominator overlap (`overlap / max(segLen, eLen)`) + `UtteranceLedger.prune(beforeSessionTime:)` that emits a synthetic `segment.final` (identifiable by `language: nil`) for orphan partials falling out of the window. Re-smoke 2026-05-28 confirms catastrophic case eliminated; 7 clean partial→final transitions; prune emitting for 3 orphans. One softer wart documented as ADR-0009 open question #1, deferred until Phase 4 UI shows whether it matters. Closes ADR-0008 §"Open questions" #3.
+- **Phase 4 thin slice — scaffold + live transcript** ([ADR-0010](docs/decisions/0010-phase-4-ui-scaffold.md)). `ui/` project landed: Electron + Angular 21 (standalone components, signals) + Tailwind v3 (tokens piped via CSS vars) + plain `tsc` for the Electron main process. Electron main spawns `harkd` as a child process, polls `~/Library/Application Support/Hark/engine.port`, exposes the port to the renderer via a sandboxed `contextBridge`. Renderer's `EngineService` (`Injectable, providedIn: 'root'`) opens the WebSocket, dispatches frame types, maintains a `utterance_id`-keyed map → ordered `segments()` signal. `AppComponent` renders a minimal top-bar (REC / start / stop / RTF readout) and a live transcript list that exercises the partial→partial→final replace-in-place contract. Tray, Q&A, settings, post-meeting review, speaker tagging deferred to follow-up commits per ADR-0010 §"first-commit scope". Privacy guardrails: strict CSP (`connect-src 'self' ws://127.0.0.1:*`), `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`. No telemetry, no auto-update.
 
-### ⏳ Next up: Phase 4 — Electron + Angular UI
+### ⏳ Next up: Phase 4 surfaces (incremental)
 
-The full engine pipeline is complete and accepting WebSocket connections. Phase 4 builds the user-facing surface:
+The scaffold from the 2026-05-28 thin slice is in place ([ADR-0010](docs/decisions/0010-phase-4-ui-scaffold.md)). Remaining Phase 4 surfaces, roughly in priority order:
 
-- Electron + Angular 21 shell (per [ADR-0001](docs/decisions/0001-electron-over-tauri.md))
-- Electron main process spawns `harkd` as a child process; reads `engine.port`; connects WebSocket
-- Renderer: menu-bar tray, main window with live transcript view (per the UI design in `vault/hark/docs/design/ui/`), Q&A side panel, settings with privacy page
-- Manual speaker tag UI (Phase 5 will do voice fingerprint persistence)
-- electron-builder config for unsigned dev builds (signed builds deferred per the 2026-05-24 open-source local-devs decision)
+- **Mac-window chrome polish** — the design's `MacWindow` atom (traffic lights, hidden inset titlebar, drag region). Currently the window uses `titleBarStyle: 'hiddenInset'` but the renderer doesn't draw the chrome.
+- **Atoms from the design pass** — `TranscriptLine` (speaker chip + timestamp + body), `SpeakerTag`, `Eyebrow`, `StatusBanner`, `Toggle`, `CitationChip`. Use `vault/hark/docs/design/ui/artboards/ComponentSheet.jsx` as the visual reference.
+- **3-column layout in MainWindow** — `240px (attendees) | 1fr (transcript) | 320px (Q&A preview)`. Live transcript currently centered in a single column; expand to the design layout.
+- **Menu-bar tray** — `TrayMenu.jsx` three states (recording / idle / paused). Implemented via Electron's `Tray` + a small popover renderer.
+- **Settings → Privacy pane** — redaction toggles, voiceprint folder, cloud-calls log placeholder. Visual mock in `SettingsPrivacy.jsx`.
+- **Manual speaker tagging UI** — the modal + auto-recognition states from `SpeakerTagging.jsx`. WebSocket wiring for `speaker.tag` (engine side not yet implemented; capture as Phase 5 dep).
+- **Q&A side panel** — `QAPanel.jsx`. Engine-side Claude API integration is Phase 6 dep; for now this is a placeholder.
+- **Onboarding flow** — three screens from `Onboarding.jsx`. Defer until packaging.
+- **electron-builder config** — unsigned dev `.app` bundles. Phase 5 packaging-focused ADR.
 
-Estimated effort: 1–2 weeks per the roadmap. Largest phase by line count but most familiar territory (Angular is the developer's strength).
+Estimated effort: 1–2 weeks for the visual surfaces, plus engine-side coupling for speaker tagging and Q&A.
 
 ---
 

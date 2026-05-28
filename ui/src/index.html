@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8">
+    <title>Hark</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- CSP: deny remote content; allow inline styles (Tailwind base) and
+         ws://127.0.0.1:* (the harkd loopback bind). No `unsafe-eval`, no
+         remote scripts. Per privacy hard rule #3 + ADR-0001. -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self';
+                   style-src 'self' 'unsafe-inline';
+                   font-src 'self' data:;
+                   connect-src 'self' ws://127.0.0.1:*;
+                   img-src 'self' data:;
+                   object-src 'none';
+                   base-uri 'self';">
+  </head>
+  <body>
+    <hark-root></hark-root>
+  </body>
+</html>

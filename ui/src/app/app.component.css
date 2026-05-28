@@ -1,0 +1,8 @@
+/* Component-scoped styles. Most of the layout lives in Tailwind
+ * utility classes in app.component.html; this file is reserved for
+ * effects that don't fit the utility model (keyframes, ::deep selectors,
+ * etc.). Empty until we have one — keeps the build graph honest. */
+:host {
+  display: block;
+  height: 100vh;
+}

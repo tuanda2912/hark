@@ -1,0 +1,103 @@
+<div class="flex flex-col h-screen bg-bg text-text font-ui">
+  <!-- Top bar: REC indicator + controls + engine readout. Maps loosely
+       to the design's MainWindow top bar (artboards/MainWindow.jsx).
+       Phase 4 thin slice — full audio meter, bookmark, settings cog,
+       cloud-off lozenge land in follow-up commits. -->
+  <header
+    class="flex items-center gap-3 px-4 py-2 bg-bg-2 border-b border-border text-sm"
+  >
+    @if (isCapturing()) {
+      <span class="flex items-center gap-2 text-recording font-mono">
+        <span
+          class="w-2 h-2 rounded-full bg-recording animate-pulse"
+          aria-hidden="true"
+        ></span>
+        REC
+      </span>
+    } @else {
+      <span class="flex items-center gap-2 text-text-3 font-mono">
+        <span
+          class="w-2 h-2 rounded-full bg-text-3"
+          aria-hidden="true"
+        ></span>
+        idle
+      </span>
+    }
+
+    <div class="h-4 w-px bg-border" aria-hidden="true"></div>
+
+    <button
+      type="button"
+      class="px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text disabled:opacity-50 disabled:cursor-not-allowed"
+      [disabled]="!isConnected() || isCapturing()"
+      (click)="onStart()"
+    >
+      Start
+    </button>
+    <button
+      type="button"
+      class="px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text disabled:opacity-50 disabled:cursor-not-allowed"
+      [disabled]="!isCapturing()"
+      (click)="onStop()"
+    >
+      Stop
+    </button>
+
+    <div class="flex-1"></div>
+
+    <span class="text-text-3 text-xs font-mono">
+      conn: {{ connectionLabel() }}
+    </span>
+    @if (hello(); as h) {
+      <span class="text-text-3 text-xs font-mono">
+        engine v{{ h.engine_version }} · {{ h.model_loaded }}
+      </span>
+    }
+    <span class="text-text-3 text-xs font-mono">
+      RTF {{ rtfDisplay() }} · buf {{ ringFillDisplay() }}
+    </span>
+  </header>
+
+  <!-- Live transcript list. Replace-by-utterance-id semantics handled
+       in EngineService — every segment.partial / segment.final feeds
+       the same Map, so the same utterance_id mutates in place. -->
+  <main class="flex-1 overflow-y-auto px-6 py-4">
+    @if (segments().length === 0) {
+      <div class="text-text-3 text-sm py-12 text-center">
+        @if (!isConnected()) {
+          Waiting for engine…
+        } @else if (!isCapturing()) {
+          Press Start to begin capture.
+        } @else {
+          Listening…
+        }
+      </div>
+    } @else {
+      <ul class="space-y-3 max-w-3xl mx-auto">
+        @for (s of segments(); track s.utteranceId) {
+          <li
+            class="flex gap-3 items-baseline"
+            [class.text-text]="s.isFinal"
+            [class.text-text-2]="!s.isFinal"
+            [class.italic]="!s.isFinal"
+          >
+            <span
+              class="text-text-3 font-mono text-[11px] tabular-nums shrink-0 w-16"
+              [title]="'utt: ' + s.utteranceId"
+            >
+              {{ s.tStart.toFixed(1) }}s
+            </span>
+            <span class="flex-1 leading-relaxed">{{ s.text }}</span>
+            @if (!s.isFinal) {
+              <span
+                class="text-text-3 text-[10px] font-mono uppercase tracking-wider shrink-0"
+              >
+                partial
+              </span>
+            }
+          </li>
+        }
+      </ul>
+    }
+  </main>
+</div>
