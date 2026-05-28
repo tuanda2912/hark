@@ -116,6 +116,14 @@ let package = Package(
             name: "HarkCaptureTests",
             dependencies: ["HarkCore", "HarkCapture"],
             path: "Tests/HarkCaptureTests"
+        ),
+        // Tests for the `Harkd` executable target's internal types.
+        // `@testable import Harkd` works because SPM allows test targets
+        // to depend on executable targets and import their module.
+        .testTarget(
+            name: "HarkdTests",
+            dependencies: ["Harkd"],
+            path: "Tests/HarkdTests"
         )
     ]
 )

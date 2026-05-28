@@ -1,7 +1,7 @@
 # Hark — Current Status
 
-**Last updated:** 2026-05-27
-**Current phase:** Phase 3 complete · Phase 4 (Electron + Angular UI) is next
+**Last updated:** 2026-05-28
+**Current phase:** Phase 3 complete + smoke-verified · Phase 4 (Electron + Angular UI) is next
 **Stack:** validated (Phase 0 RTF 0.075 on M4 — see [ADR-0005](docs/decisions/0005-phase-0-rtf-validated.md))
 
 > This file is the **session handoff**. It gets updated every time work pauses so the next session (or the next machine) can pick up without re-deriving context.
@@ -24,6 +24,7 @@
   - `HarkCapture` refactored from executable into a library; `HarkCaptureCLI` is now the thin wrapper preserving the batch CLI.
   - `harkd --help` runs, build clean for all four binaries (hark-bench, hark-engine, hark-capture, harkd).
   - **DEVIATION from ADR-0008 §3:** ships an energy-based VAD with hangover (behind a `VAD` protocol), NOT Silero CoreML. ADR-0008 §3's open question #1 acknowledged Silero sourcing was uncertain. Energy gate covers the steady-silence hallucination case which is what §3 actually motivates. Silero is now an upgrade path — see Open Threads.
+- **Phase 3 follow-up — utterance_id v2** ([ADR-0009](docs/decisions/0009-utterance-id-overlap-rule-v2.md)). Smoke test 2026-05-28 on M1 caught an engulfment failure mode in the v1 (min-denominator) overlap rule from commit `be31c52`: when WhisperKit produced a coarser segmentation, long new segments hijacked the UUIDs of short engulfed entries, causing identity drift to alien content (e.g. `1C4B2CBA` "Okay." mutating into "the scheme where they provide the secure…"). Fix: max-denominator overlap (`overlap / max(segLen, eLen)`) + `UtteranceLedger.prune(beforeSessionTime:)` that emits a synthetic `segment.final` (identifiable by `language: nil`) for orphan partials falling out of the window. Re-smoke 2026-05-28 confirms catastrophic case eliminated; 7 clean partial→final transitions; prune emitting for 3 orphans. One softer wart documented as ADR-0009 open question #1, deferred until Phase 4 UI shows whether it matters. Closes ADR-0008 §"Open questions" #3.
 
 ### ⏳ Next up: Phase 4 — Electron + Angular UI
 
@@ -94,7 +95,9 @@ The session will then have the same context budget I have right now.
 10. **Model upgrade path — not blocking.** `large-v3-turbo` is the speed/quality Pareto pick today. If Vietnamese / Thai / code-switch WER turns out to be unacceptable in dogfooding, the cheapest upgrade is undistilled **`large-v3`** (Argmax ships a CoreML bundle) — ~10–15% WER improvement on hard languages at ~5× compute. Still fits the 0.5 RTF budget with current Phase 0 headroom (projected ~0.37). Fine-tunes like PhoWhisper (Vietnamese) or biodatlab whisper-th-* (Thai) require manual `whisperkittools` conversion and lose code-switching. **Decide *after* trying initial-prompt vocab injection from the vault** — that's a cheaper accuracy win we haven't cashed in. If we swap, capture the WER delta in a new ADR.
 11. **Phase 3 VAD is energy-based, not Silero.** `Sources/Harkd/VAD.swift` ships behind a `VAD` protocol so the upgrade is a one-file swap. Trigger to upgrade: if Phase 4 dogfooding shows hallucination on low-energy speech, OR if `large-v3-turbo` swap (open thread #10) brings the same hallucination class back. Silero CoreML model sourcing is the unresolved sub-question — likely an ONNX→CoreML conversion via `coremltools`, or accept ONNX Runtime as a dependency. Capture in a new ADR when we act.
 12. **Phase 3 WebSocket has no auth.** Loopback-only bind makes this acceptable per the threat model (only processes on the same Mac can connect). If a future feature ever opens the WS beyond loopback, this assumption breaks immediately and needs ADR-level rework. Don't let it slide.
-13. **`harkd` smoke test against a live WS client** is not yet done — the API drop interrupted the agent before it could `websocat` itself. `--help` works and the build is clean, but the full path "client connects → capture.start → segment.partial flows" was never exercised end-to-end. Do this before Phase 4 starts wiring Electron.
+13. ~~**`harkd` smoke test against a live WS client** is not yet done~~ — **resolved 2026-05-28.** Smoke run on M1 via `websocat` exercised the full path `meta.hello → capture.start → segment.partial/final stream → capture.stop`. The run also caught the v1 utterance-id engulfment bug (see Phase 3 follow-up in Done), now fixed in [ADR-0009](docs/decisions/0009-utterance-id-overlap-rule-v2.md).
+14. **Utterance-id soft mutation case** ([ADR-0009](docs/decisions/0009-utterance-id-overlap-rule-v2.md) open question #1) — overlap-of-longer at threshold ~0.5 still permits a UUID to mutate text across re-segmentations when the two intervals are roughly the same size but contain adjacent (not identical) speech. Observed in the 2026-05-28 re-smoke: `E4A8F453` shifted from "You are integrated with your ledger" → "You inherit the ledger contract" (score ≈ 0.58). Bounded — content stays in the same speech vicinity — but Phase 4 will tell us if it's user-visible. Fix would be text-similarity tie-breaking (call it v3); deferred until UI feedback exists.
+15. **M1 cold-start cost** is much worse than M4 — first ANE compile of `large-v3-turbo` took ~90s on M1 vs 1.67s warm on M4 ([ADR-0005](docs/decisions/0005-phase-0-rtf-validated.md)). Subsequent launches are fast (warm CoreML cache). RTF on M1 measured 0.08–0.28 during smoke — well under the 0.5 budget. The "10–30s typical" wording in `ModelLoader.swift` is M4-calibrated; consider rewording when Phase 4 lands and the load happens behind a spinner anyway.
 
 ---
 

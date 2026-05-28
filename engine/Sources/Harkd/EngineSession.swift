@@ -401,6 +401,20 @@ actor EngineSession {
             }
         }
 
+        // Drop entries that have fallen out of the active window. Anything
+        // whose tEnd is below the current window's left edge can never be
+        // matched by a future segment, so it'd just slow `resolve` over a
+        // long session. For non-finalized orphans, emit a `segment.final`
+        // with their last known state so the UI gets closure on dangling
+        // partials. See ADR-0009.
+        let pruned = ledger.prune(beforeSessionTime: windowStartSessionTime)
+        for p in pruned where !p.wasFinalized {
+            let orphanSeg = WindowSegment(
+                tStart: p.tStart, tEnd: p.tEnd, text: p.lastText, language: nil
+            )
+            emitSegment(uid: p.id, isFinal: true, seg: orphanSeg)
+        }
+
         self.transcribeInFlight = false
     }
 
