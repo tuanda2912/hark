@@ -5,8 +5,9 @@
 // Tray, Q&A panel, Settings, Speaker tagging all land in follow-up
 // commits per ADR-0010.
 
-import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { EngineService } from './services/engine.service';
+import { LANGUAGE_CHOICES } from './services/engine.types';
 
 @Component({
   selector: 'hark-root',
@@ -24,6 +25,10 @@ export class AppComponent implements OnInit {
   readonly hello = this.engine.hello;
   readonly segments = this.engine.segments;
   readonly lastError = this.engine.lastError;
+
+  readonly languageChoices = LANGUAGE_CHOICES;
+  /** Currently-selected language code; null = auto-detect. */
+  readonly language = signal<string | null>(null);
 
   ngOnInit(): void {
     void this.engine.connect();
@@ -64,7 +69,13 @@ export class AppComponent implements OnInit {
 
   onStart(): void {
     this.engine.clearSegments();
-    this.engine.startCapture();
+    this.engine.startCapture({ language: this.language() });
+  }
+
+  /** Bound to the language `<select>`. Empty string from the DOM
+   *  becomes null (auto-detect). */
+  onLanguageChange(value: string): void {
+    this.language.set(value === '' ? null : value);
   }
 
   onStop(): void {

@@ -43,6 +43,22 @@
       Stop
     </button>
 
+    <!-- Language picker. Locked once capture starts (the engine resolves
+         the lock at capture.start time and doesn't re-read it). -->
+    <label class="flex items-center gap-1 text-text-3 text-xs no-drag">
+      <span class="font-mono">lang</span>
+      <select
+        class="px-2 py-1 rounded-input border border-border-2 bg-surface text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        [disabled]="isCapturing()"
+        [value]="language() ?? ''"
+        (change)="onLanguageChange($any($event.target).value)"
+      >
+        @for (choice of languageChoices; track choice.code) {
+          <option [value]="choice.code ?? ''">{{ choice.label }}</option>
+        }
+      </select>
+    </label>
+
     <div class="flex-1"></div>
 
     <span class="text-text-3 text-xs font-mono">

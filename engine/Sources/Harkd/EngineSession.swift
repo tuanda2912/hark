@@ -56,6 +56,10 @@ actor EngineSession {
     /// Wall-clock seconds since capture start (advances during silence too).
     /// Used for the session-time anchor passed to the SlidingWindow.
     private var captureWallStart: Date?
+    /// Optional language lock for the session (ISO-639-1: "vi", "en"…).
+    /// `nil` means auto-detect per transcribe call. Passed to WhisperKit's
+    /// `DecodingOptions.language` at every hop + the flushOnStop drain.
+    private var sessionLanguage: String?
 
     // ─── Connected clients ──────────────────────────────────────────────
     private var clients: [String: WebSocketClient] = [:]
@@ -162,13 +166,24 @@ actor EngineSession {
 
         let captureMic = cmd.sources?.mic ?? true
         let captureSystem = cmd.sources?.system ?? true
+        // Normalize "auto" / empty to nil so callers can pass either form.
+        let language: String? = {
+            guard let raw = cmd.language?.trimmingCharacters(in: .whitespaces).lowercased(),
+                  !raw.isEmpty, raw != "auto" else { return nil }
+            return raw
+        }()
 
         do {
-            try startCapture(captureMic: captureMic, captureSystem: captureSystem)
+            try startCapture(captureMic: captureMic,
+                             captureSystem: captureSystem,
+                             language: language)
         } catch {
             sendError(client, id: id, code: "INTERNAL",
                       message: "could not start capture: \(error)", recoverable: false)
             return
+        }
+        if let lang = language {
+            FileHandle.standardError.write(Data("harkd: session language locked to \(lang)\n".utf8))
         }
         sendAck(client, id: id)
         let started = CaptureStartedPayload(
@@ -216,6 +231,7 @@ actor EngineSession {
         self.sessionStartDate = nil
         self.captureWallStart = nil
         self.sessionTimeSeconds = 0
+        self.sessionLanguage = nil
         self.vad = EnergyVAD()
     }
 
@@ -254,7 +270,9 @@ actor EngineSession {
 
     // ─── Capture wiring ─────────────────────────────────────────────────
 
-    private func startCapture(captureMic: Bool, captureSystem: Bool) throws {
+    private func startCapture(captureMic: Bool,
+                              captureSystem: Bool,
+                              language: String?) throws {
         self.sessionId = UUID().uuidString
         self.sessionStartDate = Date()
         self.captureWallStart = Date()
@@ -262,6 +280,7 @@ actor EngineSession {
         self.window = SlidingWindowBuffer(windowSeconds: 30, hopSeconds: 5, sampleRate: 16_000)
         self.ledger = UtteranceLedger()
         self.vad = EnergyVAD()
+        self.sessionLanguage = language
 
         // CapturePipeline runs its pump on a background DispatchQueue. The
         // floatFrameSink fires there. We bounce into the actor via a Task
@@ -331,7 +350,7 @@ actor EngineSession {
             let opts = DecodingOptions(
                 verbose: false,
                 task: .transcribe,
-                language: nil,            // auto-detect; production may add a hint
+                language: self.sessionLanguage,  // nil = auto; "vi"/"en"/… = locked
                 withoutTimestamps: false
             )
             results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: opts)
@@ -430,7 +449,8 @@ actor EngineSession {
         let results: [TranscriptionResult]
         do {
             let opts = DecodingOptions(verbose: false, task: .transcribe,
-                                       language: nil, withoutTimestamps: false)
+                                       language: self.sessionLanguage,
+                                       withoutTimestamps: false)
             results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: opts)
         } catch {
             FileHandle.standardError.write(Data("harkd: flush transcribe error: \(type(of: error))\n".utf8))

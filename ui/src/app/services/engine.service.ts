@@ -140,15 +140,19 @@ export class EngineService {
 
   // ─── Commands ───────────────────────────────────────────────────────
 
-  startCapture(opts?: { mic?: boolean; system?: boolean }): void {
+  startCapture(opts?: {
+    mic?: boolean;
+    system?: boolean;
+    /** ISO-639-1 code or null/undefined for auto-detect. */
+    language?: string | null;
+  }): void {
     // Payload is required by the engine's decoder even when empty —
     // see CaptureStartCommand type. Default to both sources unless the
     // caller explicitly opts out.
     const sources = { mic: opts?.mic ?? true, system: opts?.system ?? true };
-    const cmd: EngineCommand = {
-      type: 'capture.start',
-      payload: { sources },
-    };
+    const payload: { sources: typeof sources; language?: string } = { sources };
+    if (opts?.language) payload.language = opts.language;
+    const cmd: EngineCommand = { type: 'capture.start', payload };
     this._lastError.set(null);
     this._capture.set({ kind: 'starting' });
     this.send(cmd);

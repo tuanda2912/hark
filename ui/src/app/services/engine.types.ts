@@ -76,8 +76,12 @@ export interface CaptureStartCommand {
   /**
    * Required (even if empty) — the engine's decoder reads the top-level
    * `payload` field and rejects the envelope if it's missing. Inner
-   * fields (sources, translation) are all optional. See ADR-0010 / the
-   * 2026-05-28 dev-loop fix.
+   * fields are all optional. See ADR-0010 / the 2026-05-28 dev-loop fix.
+   *
+   * `language`: ISO-639-1 code ("vi", "en", "th"…) to lock the session
+   * to that language. Omit (or pass "auto") to let WhisperKit auto-detect
+   * per transcribe call. Locking is strongly recommended for non-English
+   * speech because per-window auto-detect on short audio is unreliable.
    */
   readonly payload: {
     readonly sources?: { readonly mic?: boolean; readonly system?: boolean };
@@ -86,8 +90,29 @@ export interface CaptureStartCommand {
       readonly mode?: string;
       readonly target_lang?: string;
     };
+    readonly language?: string;
   };
 }
+
+/**
+ * Language choices surfaced in the top-bar picker. `null` = auto-detect.
+ * Order is roughly "developer's likely use cases first" — adjust freely;
+ * Whisper supports ~99 languages, this is just a quick-pick.
+ */
+export interface LanguageChoice {
+  readonly code: string | null;
+  readonly label: string;
+}
+
+export const LANGUAGE_CHOICES: readonly LanguageChoice[] = [
+  { code: null, label: 'Auto' },
+  { code: 'en', label: 'English' },
+  { code: 'vi', label: 'Tiếng Việt' },
+  { code: 'th', label: 'ไทย' },
+  { code: 'zh', label: '中文' },
+  { code: 'ja', label: '日本語' },
+  { code: 'ko', label: '한국어' },
+];
 
 export interface CaptureStopCommand {
   readonly type: 'capture.stop';

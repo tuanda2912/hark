@@ -204,6 +204,13 @@ struct CaptureStartCommand: Decodable {
     }
     let sources: Sources?
     let translation: Translation?
+    /// Optional language hint, locked for the session. ISO-639-1 ("vi",
+    /// "en", "th"…). `nil` means auto-detect — WhisperKit picks per
+    /// transcribe call, which is less reliable for short non-English
+    /// windows. See language picker on the UI side. Locale is also
+    /// implicitly the decoder's prompt language, so this affects more
+    /// than just language detection.
+    let language: String?
 }
 
 struct BookmarkCreateCommand: Decodable {
