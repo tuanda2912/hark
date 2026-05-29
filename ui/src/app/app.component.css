@@ -1,15 +1,23 @@
-/* Component-scoped styles. Most of the layout lives in Tailwind
- * utility classes in app.component.html; this file is reserved for
- * effects that don't fit the utility model. */
+/* Component-scoped styles. Most layout lives in Tailwind utility
+ * classes in app.component.html; this file holds the macOS chrome
+ * integration that the utility model doesn't cover. */
 :host {
   display: block;
   height: 100vh;
 }
 
-/* macOS titlebar drag-region handling. With `titleBarStyle: 'hiddenInset'`
- * Electron does NOT auto-make the page draggable, but interactive
- * elements in the top ~28px should still explicitly opt out as a
- * defensive measure for any drag region we may add later. */
+/* macOS titlebar integration. The BrowserWindow uses
+ * `titleBarStyle: 'hiddenInset'`, which floats the native traffic
+ * lights over the top-left of the web content. We:
+ *   - make the whole top bar a window-drag region, and
+ *   - pad it left by 78px so our REC indicator clears the lights.
+ * Interactive children (buttons, the language <select>) opt back out
+ * with `.no-drag`, otherwise the OS swallows their clicks for dragging. */
+.titlebar-drag {
+  -webkit-app-region: drag;
+  padding-left: 78px;
+}
+
 .no-drag {
   -webkit-app-region: no-drag;
 }

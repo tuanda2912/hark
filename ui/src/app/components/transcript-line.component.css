@@ -1,0 +1,58 @@
+/* TranscriptLine styles. Mirrors the design's inline styles from
+ * shared.jsx `TranscriptLine` (default variant), lifted into a scoped
+ * stylesheet. The .tx-speaker / .sp-chip / .live-caret / .tx-line
+ * classes themselves are defined globally in styles/tokens.css; this
+ * file only adds the per-line layout the design had inline. */
+
+:host {
+  display: block;
+}
+
+.tx-line {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--highlight);
+}
+
+.tx-line-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.tx-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.tx-line-body {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text);
+  padding-left: 16px;
+}
+
+.tx-translation {
+  font-size: 13.5px;
+  font-style: italic;
+  color: var(--text-2);
+  margin-top: 4px;
+  padding-left: 16px;
+  line-height: 1.5;
+}
+
+/* Live partial: italic, dimmed, with the blinking caret appended. The
+ * caret element (.live-caret) gets its blink keyframe from tokens.css. */
+.tx-partial .tx-line-body {
+  font-style: italic;
+  color: var(--text-2);
+}
+
+.tx-partial-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}

@@ -1,34 +1,35 @@
 <div class="flex flex-col h-screen bg-bg text-text font-ui">
-  <!-- Top bar: REC indicator + controls + engine readout. Maps loosely
-       to the design's MainWindow top bar (artboards/MainWindow.jsx).
-       Phase 4 thin slice — full audio meter, bookmark, settings cog,
-       cloud-off lozenge land in follow-up commits. -->
+  <!-- Top bar. `titlebar-drag` makes the bar a macOS window-drag region
+       and pads left to clear the native hiddenInset traffic lights;
+       every interactive child opts back out with `no-drag`.
+       Mirrors the design's MainWindow top bar (artboards/MainWindow.jsx). -->
   <header
-    class="flex items-center gap-3 px-4 py-2 bg-bg-2 border-b border-border text-sm"
+    class="titlebar-drag flex items-center gap-4 pr-4 py-2 bg-bg border-b border-border text-sm"
   >
+    <!-- REC / idle indicator -->
     @if (isCapturing()) {
-      <span class="flex items-center gap-2 text-recording font-mono">
-        <span
-          class="w-2 h-2 rounded-full bg-recording animate-pulse"
-          aria-hidden="true"
-        ></span>
-        REC
+      <div class="flex items-center gap-2">
+        <span class="rec-dot" aria-hidden="true"></span>
+        <span class="font-mono text-xs font-semibold tracking-wide text-recording">
+          REC {{ recCounter() }}
+        </span>
+      </div>
+      <!-- Animated audio meter — hints live capture without leaking audio. -->
+      <span class="audio-meter text-accent" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
       </span>
     } @else {
-      <span class="flex items-center gap-2 text-text-3 font-mono">
-        <span
-          class="w-2 h-2 rounded-full bg-text-3"
-          aria-hidden="true"
-        ></span>
-        idle
-      </span>
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-text-3" aria-hidden="true"></span>
+        <span class="font-mono text-xs text-text-3">idle</span>
+      </div>
     }
 
     <div class="h-4 w-px bg-border" aria-hidden="true"></div>
 
     <button
       type="button"
-      class="px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed no-drag"
+      class="no-drag px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       [disabled]="!isConnected() || isCapturing()"
       (click)="onStart()"
     >
@@ -36,16 +37,16 @@
     </button>
     <button
       type="button"
-      class="px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed no-drag"
+      class="no-drag px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       [disabled]="!isCapturing()"
       (click)="onStop()"
     >
       Stop
     </button>
 
-    <!-- Language picker. Locked once capture starts (the engine resolves
-         the lock at capture.start time and doesn't re-read it). -->
-    <label class="flex items-center gap-1 text-text-3 text-xs no-drag">
+    <!-- Language picker. Locked once capture starts (engine resolves the
+         lock at capture.start time and doesn't re-read it). -->
+    <label class="no-drag flex items-center gap-1 text-text-3 text-xs">
       <span class="font-mono">lang</span>
       <select
         class="px-2 py-1 rounded-input border border-border-2 bg-surface text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
@@ -61,24 +62,29 @@
 
     <div class="flex-1"></div>
 
-    <span class="text-text-3 text-xs font-mono">
-      conn: {{ connectionLabel() }}
+    <!-- Trust lozenge — the product's defining affordance. Audio stays
+         on this Mac; this is always-visible reassurance. -->
+    <span
+      class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-border bg-bg-2 text-text-3 text-[11px] font-mono whitespace-nowrap"
+      title="Audio is captured and transcribed entirely on this Mac. Nothing is sent to any server."
+    >
+      <!-- cloud-off glyph -->
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+        stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+        stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 3l18 18M7 17.5A4.5 4.5 0 0 1 7.5 8.5M9.5 5.5A6 6 0 0 1 19 10a3.5 3.5 0 0 1 1.7 6.6" />
+      </svg>
+      audio · local-only
     </span>
-    @if (hello(); as h) {
-      <span class="text-text-3 text-xs font-mono">
-        engine v{{ h.engine_version }} · {{ h.model_loaded }}
-      </span>
-    }
-    <span class="text-text-3 text-xs font-mono">
-      RTF {{ rtfDisplay() }} · buf {{ ringFillDisplay() }}
+
+    <!-- Dev readout — kept compact; not in the final design but useful
+         while building. conn state + live RTF. -->
+    <span class="text-text-3 text-[11px] font-mono" [title]="hello() ? ('engine v' + hello()!.engine_version + ' · ' + hello()!.model_loaded) : ''">
+      {{ connectionLabel() }} · RTF {{ rtfDisplay() }}
     </span>
   </header>
 
-  <!-- Engine error banner. The lastError signal is cleared at the next
-       capture start; until then this stays visible so the user isn't
-       wondering why "starting" reverted to "idle". Opacity modifiers
-       don't work on CSS-var colors in Tailwind v3 without a
-       <alpha-value> placeholder, so we use solid border + text. -->
+  <!-- Engine error banner. Cleared at the next capture start. -->
   @if (lastError(); as err) {
     <div
       class="px-4 py-2 text-xs bg-bg-2 border-b border-recording text-recording font-mono"
@@ -87,9 +93,10 @@
     </div>
   }
 
-  <!-- Live transcript list. Replace-by-utterance-id semantics handled
-       in EngineService — every segment.partial / segment.final feeds
-       the same Map, so the same utterance_id mutates in place. -->
+  <!-- Transcript feed: finalized history, then live partials at the
+       bottom. Replace-by-utterance-id is handled in EngineService; here
+       we just split on isFinal so partials render with the live-tail
+       (italic + caret) treatment and "commit" into history on finalize. -->
   <main class="flex-1 overflow-y-auto px-6 py-4">
     @if (segments().length === 0) {
       <div class="text-text-3 text-sm py-12 text-center">
@@ -102,31 +109,25 @@
         }
       </div>
     } @else {
-      <ul class="space-y-3 max-w-3xl mx-auto">
-        @for (s of segments(); track s.utteranceId) {
-          <li
-            class="flex gap-3 items-baseline"
-            [class.text-text]="s.isFinal"
-            [class.text-text-2]="!s.isFinal"
-            [class.italic]="!s.isFinal"
-          >
-            <span
-              class="text-text-3 font-mono text-[11px] tabular-nums shrink-0 w-16"
-              [title]="'utt: ' + s.utteranceId"
-            >
-              {{ s.tStart.toFixed(1) }}s
-            </span>
-            <span class="flex-1 leading-relaxed">{{ s.text }}</span>
-            @if (!s.isFinal) {
-              <span
-                class="text-text-3 text-[10px] font-mono uppercase tracking-wider shrink-0"
-              >
-                partial
-              </span>
-            }
-          </li>
+      <div class="max-w-3xl mx-auto">
+        @for (s of finalizedSegments(); track s.utteranceId) {
+          <hark-transcript-line
+            [time]="formatTime(s.tStart)"
+            [text]="s.text"
+            [speaker]="s.speaker"
+            [translation]="s.translation"
+          />
         }
-      </ul>
+        @for (s of liveSegments(); track s.utteranceId) {
+          <hark-transcript-line
+            [time]="formatTime(s.tStart)"
+            [text]="s.text"
+            [speaker]="s.speaker"
+            [translation]="s.translation"
+            [partial]="true"
+          />
+        }
+      </div>
     }
   </main>
 </div>
