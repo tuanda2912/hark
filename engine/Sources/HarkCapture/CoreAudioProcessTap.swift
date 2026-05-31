@@ -2,13 +2,14 @@
 //
 // ── What this is ───────────────────────────────────────────────────────────
 // macOS 14.4+ "Process Taps" let us read the mixed system-audio stream without
-// a kernel extension or a virtual audio device. This is the SECOND, SELECTABLE
-// backend (the default is SystemAudioTap = ScreenCaptureKit). It exists to test
-// whether Process Taps can be made to work on our UNSIGNED dev CLI now that we
-// understand the permission model — see the TCC note below.
+// a kernel extension or a virtual audio device. This is the SELECTABLE tap
+// backend (the current default is SystemAudioTap = ScreenCaptureKit). It is
+// PROVEN WORKING on macOS 26 — captures built-in-speaker and Bluetooth output
+// (the latter without forcing A2DP→HFP, since we tap only rendered output).
+// The full debug story and the exact recipe live in ADR-0011.
 //
 // Select it with env `HARK_CAPTURE_BACKEND=tap`. With anything else (or unset)
-// CapturePipeline uses the ScreenCaptureKit backend, which is the proven path.
+// CapturePipeline uses the ScreenCaptureKit backend.
 //
 // ── The Core Audio dance (for a JVM/Spring reader) ─────────────────────────
 // Core Audio's HAL is a flat, C-style object database: every device/stream/tap
@@ -20,44 +21,45 @@
 //      that excludes no processes → "everything mixed to the default output".
 //   2. AudioHardwareCreateProcessTap → a tap AudioObjectID. The tap on its own
 //      has no IO cycle; it's just a source.
-//   3. Create a PRIVATE aggregate device whose only sub-device is that tap.
-//      The aggregate is the thing that actually runs an IO cycle and fires an
-//      IOProc. We do NOT pin it to the output device as a clock master (that
-//      was a bug — see "Tap-only aggregate" below).
-//   4. AudioDeviceCreateIOProcIDWithBlock on the aggregate; the block fires on
-//      a Core Audio realtime thread with each buffer. We wrap it (no-copy) as
-//      an AVAudioPCMBuffer and hand it to the caller's BufferHandler.
+//   3. Create a PRIVATE aggregate device that wraps the tap AND includes the
+//      default OUTPUT device as its main sub-device + sole sub-device. The
+//      output device is the CLOCK that drives the IO cycle; the tap rides
+//      alongside it in the aggregate's tap list. (A tap-only aggregate with no
+//      hardware clock never spins — see ADR-0011.)
+//   4. AudioDeviceCreateIOProcIDWithBlock on the aggregate, passing a real
+//      dispatch queue (NOT nil — the block variant requires one). The block
+//      fires per buffer; we wrap it (no-copy) as an AVAudioPCMBuffer and hand
+//      it to the caller's BufferHandler.
 //   5. AudioDeviceStart to spin the cycle.
 //
-// ── Fixes baked in vs. the original implementation ─────────────────────────
-//   • GLOBAL tap, not mixdown-of-processes. The original used
-//     `CATapDescription(stereoMixdownOfProcesses: [])`, which taps the listed
-//     processes — and an EMPTY list taps NOTHING. The correct "tap the whole
-//     system" form is `stereoGlobalTapButExcludeProcesses: []` (exclude none).
-//   • TAP-ONLY aggregate. The original set kAudioAggregateDeviceMainSubDeviceKey
-//     to the output device's UID, making the aggregate clock off the output.
-//     That aggregate didn't spin its IO cycle for our private device. We omit
-//     the main sub-device entirely and let the tap drive the cycle, with
-//     drift compensation on and TapAutoStart on.
-//   • FORMAT FROM THE TAP. We read kAudioTapPropertyFormat off the tap object
-//     itself (authoritative), falling back to the aggregate's input-scope
-//     stream format only if that read fails.
+// ── The three things that made this actually work (ADR-0011) ───────────────
+//   • PERMISSION + IDENTITY. Process Taps are gated by `kTCCServiceAudioCapture`
+//     (distinct from Microphone and Screen Recording), and the request only
+//     sticks for a STABLE signed identity. Dev builds request it via the
+//     private TCC SPI behind `HARK_ENABLE_TCC_SPI=1` (see PermissionGate);
+//     production ships a signed bundle with NSAudioCaptureUsageDescription and
+//     uses the public path. An unsigned/terminal-attributed binary is denied
+//     silently — every call returns noErr and the tap is fed nothing.
+//   • A RUNNING CFRunLoop. AudioDeviceStart is async; the HAL delivers its
+//     start completion on a CFRunLoop. A GUI app gets this from its main run
+//     loop, but a CLI/daemon does not — so we run a real CFRunLoop on a
+//     dedicated thread and point kAudioHardwarePropertyRunLoop at it. Without
+//     it the device stays isRunning=0 and the IOProc never fires (every call
+//     still returns noErr). Setting that property to NULL was a no-op here.
+//   • NO isPrivate / isExclusive on the tap description. With them set the tap
+//     binds (the aggregate shows one input stream) but the device never starts.
+//     We leave them at their defaults, matching the working AudioCap reference.
 //
-// ── TCC permission (the actual reason Process Taps were dead) ──────────────
-// Process-Tap system-audio capture is gated by the `kTCCServiceAudioCapture`
-// TCC service — DISTINCT from Microphone and Screen Recording. Our normal
-// PermissionGate never requested it, so no prompt ever appeared and the tap
-// was silently fed no audio (every Core Audio call returned status=0, the
-// IOProc just never fired). When `HARK_ENABLE_TCC_SPI=1`, start() requests it
-// via PermissionGate.requestAudioCaptureViaSPI() (a PRIVATE TCC SPI — see that
-// file's smell note) before creating the tap. Production will instead ship a
-// signed bundle with NSAudioCaptureUsageDescription and use the public path.
+//   Format note: we read kAudioTapPropertyFormat off the tap object itself
+//   (authoritative), falling back to the aggregate's input-scope stream format
+//   only if that read fails.
 //
 // ── Threading ──────────────────────────────────────────────────────────────
-// The IOProc fires on a Core Audio realtime thread. We avoid allocating ObjC
-// objects, taking locks, or touching `self` from it — the block captures the
-// format reference and handler by value, and stop() guarantees the proc is
-// destroyed before we drop them.
+// The IOProc block is dispatched on a dedicated serial queue (Core Audio drives
+// it at realtime priority). We avoid allocating ObjC objects, taking locks, or
+// touching `self` from it — the block captures the format reference and handler
+// by value, and stop() guarantees the proc is destroyed before we drop them.
+// A SECOND dedicated thread runs the CFRunLoop that services HAL notifications.
 
 import AVFoundation
 import AudioToolbox
@@ -167,12 +169,11 @@ public final class CoreAudioProcessTap: SystemAudioCapturing {
         }
 
         // 1. Build the tap description. GLOBAL tap excluding NO processes =
-        //    "the whole system mix". muteBehavior .unmuted means we observe the
-        //    live mix without silencing the user's speakers. isPrivate keeps
-        //    the tap visible only to this process.
-        // Match AudioCap's tap description EXACTLY: own the uuid, set only
-        // muteBehavior. We deliberately do NOT set isPrivate/isExclusive — on a
-        // global tap those flags were unproven and AudioCap omits them.
+        //    "the whole system mix". muteBehavior .unmuted observes the live mix
+        //    without silencing the user's speakers. We own the uuid and set ONLY
+        //    muteBehavior — deliberately NOT isPrivate/isExclusive: on a global
+        //    tap those flags let the tap bind but stop the aggregate device from
+        //    ever starting (ADR-0011). Matches the working AudioCap reference.
         let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
         tapDesc.uuid = UUID()
         tapDesc.muteBehavior = .unmuted
