@@ -21,10 +21,22 @@ public final class Mixer {
 
     public private(set) var stats = Stats()
 
+    // Which sources the pipeline is actually capturing. A DISABLED source
+    // (e.g. the mic in --system-only mode) must never count as an underrun —
+    // only an ENABLED source that fails to deliver a chunk is a real underrun.
+    private let micEnabled: Bool
+    private let systemEnabled: Bool
+
+    public init(micEnabled: Bool = true, systemEnabled: Bool = true) {
+        self.micEnabled = micEnabled
+        self.systemEnabled = systemEnabled
+    }
+
     /// Mixes one aligned chunk of `frames` samples from each source. Either
     /// buffer may be nil to indicate that source is disabled or underrunning;
-    /// nil is treated as silence and the corresponding underrun counter is
-    /// incremented.
+    /// nil is treated as silence. The underrun counter increments only when an
+    /// ENABLED source delivers nil — a disabled source is silence by design,
+    /// not a glitch.
     /// Returns Int16 PCM samples ready for the WAV writer.
     public func mix(
         mic: UnsafeBufferPointer<Float>?,
@@ -32,8 +44,8 @@ public final class Mixer {
         frames: Int
     ) -> [Int16] {
         var out = [Int16](repeating: 0, count: frames)
-        if mic == nil { stats.micUnderrunFrames += frames }
-        if system == nil { stats.systemUnderrunFrames += frames }
+        if micEnabled, mic == nil { stats.micUnderrunFrames += frames }
+        if systemEnabled, system == nil { stats.systemUnderrunFrames += frames }
 
         for i in 0..<frames {
             let m = mic?[i] ?? 0

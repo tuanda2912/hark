@@ -59,12 +59,12 @@ public final class CapturePipeline {
 
     private let options: Options
     private let writer: WAVWriter?
-    private let mixer = Mixer()
+    private let mixer: Mixer
 
     // Per-source state.
     private var mic: MicCapture?
     private var micResampler: Resampler?
-    private var system: SystemAudioTap?
+    private var system: (any SystemAudioCapturing)?
     private var systemResampler: Resampler?
 
     // FIFOs of resampled 16 kHz mono Float32 samples. Append under lock,
@@ -80,6 +80,10 @@ public final class CapturePipeline {
 
     public init(options: Options) throws {
         self.options = options
+        self.mixer = Mixer(
+            micEnabled: options.captureMic,
+            systemEnabled: options.captureSystem
+        )
         if let url = options.outputURL {
             self.writer = try WAVWriter(url: url)
         } else {
@@ -101,7 +105,7 @@ public final class CapturePipeline {
         }
 
         if options.captureSystem {
-            let s = SystemAudioTap()
+            let s = Self.makeSystemBackend()
             try s.start { [weak self] buf, _ in
                 // SystemAudioTap's sourceFormat is only known after start()
                 // returns, so build the resampler lazily on the first buffer.
@@ -117,6 +121,24 @@ public final class CapturePipeline {
 
         startPump()
         startHeartbeat()
+    }
+
+    /// Pick the system-audio backend from env `HARK_CAPTURE_BACKEND`:
+    ///   • "tap"            → Core Audio Process Taps (CoreAudioProcessTap) —
+    ///                        the EXPERIMENTAL path we're re-testing.
+    ///   • anything / unset → ScreenCaptureKit (SystemAudioTap) — the DEFAULT,
+    ///                        the proven path. Must never regress.
+    /// We log the choice to stderr so the operator can confirm which one ran.
+    private static func makeSystemBackend() -> any SystemAudioCapturing {
+        let backend = ProcessInfo.processInfo.environment["HARK_CAPTURE_BACKEND"]
+        if backend == "tap" {
+            FileHandle.standardError.write(
+                Data("hark-capture: system-audio backend = Core Audio Process Tap (HARK_CAPTURE_BACKEND=tap)\n".utf8))
+            return CoreAudioProcessTap()
+        }
+        FileHandle.standardError.write(
+            Data("hark-capture: system-audio backend = ScreenCaptureKit (default)\n".utf8))
+        return SystemAudioTap()
     }
 
     public func stop() throws {

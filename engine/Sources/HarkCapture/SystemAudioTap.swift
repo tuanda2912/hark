@@ -1,320 +1,387 @@
-// SystemAudioTap — Core Audio Process Tap on the default output device.
+// SystemAudioTap — system-audio capture via ScreenCaptureKit (SCStream).
 //
-// macOS 14.4+ Process Taps (ADR-0006 §"Capture API") let us read the mixed
-// system-audio stream without a kernel extension or virtual device. The
-// flow is:
-//   1. Build a CATapDescription that targets all processes ("global tap")
-//      mixed into the default output, in mono-mixdown / non-private form.
-//   2. AudioHardwareCreateProcessTap → tap AudioObjectID.
-//   3. Create a private aggregate device whose sub-tap list contains the
-//      tap UID, bound to the default output's UID. The aggregate is the
-//      thing we actually drive IO on; the tap by itself has no IOProc.
-//   4. AudioDeviceCreateIOProcIDWithBlock on the aggregate; in the proc,
-//      wrap the AudioBufferList into an AVAudioPCMBuffer (no-copy) and
-//      hand it to the caller.
+// ── Why ScreenCaptureKit instead of Core Audio Process Taps ────────────────
+// This file used to drive a Core Audio "process tap" (AudioHardwareCreateProcessTap
+// + a private aggregate device + an IOProc). On macOS 15+ that path is gated
+// behind the "Audio Recording" TCC class, which an UNSIGNED, ad-hoc-signed,
+// LaunchServices-unregistered dev build cannot acquire: no permission prompt
+// ever appears, the binary never shows up under System Settings → Screen &
+// System Audio Recording, and the IOProc never fires even though every
+// Core Audio call returns status=0 with a valid 48 kHz/2ch format. Empirically
+// dead for our build mode.
 //
-// Threading: the IOProc fires on a Core Audio realtime thread. We do not
-// allocate ObjC objects, take locks, or call into Swift runtime metadata
-// beyond constructing the AVAudioPCMBuffer wrapper (which is necessary to
-// preserve the existing BufferHandler contract shared with MicCapture).
+// ScreenCaptureKit captures system audio under the *Screen Recording* TCC
+// grant instead — which this environment already has (PermissionGate preflights
+// it via CGPreflightScreenCaptureAccess). So we switch the capture engine to an
+// SCStream while keeping this class's public API byte-identical. This supersedes
+// ADR-0006's "Capture API" choice (Process Taps).
 //
-// Entitlements: on a signed/sandboxed app, the Process Tap path is gated
-// by `com.apple.security.device.audio-input` plus Screen Recording TCC.
-// This binary is built from source by the dev with no Developer account,
-// so it runs unsigned; TCC still applies (CGRequestScreenCaptureAccess
-// must have been granted). If a future macOS hardens this to require a
-// real entitlement, ADR-0006 calls out the SCK audio-only fallback.
+// ── How SCK audio capture works (for a JVM/Spring reader) ──────────────────
+// SCStream is Apple's screen+audio capture pipeline. You describe WHAT to
+// capture with an SCContentFilter (here: the main display), HOW with an
+// SCStreamConfiguration (resolution, frame rate, audio on/off, sample rate…),
+// then register one or more "outputs" (sinks). Each output is an object that
+// conforms to SCStreamOutput and receives CMSampleBuffers on a queue you pick —
+// conceptually a callback subscriber, like an RxJava Subscriber pulling items
+// off a Scheduler. We register ONE output, for audio only, and ignore video.
+//
+// SMELL (also flagged in ADR-0006): SCK has no audio-only mode. To get audio
+// you MUST configure and run a video stream too. We therefore set a deliberately
+// tiny, slow video config (2×2 px, ~1 fps) and silently drop every video sample
+// buffer. The video pixels are never read, decoded, or written anywhere. This
+// is the documented Apple workaround, not an oversight.
+//
+// ── Threading ──────────────────────────────────────────────────────────────
+// Audio sample buffers arrive on a dedicated serial DispatchQueue (see
+// `sampleQueue`). We convert each CMSampleBuffer to an AVAudioPCMBuffer
+// (copying the samples so they outlive the callback) and hand it to the
+// caller's BufferHandler synchronously — the exact contract MicCapture uses.
+// The caller (CapturePipeline) must not block this queue.
+//
+// ── start() is sync but SCK is async ───────────────────────────────────────
+// The public start(onBuffer:) is synchronous-throwing (the API contract,
+// because CapturePipeline reads `sourceFormat` on the very next line). SCK's
+// setup (SCShareableContent.current, SCStream.startCapture) is async. We bridge
+// with a semaphore ONLY at the start() boundary; once running, all IO is async
+// on the GCD queue. Any SCK setup error is propagated out of start() as a throw.
 
 import AVFoundation
-import AudioToolbox
-import CoreAudio
+import CoreMedia
 import Foundation
+import ScreenCaptureKit
 
 @available(macOS 14.4, *)
-public final class SystemAudioTap {
+public final class SystemAudioTap: NSObject, SCStreamOutput, SystemAudioCapturing {
     public typealias BufferHandler = (AVAudioPCMBuffer, AVAudioTime) -> Void
 
-    // Set in start(), torn down in stop(). All three are 0 / nil when idle.
-    private var tapID: AudioObjectID = kAudioObjectUnknown
-    private var aggregateID: AudioObjectID = kAudioObjectUnknown
-    private var ioProcID: AudioDeviceIOProcID?
-
-    // Captured at start() so the realtime IOProc can build AVAudioPCMBuffers
-    // without touching `self` for the format (which would require a Swift
-    // metadata lookup on the audio thread).
-    private var runningFormat: AVAudioFormat?
-
-    // Handler retained for the duration of a start/stop cycle.
+    // Live only between start() and stop(); nil when idle.
+    private var stream: SCStream?
     private var handler: BufferHandler?
 
-    public init() {}
+    // The actual AVAudioFormat SCK delivers, learned from the first audio
+    // sample buffer (or negotiated during start — see start()). Read by
+    // `sourceFormat` to build CapturePipeline's Resampler. Synchronized via
+    // `formatLock` because it's written on the sample queue and read on the
+    // start() thread.
+    private var runningFormat: AVAudioFormat?
+    private let formatLock = NSLock()
 
-    /// Native format the tap delivers. Before `start()`, returns a sensible
-    /// 48 kHz stereo Float32 default — the typical default-output shape.
-    /// After `start()`, reflects what Core Audio actually negotiated.
-    public var sourceFormat: AVAudioFormat {
-        if let fmt = runningFormat { return fmt }
-        return AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 48_000,
-            channels: 2,
-            interleaved: false
-        )!
+    // Dedicated serial queue for SCK sample delivery. A serial queue keeps
+    // buffer ordering deterministic (no out-of-order audio) and means our
+    // SCStreamOutput callback never re-enters itself.
+    private let sampleQueue = DispatchQueue(label: "hark.capture.sck.audio", qos: .userInitiated)
+
+    public override init() { super.init() }
+
+    // Diagnostic logging, gated by env `HARK_TAP_DEBUG=1`. Off in normal runs
+    // (incl. the daemon) so stderr stays clean; flip on to trace SCK setup and
+    // confirm audio buffers actually arrive. Writes to stderr. (Kept the same
+    // env var name and `hark-tap:` prefix as the old Process Tap path so the
+    // existing test recipe and muscle memory still work.)
+    private static let tapDebug = ProcessInfo.processInfo.environment["HARK_TAP_DEBUG"] != nil
+    private static func dbg(_ s: String) {
+        if tapDebug { FileHandle.standardError.write(Data("hark-tap: \(s)\n".utf8)) }
     }
 
+    /// Counts audio-buffer deliveries so debug logging can prove the SCStream
+    /// output callback actually fires (the crux of the old 0-frames symptom).
+    private final class CallCounter: @unchecked Sendable { var n = 0 }
+    private let dbgCounter = CallCounter()
+
+    /// Native format the stream delivers. Before `start()` (and as a fallback
+    /// if the first-buffer probe times out), returns the 48 kHz stereo Float32
+    /// shape we ask SCK for in the configuration. After `start()`, reflects the
+    /// exact AVAudioFormat of the audio sample buffers SCK actually delivers.
+    public var sourceFormat: AVAudioFormat {
+        formatLock.lock()
+        let fmt = runningFormat
+        formatLock.unlock()
+        if let fmt { return fmt }
+        return Self.defaultFormat
+    }
+
+    /// The 48 kHz stereo Float32 (non-interleaved) shape we request from SCK.
+    /// SCK delivers deinterleaved Float32, so non-interleaved is the truthful
+    /// default and also what the first-buffer-derived format will be.
+    private static let defaultFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 48_000,
+        channels: 2,
+        interleaved: false
+    )!
+
     public func start(onBuffer: @escaping BufferHandler) throws {
-        guard tapID == kAudioObjectUnknown else {
+        guard stream == nil else {
             throw Self.error(-1, "SystemAudioTap.start called while already running")
         }
-
-        // 1. Resolve the default output device and its UID. The tap targets
-        //    "all processes mixed into this output", so we need the device
-        //    UID to pin the aggregate to the right hardware endpoint.
-        let outputDevice = try Self.defaultOutputDevice()
-        let outputUID = try Self.deviceUID(outputDevice)
-
-        // 2. Build the tap description. `init(stereoMixdownOfProcesses:)` with
-        //    an empty list means "all processes" per the WWDC 2024 session
-        //    10160 pattern; setting muteBehavior to .unmuted means we observe
-        //    the live mix without forcing silence on the user's speakers.
-        let tapDesc = CATapDescription(stereoMixdownOfProcesses: [])
-        tapDesc.muteBehavior = .unmuted
-        tapDesc.isPrivate = true   // tap visible only to this process
-        tapDesc.isExclusive = false
-
-        // 3. Create the tap. AudioObjectID out-param; non-zero status throws.
-        var createdTapID: AudioObjectID = kAudioObjectUnknown
-        let tapStatus = AudioHardwareCreateProcessTap(tapDesc, &createdTapID)
-        guard tapStatus == noErr, createdTapID != kAudioObjectUnknown else {
-            throw Self.error(tapStatus, "AudioHardwareCreateProcessTap failed")
-        }
-        self.tapID = createdTapID
-
-        // Pull the tap's UID — we reference it from the aggregate's sub-tap
-        // list by UID string, not by AudioObjectID.
-        let tapUID: String
-        do {
-            tapUID = try Self.stringProperty(
-                createdTapID,
-                selector: kAudioTapPropertyUID
-            )
-        } catch {
-            cleanupAfterFailure()
-            throw error
-        }
-
-        // 4. Build the private aggregate device that wraps the tap. The keys
-        //    are documented in <CoreAudio/AudioHardware.h>. `IsPrivate = 1`
-        //    keeps it out of system-wide device lists. `Tap UID List` is the
-        //    macOS 14.2+ key that wires the process tap in as the aggregate's
-        //    audio source.
-        let aggregateUID = "hark.systemtap.\(UUID().uuidString)"
-        let aggregateDescription: [String: Any] = [
-            kAudioAggregateDeviceNameKey as String: "Hark System Tap",
-            kAudioAggregateDeviceUIDKey as String: aggregateUID,
-            kAudioAggregateDeviceMainSubDeviceKey as String: outputUID,
-            kAudioAggregateDeviceIsPrivateKey as String: 1,
-            kAudioAggregateDeviceIsStackedKey as String: 0,
-            kAudioAggregateDeviceTapListKey as String: [
-                [
-                    kAudioSubTapUIDKey as String: tapUID,
-                    kAudioSubTapDriftCompensationKey as String: 0
-                ]
-            ],
-            kAudioAggregateDeviceTapAutoStartKey as String: 1
-        ]
-
-        var createdAggID: AudioObjectID = kAudioObjectUnknown
-        let aggStatus = AudioHardwareCreateAggregateDevice(
-            aggregateDescription as CFDictionary,
-            &createdAggID
-        )
-        guard aggStatus == noErr, createdAggID != kAudioObjectUnknown else {
-            cleanupAfterFailure()
-            throw Self.error(aggStatus, "AudioHardwareCreateAggregateDevice failed")
-        }
-        self.aggregateID = createdAggID
-
-        // 5. Read the aggregate's input stream description so we can build an
-        //    AVAudioFormat that matches what the IOProc will actually receive.
-        //    The aggregate exposes the tap on its input scope.
-        let asbd: AudioStreamBasicDescription
-        do {
-            asbd = try Self.streamFormat(createdAggID, scope: kAudioDevicePropertyScopeInput)
-        } catch {
-            cleanupAfterFailure()
-            throw error
-        }
-        var mutableASBD = asbd
-        guard let avFormat = AVAudioFormat(streamDescription: &mutableASBD) else {
-            cleanupAfterFailure()
-            throw Self.error(-1, "Could not build AVAudioFormat from tap ASBD")
-        }
-        self.runningFormat = avFormat
         self.handler = onBuffer
+        Self.dbg("start: requesting shareable content…")
 
-        // 6. Install the IOProc. The block captures only Sendable-ish values
-        //    (the format reference and handler) — both already retained by
-        //    `self`. We deliberately avoid `[weak self]`: weak-resolve on the
-        //    audio thread does a runtime ref-count op, and stop() guarantees
-        //    the proc is destroyed before we drop the format/handler.
-        let capturedFormat = avFormat
-        let capturedHandler = onBuffer
-
-        var newProcID: AudioDeviceIOProcID?
-        let procStatus = AudioDeviceCreateIOProcIDWithBlock(
-            &newProcID,
-            createdAggID,
-            nil  // run on Core Audio's default IO thread
-        ) { _, inputDataPtr, inputTimePtr, _, _ in
-            // Wrap the incoming AudioBufferList without copying. The buffer
-            // memory is owned by Core Audio for the duration of this call;
-            // the BufferHandler must consume it synchronously (matches the
-            // contract MicCapture already establishes).
-            guard let pcm = AVAudioPCMBuffer(
-                pcmFormat: capturedFormat,
-                bufferListNoCopy: inputDataPtr,
-                deallocator: nil
-            ) else {
-                return
+        // 1. Resolve what we're allowed to capture. SCShareableContent.current
+        //    enumerates displays/windows/apps and (importantly) is the call
+        //    that surfaces the Screen Recording TCC gate. We only need a
+        //    display to anchor the content filter.
+        let content: SCShareableContent
+        do {
+            content = try Self.awaitThrowing { completion in
+                SCShareableContent.getWithCompletionHandler { shareable, err in
+                    completion(shareable, err)
+                }
             }
-
-            // Synthesize an AVAudioTime from the IOProc's input timestamp.
-            // We pass the raw AudioTimeStamp through; AVAudioTime will pick
-            // up host-time / sample-time as available.
-            var ts = inputTimePtr.pointee
-            let avTime = AVAudioTime(audioTimeStamp: &ts, sampleRate: capturedFormat.sampleRate)
-
-            capturedHandler(pcm, avTime)
-        }
-
-        guard procStatus == noErr, let procID = newProcID else {
+        } catch {
             cleanupAfterFailure()
-            throw Self.error(procStatus, "AudioDeviceCreateIOProcIDWithBlock failed")
+            throw Self.error(-2, "SCShareableContent failed: \(error.localizedDescription)")
         }
-        self.ioProcID = procID
-
-        let startStatus = AudioDeviceStart(createdAggID, procID)
-        guard startStatus == noErr else {
+        guard let display = content.displays.first else {
             cleanupAfterFailure()
-            throw Self.error(startStatus, "AudioDeviceStart failed")
+            throw Self.error(-3, "No display available for ScreenCaptureKit capture")
+        }
+        Self.dbg("shareable content resolved: \(content.displays.count) display(s), using \(display.width)x\(display.height)")
+
+        // 2. Content filter: capture the main display, excluding no windows.
+        //    We never read the video, so the visual content is irrelevant —
+        //    the filter just has to be valid.
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+
+        // 3. Stream configuration. Audio is what we're here for; the video
+        //    config is the required no-op (see file header SMELL note).
+        let config = SCStreamConfiguration()
+        config.capturesAudio = true
+        config.excludesCurrentProcessAudio = true   // don't capture our own output
+        config.sampleRate = 48_000
+        config.channelCount = 2
+        // Minimal video stream: 2×2 px, ~1 frame/sec. SCK refuses to deliver
+        // audio without a running video stream, so we make the video as cheap
+        // as possible and drop every frame in the output callback.
+        config.width = 2
+        config.height = 2
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 1) // 1 fps
+        config.queueDepth = 6   // small buffer ring; we consume promptly
+
+        // 4. Build the stream and register OURSELVES as the audio output sink.
+        //    addStreamOutput delivers audio CMSampleBuffers to
+        //    stream(_:didOutputSampleBuffer:of:) on `sampleQueue`.
+        let scStream = SCStream(filter: filter, configuration: config, delegate: nil)
+        do {
+            try scStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
+        } catch {
+            cleanupAfterFailure()
+            throw Self.error(-4, "addStreamOutput(.audio) failed: \(error.localizedDescription)")
+        }
+        self.stream = scStream
+        Self.dbg("stream created; starting capture…")
+
+        // 5. Start capture (async → sync bridge via semaphore at the boundary).
+        do {
+            try Self.awaitThrowingVoid { completion in
+                scStream.startCapture { err in completion(err) }
+            }
+        } catch {
+            cleanupAfterFailure()
+            throw Self.error(-5, "SCStream.startCapture failed: \(error.localizedDescription)")
+        }
+        Self.dbg("startCapture returned ok")
+
+        // 6. Negotiate the real delivered format BEFORE start() returns, because
+        //    CapturePipeline reads `sourceFormat` on the next line to build its
+        //    Resampler. We block briefly for the first audio buffer, which sets
+        //    `runningFormat` from the sample buffer's own CMFormatDescription.
+        //    If no audio arrives within the window (e.g. dead silence on the
+        //    output), we fall back to the requested 48 kHz/2ch default — which
+        //    is what SCK is configured to deliver anyway, so the Resampler is
+        //    still built correctly and real buffers will match it.
+        if !waitForFirstFormat(timeout: 2.0) {
+            formatLock.lock()
+            if runningFormat == nil { runningFormat = Self.defaultFormat }
+            formatLock.unlock()
+            Self.dbg("no audio buffer within probe window; using default 48kHz/2ch format")
         }
     }
 
     public func stop() {
-        if aggregateID != kAudioObjectUnknown, let procID = ioProcID {
-            AudioDeviceStop(aggregateID, procID)
-            AudioDeviceDestroyIOProcID(aggregateID, procID)
+        guard let scStream = stream else { return }
+        stream = nil
+        // stopCapture is async; we don't need to wait for it to finish to
+        // satisfy the (void) stop() contract. Fire it and tear down.
+        scStream.stopCapture { err in
+            if let err { Self.dbg("stopCapture error (ignored): \(err.localizedDescription)") }
         }
-        ioProcID = nil
-
-        if aggregateID != kAudioObjectUnknown {
-            AudioHardwareDestroyAggregateDevice(aggregateID)
-            aggregateID = kAudioObjectUnknown
-        }
-
-        if tapID != kAudioObjectUnknown {
-            AudioHardwareDestroyProcessTap(tapID)
-            tapID = kAudioObjectUnknown
-        }
-
-        runningFormat = nil
+        // removeStreamOutput is best-effort; ignore errors during teardown.
+        try? scStream.removeStreamOutput(self, type: .audio)
         handler = nil
+        formatLock.lock()
+        runningFormat = nil
+        formatLock.unlock()
     }
 
-    // MARK: - Cleanup on partial-init failure
+    // MARK: - SCStreamOutput
 
-    /// Tear down whatever was allocated before an error. Idempotent across
-    /// the three possible partial states (tap only, tap+agg, tap+agg+proc).
+    public func stream(
+        _ stream: SCStream,
+        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        of type: SCStreamOutputType
+    ) {
+        // We registered only for .audio, but guard anyway — ignore video.
+        guard type == .audio else { return }
+        guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
+        guard let pcm = Self.makePCMBuffer(from: sampleBuffer) else {
+            if Self.tapDebug {
+                dbgCounter.n += 1
+                if dbgCounter.n <= 3 {
+                    FileHandle.standardError.write(Data("hark-tap: audio buffer arrived but PCM wrap FAILED (call #\(dbgCounter.n))\n".utf8))
+                }
+            }
+            return
+        }
+
+        // Latch the delivered format on the very first buffer so start()'s
+        // probe (and `sourceFormat`) report exactly what we emit.
+        formatLock.lock()
+        if runningFormat == nil { runningFormat = pcm.format }
+        formatLock.unlock()
+
+        // Diagnostic: prove the SCStream output callback fires and how many
+        // frames each buffer carries. First five buffers only — same line
+        // format the old Process Tap path emitted, so the test recipe is
+        // unchanged: look for `hark-tap: ioproc call #1 frames=…`.
+        if Self.tapDebug {
+            dbgCounter.n += 1
+            if dbgCounter.n <= 5 {
+                FileHandle.standardError.write(Data("hark-tap: ioproc call #\(dbgCounter.n) frames=\(pcm.frameLength)\n".utf8))
+            }
+        }
+
+        // Synthesize an AVAudioTime from the sample buffer's presentation
+        // timestamp, expressed as host time. CapturePipeline ignores this
+        // value today (it aligns by FIFO depth, not timestamps), but the
+        // BufferHandler contract supplies it, so we provide a truthful one.
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let hostTime = AVAudioTime.hostTime(forSeconds: pts.seconds)
+        let avTime = AVAudioTime(
+            hostTime: hostTime,
+            sampleTime: 0,
+            atRate: pcm.format.sampleRate
+        )
+
+        handler?(pcm, avTime)
+    }
+
+    // MARK: - CMSampleBuffer → AVAudioPCMBuffer
+
+    /// Convert an audio CMSampleBuffer to an AVAudioPCMBuffer, COPYING the
+    /// samples so the result safely outlives this callback (SCK owns the
+    /// underlying block buffer only for the duration of the call).
+    ///
+    /// Why copy instead of no-copy: AVAudioPCMBuffer(pcmFormat:bufferListNoCopy:)
+    /// would alias SCK's memory, which is freed when this callback returns.
+    /// CapturePipeline appends samples synchronously, so in practice a no-copy
+    /// would survive — but the cost of a copy here (a few KB, ~hundreds of µs)
+    /// is trivial next to the per-buffer resample work, and copying removes a
+    /// whole class of lifetime bugs. Correctness over micro-optimization.
+    private static func makePCMBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else {
+            return nil
+        }
+        // Build the AVAudioFormat straight from the CMFormatDescription. This
+        // is more robust than reconstructing it from a bare ASBD: it carries
+        // the channel layout and interleaving exactly as SCK delivers them, so
+        // the destination buffer's shape always matches the source — which is
+        // what the in-place ASBD approach got wrong (cause of "PCM wrap FAILED").
+        let format = AVAudioFormat(cmAudioFormatDescription: formatDesc)
+
+        let frameCount = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
+        guard frameCount > 0,
+              let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            return nil
+        }
+        pcm.frameLength = frameCount
+
+        // Copy SCK's PCM samples into pcm's own storage with the purpose-built
+        // Core Media API. It understands BOTH the source sample buffer's layout
+        // and the destination AudioBufferList, so interleaved vs deinterleaved
+        // and channel count are handled correctly — no manual ABL sizing, no
+        // retained block buffer to manage. The copy means the result safely
+        // outlives this callback (SCK owns its block buffer only for the call).
+        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            sampleBuffer,
+            at: 0,
+            frameCount: Int32(frameCount),
+            into: pcm.mutableAudioBufferList
+        )
+        guard status == noErr else { return nil }
+        return pcm
+    }
+
+    // MARK: - Cleanup
+
     private func cleanupAfterFailure() {
-        if aggregateID != kAudioObjectUnknown, let procID = ioProcID {
-            AudioDeviceStop(aggregateID, procID)
-            AudioDeviceDestroyIOProcID(aggregateID, procID)
+        if let scStream = stream {
+            scStream.stopCapture { _ in }
+            try? scStream.removeStreamOutput(self, type: .audio)
         }
-        ioProcID = nil
-
-        if aggregateID != kAudioObjectUnknown {
-            AudioHardwareDestroyAggregateDevice(aggregateID)
-            aggregateID = kAudioObjectUnknown
-        }
-
-        if tapID != kAudioObjectUnknown {
-            AudioHardwareDestroyProcessTap(tapID)
-            tapID = kAudioObjectUnknown
-        }
-
-        runningFormat = nil
+        stream = nil
         handler = nil
+        formatLock.lock()
+        runningFormat = nil
+        formatLock.unlock()
     }
 
-    // MARK: - Core Audio HAL helpers
+    // MARK: - First-buffer format probe
 
-    private static func defaultOutputDevice() throws -> AudioObjectID {
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var deviceID: AudioObjectID = kAudioObjectUnknown
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        let status = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &addr,
-            0, nil,
-            &size,
-            &deviceID
-        )
-        guard status == noErr, deviceID != kAudioObjectUnknown else {
-            throw error(status, "Could not resolve default output device")
+    /// Block (on the start() thread) until the first audio buffer has set
+    /// `runningFormat`, or `timeout` seconds elapse. Returns true if a format
+    /// was latched. Polls a lock-guarded flag rather than holding a condition
+    /// variable across the SCK callback (simpler, and the window is tiny).
+    private func waitForFirstFormat(timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            formatLock.lock()
+            let have = runningFormat != nil
+            formatLock.unlock()
+            if have { return true }
+            Thread.sleep(forTimeInterval: 0.01)
         }
-        return deviceID
+        formatLock.lock()
+        let have = runningFormat != nil
+        formatLock.unlock()
+        return have
     }
 
-    private static func deviceUID(_ deviceID: AudioObjectID) throws -> String {
-        try stringProperty(deviceID, selector: kAudioDevicePropertyDeviceUID)
+    // MARK: - async → sync bridges (start() boundary only)
+
+    /// Bridge a completion-handler API that yields (T?, Error?) into a sync
+    /// throwing call. Used ONLY in start(); the IO itself stays async on the
+    /// sample queue. (Java analogue: blocking on a CompletableFuture.get()
+    /// once, at startup, not on the hot path.)
+    private static func awaitThrowing<T>(
+        _ body: (@escaping (T?, Error?) -> Void) -> Void
+    ) throws -> T {
+        let sem = DispatchSemaphore(value: 0)
+        var result: T?
+        var failure: Error?
+        body { value, err in
+            result = value
+            failure = err
+            sem.signal()
+        }
+        sem.wait()
+        if let failure { throw failure }
+        guard let result else { throw error(-10, "async bridge produced neither value nor error") }
+        return result
     }
 
-    /// Read a CFString-typed HAL property as a Swift String.
-    private static func stringProperty(
-        _ objectID: AudioObjectID,
-        selector: AudioObjectPropertySelector
-    ) throws -> String {
-        var addr = AudioObjectPropertyAddress(
-            mSelector: selector,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var size = UInt32(MemoryLayout<CFString?>.size)
-        var cfStr: CFString? = nil
-        let status = withUnsafeMutablePointer(to: &cfStr) { ptr -> OSStatus in
-            AudioObjectGetPropertyData(objectID, &addr, 0, nil, &size, ptr)
+    /// Bridge a completion-handler API that yields only an optional Error.
+    private static func awaitThrowingVoid(
+        _ body: (@escaping (Error?) -> Void) -> Void
+    ) throws {
+        let sem = DispatchSemaphore(value: 0)
+        var failure: Error?
+        body { err in
+            failure = err
+            sem.signal()
         }
-        guard status == noErr, let str = cfStr as String? else {
-            throw error(status, "Could not read string property 0x\(String(selector, radix: 16))")
-        }
-        return str
-    }
-
-    /// Read the AudioStreamBasicDescription for the first input stream of a
-    /// device on the given scope. The aggregate's tap audio surfaces on the
-    /// input scope; querying the device's stream-format property gives us
-    /// the exact shape the IOProc will deliver.
-    private static func streamFormat(
-        _ deviceID: AudioObjectID,
-        scope: AudioObjectPropertyScope
-    ) throws -> AudioStreamBasicDescription {
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamFormat,
-            mScope: scope,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var asbd = AudioStreamBasicDescription()
-        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        let status = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &asbd)
-        guard status == noErr else {
-            throw error(status, "Could not read AudioStreamBasicDescription")
-        }
-        return asbd
+        sem.wait()
+        if let failure { throw failure }
     }
 
     private static func error(_ status: OSStatus, _ message: String) -> NSError {
