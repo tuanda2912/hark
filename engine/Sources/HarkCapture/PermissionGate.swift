@@ -66,6 +66,20 @@ public enum PermissionGate {
         return status
     }
 
+    /// Request ONLY the microphone permission, awaiting the user's choice.
+    /// Returns true if authorized. Mic grants take effect live (no relaunch),
+    /// so the caller can proceed in the same process. Used by harkd to acquire
+    /// the mic lazily at capture.start (only when the mic source is requested)
+    /// instead of gating the whole daemon at startup. See ADR-0011.
+    public static func requestMicrophone() async -> Bool {
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized { return true }
+        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                cont.resume(returning: granted)
+            }
+        }
+    }
+
     // MARK: - Audio Capture TCC (PRIVATE SPI — dev-only, Process-Tap path)
     //
     // ⚠️ PRIVATE-API SMELL. Everything in this section calls Apple's

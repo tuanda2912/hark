@@ -3,14 +3,19 @@
 // CLI: `harkd [--port N] [--port-file PATH] [--verbose]`
 //
 // Lifecycle:
-//   1. Preflight permissions (mic + screen recording). Same active-request
-//      UX as hark-capture (ADR-0007).
-//   2. Load WhisperKit large-v3-turbo via HarkCore.ModelLoader (download
-//      + ANE compile, with progress to stderr).
-//   3. Bind WebSocket server on 127.0.0.1.
-//   4. Write `engine.port` file containing JSON `{port, pid, version}`.
-//   5. Wait for SIGINT/SIGTERM. On signal: close clients, stop capture if
+//   1. Bind the WebSocket server on 127.0.0.1 and write the `engine.port`
+//      file (JSON `{port, pid, version}`) — so the UI can discover harkd
+//      IMMEDIATELY, before the slow model load.
+//   2. Load WhisperKit large-v3-turbo via HarkCore.ModelLoader (download +
+//      ANE compile) BEHIND the running server; capture.start is gated on
+//      readiness (ENGINE_WARMING_UP) until the model is attached.
+//   3. Wait for SIGINT/SIGTERM. On signal: close clients, stop capture if
 //      running, delete port file, exit 0.
+//
+// Permissions: harkd does NOT gate on permissions at startup. They're
+// requested lazily at capture.start — mic via PermissionGate (only if the
+// mic source is on), system audio inside the Process Tap backend — both of
+// which grant live, so capture continues without a relaunch. See ADR-0011.
 //
 // Why JSON in the port file (per ADR-0008 §Open questions #2): forward
 // compatibility. Phase 4's Electron main can grow to validate pid liveness
@@ -39,9 +44,9 @@ struct HarkdCommand: AsyncParsableCommand {
         Port is chosen at startup (ephemeral by default) and written to
         --port-file so the UI can discover it. Loopback only — no auth.
 
-        Permissions (granted via System Settings → Privacy & Security):
-          • Microphone
-          • Screen Recording (required for system-audio Process Tap)
+        Permissions are requested when capture starts (not at launch):
+        Microphone (only if the mic source is on) and system-audio capture
+        (handled by the Process Tap backend). Both grant live — no relaunch.
 
         Stop with SIGINT (Ctrl+C) or SIGTERM. The daemon flushes any
         in-flight final segments before exiting.
@@ -62,19 +67,20 @@ struct HarkdCommand: AsyncParsableCommand {
         eprint("harkd \(HARKD_ENGINE_VERSION) — streaming engine")
         eprint("──────────────────────────────────────────────────────────────")
 
-        // Preflight permissions — same UX as hark-capture.
-        let status = await PermissionGate.ensureGranted()
-        if !status.allGranted {
-            status.printReport(to: FileHandle.standardError, afterRequest: true)
-            throw ExitCode(3)
-        }
+        // No startup permission gate. harkd needs NO capture permission just to
+        // boot + serve; capture permissions are requested lazily at
+        // capture.start (mic via PermissionGate; system audio inside the tap
+        // backend), both of which grant live — so the user grants once and
+        // capture continues in the SAME process, no relaunch. (Amends the
+        // fail-fast gate of ADR-0006 §3 for the daemon; see ADR-0011.)
 
-        // Load WhisperKit. Downloads on first run, otherwise warm cache.
-        let loaded = try await loadWhisperKit(progressOutput: .standardError)
-        eprint("Model ready: \(loaded.modelName)")
-
-        // Bring up WS server.
+        // Bring up the WS server + session FIRST, then write the port file, so
+        // the UI can discover harkd IMMEDIATELY. The model loads behind it.
         let server = HarkdWebSocketServer()
+        let session = EngineSession(server: server)
+        let delegate = WSDelegateAdapter(session: session)
+        server.delegate = delegate
+
         let boundPort: Int
         do {
             boundPort = try server.bind(port: port)
@@ -84,17 +90,17 @@ struct HarkdCommand: AsyncParsableCommand {
         }
         eprint("WebSocket server listening on ws://127.0.0.1:\(boundPort)/v1")
 
-        // Wire up the engine session and the WS delegate adapter.
-        let session = EngineSession(whisperKit: loaded.pipe,
-                                    modelName: loaded.modelName,
-                                    server: server)
-        let delegate = WSDelegateAdapter(session: session)
-        server.delegate = delegate
-
         // Write the port file. JSON for forward compat.
         let portFileURL = try resolvePortFileURL(override: portFile)
         try writePortFile(at: portFileURL, port: boundPort, pid: Int(ProcessInfo.processInfo.processIdentifier))
         eprint("Port file: \(portFileURL.path)")
+
+        // Load WhisperKit behind the server (NIO keeps serving during this
+        // await). capture.start is gated on readiness until attachModel below.
+        eprint("Loading model… (first run on this Mac compiles for ANE — can take ~90s)")
+        let loaded = try await loadWhisperKit(progressOutput: .standardError)
+        await session.attachModel(loaded.pipe, name: loaded.modelName)
+        eprint("Model ready: \(loaded.modelName) — capture available")
 
         if verbose {
             eprint("harkd: pid=\(ProcessInfo.processInfo.processIdentifier) ready, waiting for client")

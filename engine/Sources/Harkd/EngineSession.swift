@@ -37,8 +37,13 @@ import HarkCapture
 @available(macOS 14.4, *)
 actor EngineSession {
     // ─── Dependencies wired at startup ─────────────────────────────────
-    private let whisperKit: WhisperKit
-    private let modelName: String
+    // Set once the model finishes loading (attachModel). Implicitly unwrapped:
+    // it's never touched until capture.start, which is gated on model
+    // readiness. harkd brings up the WS server + port file BEFORE loading the
+    // model so the port is discoverable immediately; the model loads behind it.
+    private var whisperKit: WhisperKit!
+    private var modelName: String = ""
+    private var modelReady: Bool { whisperKit != nil }
     private weak var server: HarkdWebSocketServer?
 
     // ─── Session-scoped state (reset per capture.start) ────────────────
@@ -66,16 +71,26 @@ actor EngineSession {
 
     // ─── Transcription pacing / backpressure ────────────────────────────
     private var transcribeInFlight = false
+    /// True only during the async capture.start setup (the mic-permission
+    /// await), to block a second concurrent capture.start during actor
+    /// reentrancy before `pipeline` is assigned.
+    private var startingCapture = false
     private var lastTranscribeRTF: Double = 0
     private var pendingDroppedHops: Int = 0
 
     // ─── Heartbeat ──────────────────────────────────────────────────────
     private var heartbeatTask: Task<Void, Never>?
 
-    init(whisperKit: WhisperKit, modelName: String, server: HarkdWebSocketServer) {
-        self.whisperKit = whisperKit
-        self.modelName = modelName
+    init(server: HarkdWebSocketServer) {
         self.server = server
+    }
+
+    /// Inject the model once it has finished loading. Until this runs,
+    /// capture.start is rejected with a recoverable ENGINE_WARMING_UP, so the
+    /// WS server + port file can come up before the (slow) model load.
+    func attachModel(_ pipe: WhisperKit, name: String) {
+        self.whisperKit = pipe
+        self.modelName = name
     }
 
     // ─── Client connection lifecycle (called by WS delegate) ────────────
@@ -86,7 +101,7 @@ actor EngineSession {
         let hello = WireEnvelope(type: "meta.hello", payload: MetaHelloPayload(
             engineVersion: HARKD_ENGINE_VERSION,
             protocolVersion: WIRE_PROTOCOL_VERSION,
-            modelLoaded: modelName,
+            modelLoaded: modelReady ? modelName : "(loading)",
             // Phase 3 doesn't actually ship translation or diarization yet,
             // but the capabilities list is the contract's forward-compat
             // signal. List only what's truly available — keep this honest.
@@ -104,7 +119,7 @@ actor EngineSession {
     }
 
     /// Inbound text frame entry point. Parses + dispatches.
-    func handleInbound(_ client: WebSocketClient, text: String) {
+    func handleInbound(_ client: WebSocketClient, text: String) async {
         guard let data = text.data(using: .utf8) else { return }
         let header: InboundEnvelopeHeader
         do {
@@ -123,7 +138,7 @@ actor EngineSession {
 
         switch header.type {
         case "capture.start":
-            dispatchCaptureStart(client, id: header.id, data: data)
+            await dispatchCaptureStart(client, id: header.id, data: data)
         case "capture.stop":
             dispatchCaptureStop(client, id: header.id)
         case "capture.pause":
@@ -144,10 +159,18 @@ actor EngineSession {
 
     // ─── Command handlers ───────────────────────────────────────────────
 
-    private func dispatchCaptureStart(_ client: WebSocketClient, id: String?, data: Data) {
-        guard pipeline == nil else {
+    private func dispatchCaptureStart(_ client: WebSocketClient, id: String?, data: Data) async {
+        guard pipeline == nil, !startingCapture else {
             sendError(client, id: id, code: "ALREADY_RUNNING",
                       message: "capture already in progress", recoverable: true)
+            return
+        }
+        // The model loads BEHIND the WS server (so the port file is available
+        // immediately on launch). Reject capture until it's ready — recoverable,
+        // so the client just retries in a moment.
+        guard modelReady else {
+            sendError(client, id: id, code: "ENGINE_WARMING_UP",
+                      message: "model still loading; retry in a moment", recoverable: true)
             return
         }
         let cmd: CaptureStartCommand
@@ -172,6 +195,22 @@ actor EngineSession {
                   !raw.isEmpty, raw != "auto" else { return nil }
             return raw
         }()
+
+        startingCapture = true
+        defer { startingCapture = false }
+
+        // Acquire mic permission lazily — only when the mic source is on. It
+        // grants live (no relaunch), so capture proceeds in the same process.
+        // (System-audio permission is handled by the tap backend at start().)
+        if captureMic {
+            let granted = await PermissionGate.requestMicrophone()
+            if !granted {
+                sendError(client, id: id, code: "MIC_DENIED",
+                          message: "microphone permission denied — enable it in System Settings → Privacy & Security → Microphone",
+                          recoverable: true)
+                return
+            }
+        }
 
         do {
             try startCapture(captureMic: captureMic,
