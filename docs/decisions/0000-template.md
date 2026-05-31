@@ -2,7 +2,7 @@
 
 - **Date:** YYYY-MM-DD
 - **Status:** Proposed | Accepted | Superseded by ADR-NNNN | Deprecated
-- **Deciders:** {who was in the room — for solo projects, just "Quynh Anh"}
+- **Deciders:** {who was in the room — for solo projects, just "Dang Anh Tuan"}
 
 ## Context
 

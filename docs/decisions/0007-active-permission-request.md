@@ -3,7 +3,7 @@
 - **Date:** 2026-05-26
 - **Status:** Accepted
 - **Supersedes:** [ADR-0006](0006-phase-2-capture-architecture.md) §3 ("Permission UX") only — the macOS-floor + Process Tap + mix-shape sections of ADR-0006 are unchanged.
-- **Deciders:** Quynh Anh
+- **Deciders:** Dang Anh Tuan
 
 ## Context
 

@@ -106,4 +106,4 @@ Empty until Phase 0 lands. Fill in as commands stabilize.
 
 ## User context
 
-Quynh Anh — Java/Spring backend (7+ yrs), strong Angular, no Swift yet, no Rust yet. Mac on Apple Silicon, based in Thailand. This project is both a real product *and* an L4 AI-mastery learning project. Explain Swift idioms in terms of Java/Spring analogues when helpful. Push back on bad decisions with reasoning, don't hedge.
+Dang Anh Tuan — Java/Spring backend (7+ yrs), strong Angular, no Swift yet, no Rust yet. Mac on Apple Silicon, based in Thailand. This project is both a real product *and* an L4 AI-mastery learning project. Explain Swift idioms in terms of Java/Spring analogues when helpful. Push back on bad decisions with reasoning, don't hedge.

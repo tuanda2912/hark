@@ -2,7 +2,7 @@
 
 - **Date:** 2026-05-31
 - **Status:** Accepted (reaffirms and amends [ADR-0006](0006-phase-2-capture-architecture.md) §Decision 1)
-- **Deciders:** Quynh Anh
+- **Deciders:** Dang Anh Tuan
 
 ## Context
 

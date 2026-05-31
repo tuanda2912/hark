@@ -2,7 +2,7 @@
 
 - **Date:** 2026-05-26
 - **Status:** Accepted
-- **Deciders:** Quynh Anh
+- **Deciders:** Dang Anh Tuan
 
 ## Context
 
