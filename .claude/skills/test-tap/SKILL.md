@@ -1,6 +1,6 @@
 ---
 name: test-tap
-description: Runs Hark's on-device Core Audio Process Tap capture test (the hark-capture CLI). Use this skill whenever you need to verify system-audio capture works, exercise the tap backend, or debug a "no audio / 0 frames / isRunning=0 / permission denied" capture problem — even if the user just says "test capture", "does the tap work?", or "check the mic/system audio". It encodes the exact build → sign → launch-via-open → read-log recipe and the footguns (run-by-path breaks TCC; isPrivate/isExclusive stop the device starting) that took an entire debugging session to find. Needs real Apple-Silicon hardware.
+description: Runs Hark's on-device Core Audio Process Tap capture test (the hark-capture CLI). Use this skill whenever you need to verify system-audio capture works, exercise the tap backend, or debug a "no audio / 0 frames / isRunning=0 / permission denied" capture problem — even if the user just says "test capture", "does the tap work?", or "check the mic/system audio". It encodes the exact build → sign → launch-via-open → read-log recipe and the footguns (run-by-path breaks TCC; isExclusive stops the device starting) that took an entire debugging session to find. Needs real Apple-Silicon hardware.
 ---
 
 Verify Core Audio Process Tap system-audio capture end to end on a real Mac. This is the standalone capture check (the `hark-capture` CLI writing a WAV) — for the live daemon path use the `smoke-harkd` skill instead.
@@ -53,14 +53,14 @@ Run from the repo root. Have audio playing through the current output device (bu
 | Symptom in the log | Cause | Fix |
 |---|---|---|
 | `missing permission` / `granted=false`, no prompt | Not signed, or launched by path (not `open`) → no stable TCC identity | Sign (step 2) + launch via `open` (step 3) |
-| `isRunning=0` persists, `inputStreams=1` | Aggregate device never starts its IO cycle | A real **CFRunLoop** must run for HAL notifications (CLI has none by default), and **isPrivate/isExclusive must NOT be set** on the tap description. See ADR-0011. |
+| `isRunning=0` persists, `inputStreams=1` | Aggregate device never starts its IO cycle | A real **CFRunLoop** must run for HAL notifications (CLI has none by default), and **`isExclusive` must NOT be set** on the tap description (`isPrivate=true` is fine). See ADR-0011. |
 | `inputStreams=0` | Tap didn't bind into the aggregate | Aggregate tap-list UID / config mismatch |
 | all `status=0` but no `ioproc call` ever | The umbrella signature of the above | Walk the table top-down |
 
 ## Variations
 
 - **Bluetooth check**: switch system output to Bluetooth headphones, play audio, rerun. The log's `aggregate clock/sub-device` should show the BT device UID; capture works without dropping the headphones from A2DP to HFP (we only tap rendered output, never the BT mic).
-- **Privacy experiment**: add `--env HARK_TAP_PRIVATE=1` to test whether `isPrivate=true` alone still lets the device start (`isRunning=1`). If it does, tap isolation can be regained.
+- **Privacy**: the tap is created `isPrivate=true` by default (visible only to this process). Validated on-device that this alone does NOT block the device from starting — `isExclusive` was the real blocker and is never set.
 
 ## Privacy
 

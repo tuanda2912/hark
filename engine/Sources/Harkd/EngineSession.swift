@@ -91,6 +91,9 @@ actor EngineSession {
     func attachModel(_ pipe: WhisperKit, name: String) {
         self.whisperKit = pipe
         self.modelName = name
+        // Push readiness to any clients already connected behind the warmup
+        // gate, so the UI clears "warming up" without polling capture.start.
+        broadcast(WireEnvelope(type: "meta.ready", payload: MetaReadyPayload(modelLoaded: name)))
     }
 
     // ─── Client connection lifecycle (called by WS delegate) ────────────

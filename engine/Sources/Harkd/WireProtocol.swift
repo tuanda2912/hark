@@ -116,6 +116,14 @@ struct MetaHelloPayload: Encodable {
     let capabilities: [String]
 }
 
+/// Pushed unsolicited the moment the model finishes loading (attachModel),
+/// so the UI can drop its "warming up" state without polling capture.start.
+/// `modelLoaded` snake_cases to `model_loaded` via the outbound encoder's
+/// `.convertToSnakeCase` strategy — same as `MetaHelloPayload.modelLoaded`.
+struct MetaReadyPayload: Encodable {
+    let modelLoaded: String
+}
+
 struct MetaHeartbeatPayload: Encodable {
     let rtfCurrent: Double
     let ringBufferFillSec: Double

@@ -21,7 +21,7 @@ This builds on [ADR-0007](0007-active-permission-request.md) (active permission 
 1. **Request the `kTCCServiceAudioCapture` permission** — a *third* TCC service, distinct from Microphone and Screen Recording. It must be requested with a **stable code identity**: sign the binary (a free Apple Development cert is enough) and launch it so LaunchServices attributes the grant (`open` the `.app`, don't run the Mach-O by path). Production ships a signed `.app` with `NSAudioCaptureUsageDescription` and uses the public prompt; dev builds use the private TCC SPI behind `HARK_ENABLE_TCC_SPI=1`.
 2. **Run a real `CFRunLoop`** on a dedicated thread and point `kAudioHardwarePropertyRunLoop` at it. `AudioDeviceStart` is *asynchronous*; the HAL delivers its start-completion on a run loop. A GUI app gets this free from its main run loop — a CLI/daemon does not.
 3. **Build the aggregate device correctly**: the default **output device** as both `MainSubDevice` and the sole entry in `SubDeviceList` (it provides the clock), the tap in `TapList` with drift compensation, and **all boolean keys as real `CFBoolean`s** (Swift `true`/`false`, *not* `Int` `1`/`0` — a `CFNumber` there reads as false).
-4. **Do NOT set `isPrivate` / `isExclusive` on the tap description.** On a global tap these flags let the tap *bind* but silently prevent the aggregate device from ever *starting*.
+4. **Do NOT set `isExclusive` on the tap description.** It lets the tap *bind* but silently prevents the aggregate device from ever *starting*. (`isPrivate = true` is fine and IS set — a private tap. The original recipe dropped *both* flags; later on-device testing isolated `isExclusive` as the sole culprit — see the resolved open question.)
 
 ## The challenge — symptoms and how we resolved each
 
@@ -76,7 +76,7 @@ The breakthrough was the `dbgAggregateState` readback. We burned four "obvious" 
 
 **Tradeoffs accepted:**
 - **More moving parts than SCK:** a dedicated HAL run-loop thread (needed for the long-lived `harkd` daemon anyway), a private TCC SPI for dev builds, and the free-cert + WWDR-G3 + `open`-launch ritual.
-- **The tap is no longer marked private** (`isPrivate` dropped). This does **not** violate the "audio never leaves the machine" rule — the capture still flows only to our IOProc and only to the local vault — but another *local* process could, in principle, enumerate the tap while it exists. Low surface, local-only, and flagged below as a thing to tighten.
+- **The tap is marked private** (`isPrivate = true`) — visible only to this process. (We initially dropped it alongside `isExclusive` to get capture working; a later on-device test isolated `isExclusive` as the real blocker and restored `isPrivate`. See the resolved open question.)
 - **macOS-version sensitivity confirmed real:** the `NULL`-run-loop no-op shows behavior shifts between releases. The SCK fallback is our insurance.
 
 **Must remain true:**
@@ -86,7 +86,7 @@ The breakthrough was the `dbgAggregateState` readback. We burned four "obvious" 
 ## Open questions
 
 - **Minimal-fix bisect not completed.** The working config has *both* the dedicated run loop *and* no `isPrivate`/`isExclusive`. We A/B-confirmed that removing the tap flags was the final flip (run loop present in both runs), but did **not** separately confirm the run loop is strictly necessary once the flags are gone. The run loop is kept regardless — it's correct practice for a daemon servicing HAL notifications — but the strict-necessity question is open.
-- **Can we restore tap privacy?** We removed `isPrivate` *and* `isExclusive` together. If `isExclusive = false` was the real blocker, `isPrivate = true` might be restorable — worth a privacy-auditor follow-up to regain tap isolation without losing capture.
+- ~~**Can we restore tap privacy?**~~ **Resolved 2026-05-31.** An on-device test (`HARK_TAP_PRIVATE=1`) confirmed `isPrivate = true` *alone* — with `isExclusive` left unset — runs fine (`isRunning=1`, peak ≈ 0.67, IOProc firing). `isExclusive` was the sole blocker. The tap is now created with `isPrivate = true` by default, so tap isolation is regained at no cost to capture. The experiment env var was removed.
 - **Default backend.** Process Taps now work; SCK is currently the default with `tap` opt-in. Whether to flip the default to Process Taps (and demote SCK to fallback-only) is a separate decision once the tap path has more on-device mileage.
 
 ## References

@@ -46,9 +46,13 @@
 //     dedicated thread and point kAudioHardwarePropertyRunLoop at it. Without
 //     it the device stays isRunning=0 and the IOProc never fires (every call
 //     still returns noErr). Setting that property to NULL was a no-op here.
-//   • NO isPrivate / isExclusive on the tap description. With them set the tap
-//     binds (the aggregate shows one input stream) but the device never starts.
-//     We leave them at their defaults, matching the working AudioCap reference.
+//   • NO isExclusive on the tap description. isExclusive was the real blocker —
+//     with it set the tap binds (one input stream) but the device never starts
+//     (isRunning stays 0). isPrivate, by contrast, is fine: we DO set
+//     isPrivate=true (a private tap, visible only to this process — a privacy
+//     win, confirmed on-device that it alone still lets the device start). The
+//     earlier "drop both flags" recipe was over-broad; isExclusive is the one
+//     to avoid. See ADR-0011.
 //
 //   Format note: we read kAudioTapPropertyFormat off the tap object itself
 //   (authoritative), falling back to the aggregate's input-scope stream format
@@ -170,14 +174,17 @@ public final class CoreAudioProcessTap: SystemAudioCapturing {
 
         // 1. Build the tap description. GLOBAL tap excluding NO processes =
         //    "the whole system mix". muteBehavior .unmuted observes the live mix
-        //    without silencing the user's speakers. We own the uuid and set ONLY
-        //    muteBehavior — deliberately NOT isPrivate/isExclusive: on a global
-        //    tap those flags let the tap bind but stop the aggregate device from
-        //    ever starting (ADR-0011). Matches the working AudioCap reference.
+        //    without silencing the user's speakers. We own the uuid, set
+        //    muteBehavior, and set isPrivate=true so the tap is visible only to
+        //    this process (privacy isolation). We deliberately do NOT set
+        //    isExclusive — THAT was the flag that stopped the aggregate device
+        //    from starting (tap binds, isRunning stays 0). Confirmed on-device
+        //    that isPrivate=true alone runs fine. See ADR-0011.
         let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
         tapDesc.uuid = UUID()
         tapDesc.muteBehavior = .unmuted
-        Self.dbg("created CATapDescription (global, exclude none, unmuted) uuid=\(tapDesc.uuid.uuidString)")
+        tapDesc.isPrivate = true
+        Self.dbg("created CATapDescription (global, exclude none, unmuted, PRIVATE) uuid=\(tapDesc.uuid.uuidString)")
 
         // 2. Create the tap. AudioObjectID out-param; non-zero status throws.
         var createdTapID: AudioObjectID = kAudioObjectUnknown
