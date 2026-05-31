@@ -36,12 +36,20 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
           >
         }
         <span class="tx-time">{{ time() }}</span>
+        @if (bookmarked()) {
+          <span class="tx-pin" title="Bookmarked moment">
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true">
+              <path d="M12 2v6l3 4v3H9v-3l3-4V2M9 15h6M12 18v4" />
+            </svg>
+            pinned
+          </span>
+        }
         @if (partial()) {
           <span class="tx-partial-tag">partial</span>
         }
       </div>
       <div class="tx-line-body"
-        >{{ text() }}@if (partial()) {<span class="live-caret"></span>}</div
+        >{{ text() }}@if (caret()) {<span class="live-caret"></span>}</div
       >
       @if (translation()) {
         <div class="tx-translation">{{ translation() }}</div>
@@ -55,6 +63,11 @@ export class TranscriptLineComponent {
   readonly speaker = input<string | null>(null);
   readonly speakerColor = input<string | null>(null);
   readonly translation = input<string | null>(null);
-  /** True while the utterance is still a `segment.partial`. */
+  /** True while the utterance is still a `segment.partial` (→ italic). */
   readonly partial = input<boolean>(false);
+  /** Show the blinking live caret. Only the single newest live line
+   *  sets this, so we don't get a row of blinking carets. */
+  readonly caret = input<boolean>(false);
+  /** Pin glyph — this line's time range contains a bookmark. */
+  readonly bookmarked = input<boolean>(false);
 }

@@ -27,10 +27,45 @@
 
     <div class="h-4 w-px bg-border" aria-hidden="true"></div>
 
+    <!-- Source toggles. Locked while capturing. Turn Mic OFF to keep a
+         Bluetooth headset in A2DP so system audio can be captured. -->
+    <div class="no-drag inline-flex items-center gap-1">
+      <button
+        type="button"
+        class="px-2 py-1 rounded-input border text-xs font-mono cursor-pointer disabled:cursor-not-allowed"
+        [class.border-accent]="micEnabled()"
+        [class.text-accent]="micEnabled()"
+        [class.bg-accent-soft]="micEnabled()"
+        [class.border-border-2]="!micEnabled()"
+        [class.text-text-3]="!micEnabled()"
+        [class.opacity-60]="!micEnabled()"
+        [disabled]="isCapturing()"
+        (click)="toggleMic()"
+        title="Capture the microphone"
+      >
+        Mic {{ micEnabled() ? 'on' : 'off' }}
+      </button>
+      <button
+        type="button"
+        class="px-2 py-1 rounded-input border text-xs font-mono cursor-pointer disabled:cursor-not-allowed"
+        [class.border-accent]="systemEnabled()"
+        [class.text-accent]="systemEnabled()"
+        [class.bg-accent-soft]="systemEnabled()"
+        [class.border-border-2]="!systemEnabled()"
+        [class.text-text-3]="!systemEnabled()"
+        [class.opacity-60]="!systemEnabled()"
+        [disabled]="isCapturing()"
+        (click)="toggleSystem()"
+        title="Capture system audio (what's playing through your output device)"
+      >
+        System {{ systemEnabled() ? 'on' : 'off' }}
+      </button>
+    </div>
+
     <button
       type="button"
       class="no-drag px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-      [disabled]="!isConnected() || isCapturing()"
+      [disabled]="!canStart()"
       (click)="onStart()"
     >
       Start
@@ -42,6 +77,24 @@
       (click)="onStop()"
     >
       Stop
+    </button>
+
+    <!-- Bookmark — marks the current moment (engine bookmark.create →
+         bookmark.created). ⌘⇧B works globally; see onKeydown. -->
+    <button
+      type="button"
+      class="no-drag inline-flex items-center gap-1.5 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      [disabled]="!isCapturing()"
+      (click)="onBookmark()"
+      title="Mark this moment (⌘⇧B)"
+    >
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+        <path d="M7 4h10a1 1 0 0 1 1 1v15.2a.8.8 0 0 1-1.25.66L12 17.4 7.25 20.86A.8.8 0 0 1 6 20.2V5a1 1 0 0 1 1-1z" />
+      </svg>
+      Bookmark
+      @if (bookmarks().length > 0) {
+        <span class="font-mono text-[10px] text-text-3">{{ bookmarks().length }}</span>
+      }
     </button>
 
     <!-- Language picker. Locked once capture starts (engine resolves the
@@ -116,18 +169,34 @@
             [text]="s.text"
             [speaker]="s.speaker"
             [translation]="s.translation"
+            [bookmarked]="isBookmarked(s)"
           />
         }
-        @for (s of liveSegments(); track s.utteranceId) {
+        @for (s of liveSegments(); track s.utteranceId; let last = $last) {
           <hark-transcript-line
             [time]="formatTime(s.tStart)"
             [text]="s.text"
             [speaker]="s.speaker"
             [translation]="s.translation"
             [partial]="true"
+            [caret]="last"
+            [bookmarked]="isBookmarked(s)"
           />
         }
       </div>
     }
   </main>
+
+  <!-- Transient bookmark confirmation. Auto-dismisses after 2.5s. -->
+  @if (bookmarkToast(); as toast) {
+    <div
+      class="fixed bottom-6 left-1/2 -translate-x-1/2 inline-flex items-center gap-2 px-4 py-2 rounded-card bg-surface-2 border border-border-2 text-text text-sm shadow-lg"
+    >
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"
+        class="text-accent" aria-hidden="true">
+        <path d="M7 4h10a1 1 0 0 1 1 1v15.2a.8.8 0 0 1-1.25.66L12 17.4 7.25 20.86A.8.8 0 0 1 6 20.2V5a1 1 0 0 1 1-1z" />
+      </svg>
+      {{ toast }}
+    </div>
+  }
 </div>

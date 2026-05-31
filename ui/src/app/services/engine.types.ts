@@ -62,6 +62,13 @@ export interface WarningPayload {
   readonly severity: string;
 }
 
+export interface BookmarkCreatedPayload {
+  readonly bookmark_id: string;
+  /** Moment in the recording, seconds since capture start. */
+  readonly t: number;
+  readonly label: string;
+}
+
 export interface ErrorPayload {
   readonly code: string;
   readonly message: string;
@@ -118,7 +125,16 @@ export interface CaptureStopCommand {
   readonly type: 'capture.stop';
 }
 
-export type EngineCommand = CaptureStartCommand | CaptureStopCommand;
+export interface BookmarkCreateCommand {
+  readonly type: 'bookmark.create';
+  /** `t` = moment in the recording (seconds since capture start). */
+  readonly payload: { readonly t: number; readonly label?: string };
+}
+
+export type EngineCommand =
+  | CaptureStartCommand
+  | CaptureStopCommand
+  | BookmarkCreateCommand;
 
 // ─── Renderer-side derived types ─────────────────────────────────────
 

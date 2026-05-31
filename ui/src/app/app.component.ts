@@ -9,14 +9,16 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  HostListener,
   OnDestroy,
   OnInit,
   computed,
   inject,
   signal,
 } from '@angular/core';
+import { Subscription } from 'rxjs';
 import { EngineService } from './services/engine.service';
-import { LANGUAGE_CHOICES } from './services/engine.types';
+import { LANGUAGE_CHOICES, DisplayedSegment } from './services/engine.types';
 import { TranscriptLineComponent } from './components/transcript-line.component';
 
 @Component({
@@ -37,9 +39,23 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly segments = this.engine.segments;
   readonly lastError = this.engine.lastError;
 
+  readonly bookmarks = this.engine.bookmarks;
+
   readonly languageChoices = LANGUAGE_CHOICES;
   /** Currently-selected language code; null = auto-detect. */
   readonly language = signal<string | null>(null);
+
+  // Capture source selection, locked at capture.start.
+  // NOTE: capturing the mic forces a Bluetooth headset into HFP
+  // (hands-free) mode, which kills A2DP playback — so to transcribe
+  // audio you're hearing through BT headphones, turn Mic OFF.
+  readonly micEnabled = signal(true);
+  readonly systemEnabled = signal(true);
+
+  /** Transient confirmation shown after a bookmark is created. */
+  readonly bookmarkToast = signal<string | null>(null);
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  private bookmarkSub: Subscription | null = null;
 
   /** Ticks every second so the REC counter advances. */
   private readonly nowMs = signal<number>(0);
@@ -54,23 +70,31 @@ export class AppComponent implements OnInit, OnDestroy {
   );
 
   /** Elapsed capture time as HH:MM:SS, derived from capture.startedAt. */
-  readonly recCounter = computed(() => {
-    const c = this.capture();
-    if (c.kind !== 'running') return '00:00:00';
-    const startedMs = Date.parse(c.startedAt);
-    if (Number.isNaN(startedMs)) return '00:00:00';
-    const elapsed = Math.max(0, (this.nowMs() - startedMs) / 1000);
-    return this.formatClock(elapsed);
-  });
+  readonly recCounter = computed(() => this.formatClock(this.elapsedSeconds()));
 
   ngOnInit(): void {
     this.nowMs.set(Date.now());
     this.timerId = setInterval(() => this.nowMs.set(Date.now()), 1000);
+    // Show a transient confirmation when the engine echoes a bookmark back.
+    this.bookmarkSub = this.engine.bookmarkCreated$.subscribe((bm) => {
+      this.showBookmarkToast(`Bookmark saved at ${this.formatClock(bm.t)}`);
+    });
     void this.engine.connect();
   }
 
   ngOnDestroy(): void {
     if (this.timerId !== null) clearInterval(this.timerId);
+    if (this.toastTimer !== null) clearTimeout(this.toastTimer);
+    this.bookmarkSub?.unsubscribe();
+  }
+
+  /** ⌘⇧B — mark the current moment. Mirrors the design's shortcut. */
+  @HostListener('window:keydown', ['$event'])
+  onKeydown(ev: KeyboardEvent): void {
+    if (ev.metaKey && ev.shiftKey && ev.key.toLowerCase() === 'b') {
+      ev.preventDefault();
+      this.onBookmark();
+    }
   }
 
   // ─── Template helpers ───────────────────────────────────────────────
@@ -81,6 +105,24 @@ export class AppComponent implements OnInit, OnDestroy {
 
   isConnected(): boolean {
     return this.connection().kind === 'connected';
+  }
+
+  /** Start is allowed only when connected, idle, and at least one source
+   *  is selected (capturing nothing makes no sense). */
+  canStart(): boolean {
+    return (
+      this.isConnected() &&
+      !this.isCapturing() &&
+      (this.micEnabled() || this.systemEnabled())
+    );
+  }
+
+  toggleMic(): void {
+    if (!this.isCapturing()) this.micEnabled.update((v) => !v);
+  }
+
+  toggleSystem(): void {
+    if (!this.isCapturing()) this.systemEnabled.update((v) => !v);
   }
 
   connectionLabel(): string {
@@ -104,6 +146,13 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.formatClock(seconds);
   }
 
+  /** True if any bookmark's moment falls within this segment's range,
+   *  so the line shows a pin. This is how a time-only bookmark becomes
+   *  visually anchored to the content the user was hearing. */
+  isBookmarked(s: DisplayedSegment): boolean {
+    return this.bookmarks().some((b) => b.t >= s.tStart && b.t < s.tEnd);
+  }
+
   private formatClock(totalSeconds: number): string {
     const s = Math.floor(totalSeconds % 60);
     const m = Math.floor((totalSeconds / 60) % 60);
@@ -114,11 +163,35 @@ export class AppComponent implements OnInit, OnDestroy {
 
   onStart(): void {
     this.engine.clearSegments();
-    this.engine.startCapture({ language: this.language() });
+    this.engine.startCapture({
+      mic: this.micEnabled(),
+      system: this.systemEnabled(),
+      language: this.language(),
+    });
   }
 
   onStop(): void {
     this.engine.stopCapture();
+  }
+
+  onBookmark(): void {
+    if (!this.isCapturing()) return;
+    this.engine.createBookmark(this.elapsedSeconds());
+  }
+
+  /** Seconds since capture start; 0 when not running. */
+  private elapsedSeconds(): number {
+    const c = this.capture();
+    if (c.kind !== 'running') return 0;
+    const startedMs = Date.parse(c.startedAt);
+    if (Number.isNaN(startedMs)) return 0;
+    return Math.max(0, (this.nowMs() - startedMs) / 1000);
+  }
+
+  private showBookmarkToast(message: string): void {
+    this.bookmarkToast.set(message);
+    if (this.toastTimer !== null) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.bookmarkToast.set(null), 2500);
   }
 
   /** Empty string from the DOM <select> becomes null (auto-detect). */

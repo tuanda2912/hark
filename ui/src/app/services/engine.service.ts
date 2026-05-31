@@ -25,6 +25,7 @@ import {
   SegmentPayload,
   ErrorPayload,
   WarningPayload,
+  BookmarkCreatedPayload,
   DisplayedSegment,
   ConnectionState,
   CaptureState,
@@ -78,10 +79,16 @@ export class EngineService {
   });
 
   // RxJS surface for the things signals don't fit well: error toasts,
-  // warning banners. Subjects keep the event semantics ("each emission
-  // is a discrete thing") that signals collapse.
+  // warning banners, bookmark confirmations. Subjects keep the event
+  // semantics ("each emission is a discrete thing") that signals collapse.
   readonly errors$ = new Subject<ErrorPayload>();
   readonly warnings$ = new Subject<WarningPayload>();
+  readonly bookmarkCreated$ = new Subject<BookmarkCreatedPayload>();
+
+  /** All bookmarks created this session, in creation order. */
+  private readonly _bookmarks = signal<BookmarkCreatedPayload[]>([]);
+  readonly bookmarks: Signal<readonly BookmarkCreatedPayload[]> =
+    this._bookmarks.asReadonly();
 
   private socket: WebSocket | null = null;
 
@@ -165,12 +172,21 @@ export class EngineService {
   }
 
   /**
-   * Clear the displayed segments. Doesn't touch the engine — purely a
-   * local reset, e.g. for "clear screen between meetings."
+   * Mark the current moment. `t` is seconds since capture start; the
+   * caller computes it (the engine echoes it back in bookmark.created).
+   */
+  createBookmark(t: number, label?: string): void {
+    this.send({ type: 'bookmark.create', payload: { t, label } });
+  }
+
+  /**
+   * Clear the displayed segments + bookmarks. Doesn't touch the engine —
+   * purely a local reset, e.g. for "clear screen between meetings."
    */
   clearSegments(): void {
     this.segmentsMap.clear();
     this._segmentsTick.update((v) => v + 1);
+    this._bookmarks.set([]);
   }
 
   // ─── Internals ──────────────────────────────────────────────────────
@@ -235,6 +251,12 @@ export class EngineService {
       case 'segment.final':
         this.applySegment(env.payload as SegmentPayload, true);
         break;
+      case 'bookmark.created': {
+        const bm = env.payload as BookmarkCreatedPayload;
+        this._bookmarks.update((list) => [...list, bm]);
+        this.bookmarkCreated$.next(bm);
+        break;
+      }
       case 'warning':
         this.warnings$.next(env.payload as WarningPayload);
         break;
