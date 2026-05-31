@@ -30,6 +30,17 @@ export interface MetaHeartbeatPayload {
   readonly ring_buffer_fill_sec: number;
 }
 
+/**
+ * Sent once when the model finishes loading. harkd brings up the
+ * WebSocket + port file before the model is ready, so an early client
+ * sees `meta.hello.model_loaded === "(loading)"` and then this frame
+ * when the model is ready. A client connecting after the model is loaded
+ * gets the real model name in `meta.hello` and no `meta.ready`.
+ */
+export interface MetaReadyPayload {
+  readonly model_loaded: string;
+}
+
 export interface CaptureStartedPayload {
   readonly session_id: string;
   readonly sample_rate_hz: number;

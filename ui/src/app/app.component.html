@@ -66,6 +66,7 @@
       type="button"
       class="no-drag px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       [disabled]="!canStart()"
+      [title]="warmingUp() ? 'Engine is loading the model — please wait' : 'Start capture'"
       (click)="onStart()"
     >
       Start
@@ -137,6 +138,20 @@
     </span>
   </header>
 
+  <!-- Engine warming up — connected but the model is still loading.
+       Start stays disabled until meta.ready arrives. -->
+  @if (warmingUp()) {
+    <app-status-banner
+      message="Engine warming up — loading model…"
+      severity="info"
+    />
+  }
+
+  <!-- Latest runtime warning (e.g. rtf_high). Cleared on capture start/stop. -->
+  @if (warning(); as w) {
+    <app-status-banner [message]="w" severity="warning" />
+  }
+
   <!-- Engine error banner. Cleared at the next capture start. -->
   @if (lastError(); as err) {
     <div
@@ -150,7 +165,11 @@
        bottom. Replace-by-utterance-id is handled in EngineService; here
        we just split on isFinal so partials render with the live-tail
        (italic + caret) treatment and "commit" into history on finalize. -->
-  <main class="flex-1 overflow-y-auto px-6 py-4">
+  <main
+    #transcriptScroll
+    (scroll)="onTranscriptScroll()"
+    class="flex-1 overflow-y-auto px-6 py-4"
+  >
     @if (segments().length === 0) {
       <div class="text-text-3 text-sm py-12 text-center">
         @if (!isConnected()) {

@@ -20,6 +20,7 @@ import {
   WireEnvelope,
   MetaHelloPayload,
   MetaHeartbeatPayload,
+  MetaReadyPayload,
   CaptureStartedPayload,
   CaptureStoppedPayload,
   SegmentPayload,
@@ -56,6 +57,15 @@ export class EngineService {
 
   private readonly _hello = signal<MetaHelloPayload | null>(null);
   readonly hello: Signal<MetaHelloPayload | null> = this._hello.asReadonly();
+
+  /**
+   * True once the engine model is loaded and capture can start. Set by
+   * `meta.ready`, or by `meta.hello` when a late-connecting client gets
+   * the real model name (i.e. not the "(loading)" placeholder). Reset to
+   * false on socket close so a reconnect re-gates the Start affordance.
+   */
+  private readonly _ready = signal(false);
+  readonly ready = this._ready.asReadonly();
 
   /**
    * Latest error envelope from the engine. Cleared when capture starts
@@ -140,6 +150,9 @@ export class EngineService {
         kind: 'disconnected',
         reason: `${ev.code} ${ev.reason || ''}`.trim(),
       });
+      // Re-gate Start on reconnect: a fresh socket must see hello/ready
+      // again before we trust the model is loaded.
+      this._ready.set(false);
       this.socket = null;
     };
     ws.onmessage = (ev) => this.dispatchFrame(ev.data);
@@ -220,9 +233,21 @@ export class EngineService {
       return;
     }
     switch (env.type) {
-      case 'meta.hello':
-        this._hello.set(env.payload as MetaHelloPayload);
+      case 'meta.hello': {
+        const hello = env.payload as MetaHelloPayload;
+        this._hello.set(hello);
         this._connection.set({ kind: 'connected', helloAt: Date.now() });
+        // A client connecting after the model is ready gets the real
+        // model name here (not "(loading)") and is immediately ready.
+        this._ready.set(hello.model_loaded !== '(loading)');
+        break;
+      }
+      case 'meta.ready':
+        this._ready.set(true);
+        // Keep the displayed model name fresh when hello arrived during load.
+        this._hello.update((h) =>
+          h ? { ...h, model_loaded: (env.payload as MetaReadyPayload).model_loaded } : h,
+        );
         break;
       case 'meta.heartbeat':
         this._heartbeat.set(env.payload as MetaHeartbeatPayload);

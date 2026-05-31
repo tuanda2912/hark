@@ -7,24 +7,28 @@
 // tagging remain follow-up commits per ADR-0010.
 
 import {
+  afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   HostListener,
   OnDestroy,
   OnInit,
   computed,
   inject,
   signal,
+  viewChild,
 } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { EngineService } from './services/engine.service';
 import { LANGUAGE_CHOICES, DisplayedSegment } from './services/engine.types';
 import { TranscriptLineComponent } from './components/transcript-line.component';
+import { StatusBannerComponent } from './components/status-banner.component';
 
 @Component({
   selector: 'hark-root',
   standalone: true,
-  imports: [TranscriptLineComponent],
+  imports: [TranscriptLineComponent, StatusBannerComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -36,10 +40,20 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly capture = this.engine.capture;
   readonly heartbeat = this.engine.heartbeat;
   readonly hello = this.engine.hello;
+  readonly ready = this.engine.ready;
   readonly segments = this.engine.segments;
   readonly lastError = this.engine.lastError;
 
   readonly bookmarks = this.engine.bookmarks;
+
+  /** Connected but the model is still loading — show the warming-up banner
+   *  and keep Start disabled until `meta.ready` arrives. */
+  readonly warmingUp = computed(() => this.isConnected() && !this.ready());
+
+  /** Latest engine warning (e.g. rtf_high). Shown in a warning banner;
+   *  cleared when capture starts or stops so it doesn't linger stale. */
+  readonly warning = signal<string | null>(null);
+  private warningSub: Subscription | null = null;
 
   readonly languageChoices = LANGUAGE_CHOICES;
   /** Currently-selected language code; null = auto-detect. */
@@ -69,6 +83,26 @@ export class AppComponent implements OnInit, OnDestroy {
     this.segments().filter((s) => !s.isFinal),
   );
 
+  // ─── Transcript auto-scroll (follow the tail) ───────────────────────
+  /** The scrollable transcript container (the <main>). */
+  private readonly transcriptScroll =
+    viewChild<ElementRef<HTMLElement>>('transcriptScroll');
+  /** Whether to keep the view pinned to the newest line. Goes false when the
+   *  user scrolls up to read history (so we don't yank them back down), and
+   *  true again when they return to the bottom. */
+  private followTail = true;
+  // Pin to the latest line as the transcript grows — but only while the user
+  // is at the bottom. afterRenderEffect runs AFTER the DOM updates, so
+  // scrollHeight already reflects the new content; it re-runs only when
+  // segments() changes (it never reads the per-second REC tick, so the clock
+  // doesn't cause scrolling).
+  private readonly _autoscroll = afterRenderEffect(() => {
+    this.segments();
+    if (!this.followTail) return;
+    const el = this.transcriptScroll()?.nativeElement;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+
   /** Elapsed capture time as HH:MM:SS, derived from capture.startedAt. */
   readonly recCounter = computed(() => this.formatClock(this.elapsedSeconds()));
 
@@ -79,6 +113,10 @@ export class AppComponent implements OnInit, OnDestroy {
     this.bookmarkSub = this.engine.bookmarkCreated$.subscribe((bm) => {
       this.showBookmarkToast(`Bookmark saved at ${this.formatClock(bm.t)}`);
     });
+    // Surface the latest engine warning (e.g. rtf_high) in a banner.
+    this.warningSub = this.engine.warnings$.subscribe((w) => {
+      this.warning.set(w.message);
+    });
     void this.engine.connect();
   }
 
@@ -86,6 +124,7 @@ export class AppComponent implements OnInit, OnDestroy {
     if (this.timerId !== null) clearInterval(this.timerId);
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
     this.bookmarkSub?.unsubscribe();
+    this.warningSub?.unsubscribe();
   }
 
   /** ⌘⇧B — mark the current moment. Mirrors the design's shortcut. */
@@ -107,11 +146,14 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.connection().kind === 'connected';
   }
 
-  /** Start is allowed only when connected, idle, and at least one source
-   *  is selected (capturing nothing makes no sense). */
+  /** Start is allowed only when connected, the model is loaded (ready),
+   *  idle, and at least one source is selected (capturing nothing makes
+   *  no sense). Sending capture.start before ready earns an
+   *  ENGINE_WARMING_UP error from the engine, so we gate it client-side. */
   canStart(): boolean {
     return (
       this.isConnected() &&
+      this.ready() &&
       !this.isCapturing() &&
       (this.micEnabled() || this.systemEnabled())
     );
@@ -123,6 +165,15 @@ export class AppComponent implements OnInit, OnDestroy {
 
   toggleSystem(): void {
     if (!this.isCapturing()) this.systemEnabled.update((v) => !v);
+  }
+
+  /** Re-evaluate whether to keep following the tail from the user's scroll
+   *  position. Within ~48px of the bottom counts as "at the bottom", so a
+   *  user reading back up isn't pulled down by new segments. */
+  onTranscriptScroll(): void {
+    const el = this.transcriptScroll()?.nativeElement;
+    if (!el) return;
+    this.followTail = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   }
 
   connectionLabel(): string {
@@ -162,6 +213,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   onStart(): void {
+    this.warning.set(null);
     this.engine.clearSegments();
     this.engine.startCapture({
       mic: this.micEnabled(),
@@ -171,6 +223,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   onStop(): void {
+    this.warning.set(null);
     this.engine.stopCapture();
   }
 
