@@ -24,6 +24,7 @@ import {
   CaptureStartedPayload,
   CaptureStoppedPayload,
   SegmentPayload,
+  SegmentSupersededPayload,
   ErrorPayload,
   WarningPayload,
   BookmarkCreatedPayload,
@@ -311,6 +312,19 @@ export class EngineService {
       case 'segment.final':
         this.applySegment(env.payload as SegmentPayload, true);
         break;
+      case 'segment.superseded': {
+        // Retraction (ADR-0009): the older fragment has been replaced by a
+        // more-complete re-segmentation. Drop it from the displayed set;
+        // `superseded_by` arrives (or has arrived) via its own segment.*
+        // frames through the normal upsert path, so we don't touch it here.
+        const p = env.payload as SegmentSupersededPayload;
+        if (this.segmentsMap.delete(p.utterance_id)) {
+          // Bump the same tick applySegment() uses so the segments()
+          // computed re-evaluates after this map mutation.
+          this._segmentsTick.update((v) => v + 1);
+        }
+        break;
+      }
       case 'bookmark.created': {
         const bm = env.payload as BookmarkCreatedPayload;
         this._bookmarks.update((list) => [...list, bm]);

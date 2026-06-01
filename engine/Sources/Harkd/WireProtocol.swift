@@ -182,6 +182,23 @@ struct BookmarkCreatedPayload: Encodable {
     let label: String
 }
 
+/// Emitted once when the engine determines an utterance has been superseded
+/// by a later, overlapping, more-complete re-segmentation (ADR-0009 mints a
+/// fresh `utterance_id` when WhisperKit re-segments a growing utterance; this
+/// frame retracts the older fragment so the UI — and the saved file — don't
+/// show overlapping growing fragments of the same sentence).
+///
+/// Consumer semantics: remove `utteranceId` from the displayed/retained set;
+/// it has been replaced by `supersededBy`. Both props snake_case to
+/// `utterance_id` / `superseded_by` via the outbound encoder's
+/// `.convertToSnakeCase` strategy — both fields are non-optional, so the
+/// synthesized `encode(to:)` is sufficient (no explicit nil handling needed,
+/// unlike `SegmentPayload`).
+struct SegmentSupersededPayload: Encodable {
+    let utteranceId: String
+    let supersededBy: String
+}
+
 /// Emitted once per meeting after capture.stop, when diarization has run and
 /// the transcript has been written to the vault. Carries the vault path so the
 /// UI can offer "reveal in Finder", the speaker roster, and a few stats.

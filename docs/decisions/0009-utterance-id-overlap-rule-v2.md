@@ -1,7 +1,7 @@
 # ADR-0009: Utterance-identity rule v2 — max-denominator overlap with prune
 
 - **Date:** 2026-05-28
-- **Status:** Accepted
+- **Status:** Accepted — **extended by [ADR-0018](0018-utterance-supersession-signal.md)** (adds the `segment.superseded` retraction signal this ADR never provided); the decision below is unchanged.
 - **Deciders:** Dang Anh Tuan
 
 ## Context

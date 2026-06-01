@@ -100,15 +100,50 @@ final class UtteranceLedger {
     /// if false merges become a problem.
     private let overlapThreshold: Double = 0.5
 
+    // ─── Supersession tuning (ADR-0018) ───────────────────────────────────
+    //
+    // A new segment SUPERSEDES an existing entry only when BOTH a time-
+    // containment AND a text-containment test pass — never on text alone (the
+    // time gate is what protects legitimately repeated phrases at a different
+    // time; ADR-0018 §Decision). The conservative bias is intentional: a
+    // leftover fragment is a lesser evil than retracting a real utterance.
+
+    /// How far the new segment's start may sit AFTER the old entry's start and
+    /// still count as "same start". WhisperKit drifts boundaries 1–3 s between
+    /// passes (ADR-0009 §Context); 1.5 s absorbs that jitter without letting a
+    /// distinct later utterance pose as a re-segmentation of an earlier one.
+    private let supersedeStartSlack: Double = 1.5
+    /// How far the new segment's end may fall SHORT of the old entry's end and
+    /// still count as "new contains old". Same jitter rationale; the dominant
+    /// signal is that the new end extends well past the old, so this only
+    /// forgives sub-second boundary wobble.
+    private let supersedeEndSlack: Double = 0.75
+
     private struct Entry {
         let id: String
         var tStart: Double
         var tEnd: Double
         var lastText: String
         var finalized: Bool
+        /// Set when a later, overlapping, more-complete segment supersedes this
+        /// entry (ADR-0018). A superseded entry is never re-matched by `resolve`
+        /// and is never emitted as a synthetic final by `prune` — it has been
+        /// retracted in favour of `supersededBy`.
+        var superseded: Bool
     }
 
     private var entries: [Entry] = []
+
+    /// One supersession event: the older fragment `oldId` was retracted in
+    /// favour of the newer, extending segment `newId`. Drained by the caller
+    /// (EngineSession) which broadcasts a `segment.superseded` per event and
+    /// filters `oldId` out of the at-stop vault retention. Chains surface as
+    /// separate events (A→B then B→C) in the order they were detected.
+    struct SupersessionEvent: Equatable {
+        let oldId: String
+        let newId: String
+    }
+    private var pendingSupersessions: [SupersessionEvent] = []
 
     /// Look up or mint the utterance ID for a segment occupying [tStart, tEnd].
     /// The matched entry's interval is updated to the new range (the latest
@@ -121,15 +156,16 @@ final class UtteranceLedger {
             return mint(tStart: tStart, tEnd: tEnd, text: text)
         }
 
-        // Best non-finalized overlap. We never reuse a finalized entry's
-        // ID because emitting a partial after a final would confuse the UI.
+        // Best non-finalized, non-superseded overlap. We never reuse a
+        // finalized entry's ID (emitting a partial after a final confuses the
+        // UI) nor a superseded one (it has been retracted — ADR-0018).
         //
         // Score = overlap / max(segLen, eLen). The max-denominator form
         // ensures engulfment (one interval ⊂ the other) does NOT auto-match
         // when the lengths are very different — see class doc + ADR-0009.
         var bestIdx: Int? = nil
         var bestScore: Double = 0.0
-        for (i, e) in entries.enumerated() where !e.finalized {
+        for (i, e) in entries.enumerated() where !e.finalized && !e.superseded {
             let overlapStart = max(tStart, e.tStart)
             let overlapEnd = min(tEnd, e.tEnd)
             let overlap = max(0.0, overlapEnd - overlapStart)
@@ -151,13 +187,110 @@ final class UtteranceLedger {
             return entries[i].id
         }
 
-        return mint(tStart: tStart, tEnd: tEnd, text: text)
+        // Below threshold → a fresh UUID is minted (ADR-0009). This is exactly
+        // the re-segmentation-grows signature: a wider new segment scores
+        // `shorter/longer < 0.5` against the short fragment it contains. Before
+        // minting, detect whether this new segment SUPERSEDES one or more such
+        // fragments (ADR-0018) so the caller can retract them.
+        let newId = mint(tStart: tStart, tEnd: tEnd, text: text)
+        detectSupersession(newId: newId, newStart: tStart, newEnd: tEnd, newText: text)
+        return newId
     }
 
     private func mint(tStart: Double, tEnd: Double, text: String) -> String {
         let id = UUID().uuidString
-        entries.append(Entry(id: id, tStart: tStart, tEnd: tEnd, lastText: "", finalized: false))
+        entries.append(Entry(
+            id: id, tStart: tStart, tEnd: tEnd, lastText: "",
+            finalized: false, superseded: false))
         return id
+    }
+
+    // ─── Supersession detection (ADR-0018) ─────────────────────────────────
+
+    /// After a fresh entry `newId` is minted for [newStart, newEnd] / `newText`,
+    /// scan the still-live entries for any that this new segment supersedes —
+    /// i.e. the new segment is a grown re-segmentation of that earlier fragment.
+    /// BOTH conditions must hold (conservative; never text alone — ADR-0018):
+    ///
+    ///   1. TIME CONTAINMENT — the old entry's [tStart, tEnd] is (approximately)
+    ///      contained within the new segment's interval. The new segment starts
+    ///      no later than the old (within `supersedeStartSlack`) and ends no
+    ///      earlier than the old (within `supersedeEndSlack`). This is the
+    ///      re-segmentation signature: the window re-decoded the same span into
+    ///      a longer segment. A non-overlapping repeat fails this outright, so
+    ///      a legitimately repeated phrase at a different time is never eaten.
+    ///
+    ///   2. TEXT CONTAINMENT — the old entry's normalized text is a prefix of
+    ///      the new segment's normalized text (normalize = lowercase, trim,
+    ///      collapse internal whitespace, drop punctuation). The grown version
+    ///      literally extends the old words. Prefix (not mere substring) keeps
+    ///      it to genuine extensions and avoids matching an incidental
+    ///      mid-sentence echo.
+    ///
+    /// Records each match as a `SupersessionEvent(old → new)` and marks the old
+    /// entry `superseded` so `resolve` won't re-match it and `prune` won't emit
+    /// a synthetic final for it. Chains fall out naturally: when C later
+    /// supersedes B, B is matched here (A was already marked and is skipped),
+    /// yielding a separate B→C event after the earlier A→B.
+    private func detectSupersession(newId: String, newStart: Double, newEnd: Double, newText: String) {
+        let newNorm = Self.normalize(newText)
+        if newNorm.isEmpty { return }
+
+        for i in entries.indices {
+            let e = entries[i]
+            if e.id == newId { continue }
+            if e.superseded { continue }
+
+            // 1. Time containment: old ⊆ new, within boundary-jitter slack.
+            let startContained = newStart <= e.tStart + supersedeStartSlack
+            let endContained = newEnd >= e.tEnd - supersedeEndSlack
+            guard startContained && endContained else { continue }
+
+            // 2. Text containment: old normalized text is a prefix of new's.
+            let oldNorm = Self.normalize(e.lastText)
+            guard !oldNorm.isEmpty else { continue }
+            guard oldNorm != newNorm else { continue }  // identical → not a growth
+            guard newNorm.hasPrefix(oldNorm) else { continue }
+
+            entries[i].superseded = true
+            pendingSupersessions.append(SupersessionEvent(oldId: e.id, newId: newId))
+        }
+    }
+
+    /// Normalize text for the supersession text-containment test: lowercase,
+    /// trim, collapse runs of whitespace to a single space, and strip
+    /// punctuation (so "Okay." matches the "okay" inside a longer line and
+    /// casing/spacing/punctuation jitter across passes doesn't defeat the
+    /// prefix check). Letters/digits/whitespace survive; everything else is
+    /// dropped. Unicode-aware via `CharacterSet`.
+    private static func normalize(_ s: String) -> String {
+        let lowered = s.lowercased()
+        var out = String.UnicodeScalarView()
+        var lastWasSpace = false
+        for scalar in lowered.unicodeScalars {
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                if !lastWasSpace && !out.isEmpty {
+                    out.append(" ")
+                    lastWasSpace = true
+                }
+            } else if CharacterSet.alphanumerics.contains(scalar) {
+                out.append(scalar)
+                lastWasSpace = false
+            }
+            // else: punctuation/symbol → drop, do NOT reset lastWasSpace so
+            // "okay," + space collapses the same as "okay" + space.
+        }
+        var result = String(out)
+        if result.hasSuffix(" ") { result.removeLast() }
+        return result
+    }
+
+    /// Drain the supersession events detected since the last drain (FIFO).
+    /// EngineSession calls this after each `resolve`/`prune` batch and emits a
+    /// `segment.superseded` per event. Returns `[]` when nothing was superseded.
+    func drainSupersessions() -> [SupersessionEvent] {
+        defer { pendingSupersessions.removeAll(keepingCapacity: true) }
+        return pendingSupersessions
     }
 
     /// Returns true if `text` differs from the last text emitted for this
@@ -192,6 +325,11 @@ final class UtteranceLedger {
         let tEnd: Double
         let lastText: String
         let wasFinalized: Bool
+        /// True if this entry was retracted by a later re-segmentation
+        /// (ADR-0018). The caller must NOT emit a synthetic `segment.final`
+        /// for it — it has already been superseded; a closing final would
+        /// resurrect the fragment the supersession just retracted.
+        let wasSuperseded: Bool
     }
 
     /// Drop entries whose `tEnd` is strictly less than `cutoff`. Returns
@@ -216,7 +354,8 @@ final class UtteranceLedger {
                     tStart: e.tStart,
                     tEnd: e.tEnd,
                     lastText: e.lastText,
-                    wasFinalized: e.finalized
+                    wasFinalized: e.finalized,
+                    wasSuperseded: e.superseded
                 ))
             } else {
                 kept.append(e)

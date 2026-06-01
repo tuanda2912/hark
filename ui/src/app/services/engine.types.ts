@@ -67,6 +67,18 @@ export interface SegmentPayload {
   readonly translation: string | null;
 }
 
+/**
+ * Engine → UI retraction signal. Emitted once when an utterance has been
+ * superseded by a later, overlapping, more-complete re-segmentation
+ * (ADR-0009 mints a fresh utterance_id on re-segmentation; this frame
+ * retracts the older fragment). Consumer semantics: drop `utterance_id`
+ * from the displayed/retained set — it has been replaced by `superseded_by`.
+ */
+export interface SegmentSupersededPayload {
+  readonly utterance_id: string;
+  readonly superseded_by: string;
+}
+
 export interface WarningPayload {
   readonly code: string;
   readonly message: string;

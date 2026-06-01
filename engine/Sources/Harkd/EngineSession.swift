@@ -47,9 +47,11 @@ actor EngineSession {
     private var modelReady: Bool { whisperKit != nil }
     private weak var server: HarkdWebSocketServer?
 
-    /// Offline speaker diarizer (Phase 5, ADR-0016). nil until the models
-    /// finish loading; nil-tolerant everywhere — a missing/failed diarizer
-    /// NEVER blocks capture or stop. Used only by the post-stop pass.
+    /// Offline speaker diarizer (Phase 5, ADR-0016). Wraps FluidAudio's
+    /// `OfflineDiarizerManager` (VBx global clustering, overlapping windows,
+    /// exclusive segments). nil until the models finish loading; nil-tolerant
+    /// everywhere — a missing/failed diarizer NEVER blocks capture or stop.
+    /// Used only by the post-stop pass.
     private var diarizer: Diarizer?
 
     // ─── Session-scoped state (reset per capture.start) ────────────────
@@ -100,6 +102,15 @@ actor EngineSession {
         let text: String
     }
     private var finalizedUtterances: [FinalizedUtterance] = []
+
+    /// utterance_ids the ledger reported as SUPERSEDED during the session
+    /// (ADR-0018). A superseded fragment has been retracted in favour of a
+    /// later, overlapping, more-complete re-segmentation: it is broadcast once
+    /// via `segment.superseded` (so the live UI deletes it) and filtered out of
+    /// the at-stop vault retention in `dedupedFinalizedUtterances()`. Populated
+    /// from `ledger.drainSupersessions()` after every reconcile/prune batch.
+    /// Reset per capture.start.
+    private var supersededIds: Set<String> = []
 
     // ─── Connected clients ──────────────────────────────────────────────
     private var clients: [String: WebSocketClient] = [:]
@@ -339,6 +350,10 @@ actor EngineSession {
         self.sessionLanguage = nil
         self.rtfSum = 0
         self.rtfSamples = 0
+        // NOTE: `finalizedUtterances`, `sessionAudio`, and `supersededIds` are
+        // NOT cleared here — the flush Task (which runs later on the actor)
+        // still needs them for the diarization pass + vault write. They're
+        // cleared inside `flushOnStop` after they've been consumed.
         self.vad = EnergyVAD()
     }
 
@@ -400,6 +415,7 @@ actor EngineSession {
             self.sessionAudio.reserveCapacity(16_000 * 60 * 10)
         }
         self.finalizedUtterances.removeAll(keepingCapacity: true)
+        self.supersededIds.removeAll(keepingCapacity: true)
 
         // CapturePipeline runs its pump on a background DispatchQueue. The
         // floatFrameSink fires there. We bounce into the actor via a Task
@@ -564,12 +580,20 @@ actor EngineSession {
         // with their last known state so the UI gets closure on dangling
         // partials. See ADR-0009.
         let pruned = ledger.prune(beforeSessionTime: windowStartSessionTime)
-        for p in pruned where !p.wasFinalized {
+        for p in pruned where !p.wasFinalized && !p.wasSuperseded {
+            // A superseded orphan is NOT closed with a synthetic final — it was
+            // already retracted in favour of the segment that grew past it
+            // (ADR-0018); a closing final would resurrect the fragment.
             let orphanSeg = WindowSegment(
                 tStart: p.tStart, tEnd: p.tEnd, text: p.lastText, language: nil
             )
             emitSegment(uid: p.id, isFinal: true, seg: orphanSeg)
         }
+
+        // Drain + broadcast any supersessions detected during this reconcile
+        // batch (the `resolve` mints above). Additive retraction signal — it
+        // does not alter the partial/final lifecycle. See ADR-0018.
+        drainAndEmitSupersessions(ledger)
 
         self.transcribeInFlight = false
     }
@@ -594,8 +618,29 @@ actor EngineSession {
         // can never break the capture/stop lifecycle.
         await flushTranscriptionDrain()
 
-        let capturedUtterances = finalizedUtterances
+        // `finalizedUtterances` is the APPEND-ONLY emission log: `emitSegment`
+        // pushes a row every time a `segment.final` fires. A single utterance
+        // can be finalized more than once across the session — the live feed
+        // dedups by `utterance_id` on the UI side (last write wins), but the
+        // retained log keeps every emit, so the written transcript ends up with
+        // duplicates AND out-of-order rows (finals append in emission order, not
+        // t_start order). Two duplicate sources, both real in the traces:
+        //   1. same utterance_id finalized twice (normal final + drain/orphan).
+        //   2. ADR-0009's accepted tradeoff: when WhisperKit re-segments coarsely
+        //      the max-denominator rule MINTS A FRESH uid for what is really the
+        //      same utterance — distinct ids, near-identical text + t_start.
+        // Dedup mirrors the live FINAL set: collapse to one row per utterance,
+        // last-write-wins (the most-complete final text), then sort by t_start.
+        let capturedUtterances = dedupedFinalizedUtterances()
+        let rawCount = finalizedUtterances.count
+        let supersededCount = supersededIds.count
         finalizedUtterances.removeAll(keepingCapacity: false)
+        supersededIds.removeAll(keepingCapacity: false)
+        if rawCount != capturedUtterances.count {
+            FileHandle.standardError.write(Data(String(
+                format: "harkd: finalized utterances deduped %d → %d for vault write (superseded=%d)\n",
+                rawCount, capturedUtterances.count, supersededCount).utf8))
+        }
 
         let (labeled, attendees) = await runDiarizationPass(
             audio: capturedAudio, utterances: capturedUtterances)
@@ -605,6 +650,56 @@ actor EngineSession {
             durationSec: durationSec, rtfAvg: rtfAvg,
             segmentCount: capturedUtterances.count,
             labeled: labeled, attendees: attendees)
+    }
+
+    /// Collapse the append-only `finalizedUtterances` emission log into the set
+    /// the vault should contain — each utterance ONCE — then return it sorted by
+    /// `tStart` ascending. Off the live path (stop only).
+    ///
+    /// Dedup is two-stage:
+    ///   1. By `utterance_id`, last-write-wins. The final emit for a uid is the
+    ///      most-complete text (text only ever grows/refines before lock), so
+    ///      keeping the last occurrence mirrors the live feed's reconciliation.
+    ///   2. By (rounded t_start, normalized text) for DISTINCT uids that are
+    ///      really the same utterance — ADR-0009 mints a fresh id when WhisperKit
+    ///      re-segments coarsely, yielding duplicate rows with identical text and
+    ///      near-identical timing. We round t_start to 1 s so a 1-3 s boundary
+    ///      shift still collapses, and lowercase/trim the text so casing/spacing
+    ///      jitter across passes doesn't defeat the match. Keep the later row.
+    ///
+    /// Before either stage, SUPERSEDED utterances (ADR-0018) are dropped: a
+    /// fragment retracted live via `segment.superseded` must not survive into
+    /// the written file. This is the at-stop half of the one-signal-two-readers
+    /// rule — the live UI deleted it on the wire frame; the writer filters the
+    /// same ids here. (Stages 1+2 still run as a backstop for re-segmentation
+    /// duplicates the conservative supersession gate intentionally let through.)
+    /// The sort is unconditional — a safety net so the body is chronological even
+    /// if dedup ever leaves rows in a different order.
+    private func dedupedFinalizedUtterances() -> [FinalizedUtterance] {
+        // Stage 0: drop superseded fragments (retracted live; never written).
+        let retained = finalizedUtterances.filter { !supersededIds.contains($0.utteranceId) }
+
+        // Stage 1: last-write-wins by utterance_id, preserving last-seen order.
+        var byId: [String: FinalizedUtterance] = [:]
+        var idOrder: [String] = []
+        for u in retained {
+            if byId[u.utteranceId] == nil { idOrder.append(u.utteranceId) }
+            byId[u.utteranceId] = u
+        }
+
+        // Stage 2: collapse distinct-uid duplicates (same text + ~same start).
+        func key(_ u: FinalizedUtterance) -> String {
+            let t = (u.tStart).rounded()  // 1 s bucket absorbs boundary jitter
+            let text = u.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            return "\(Int(t))|\(text)"
+        }
+        var byKey: [String: FinalizedUtterance] = [:]
+        for id in idOrder {
+            guard let u = byId[id] else { continue }
+            byKey[key(u)] = u  // later occurrence wins
+        }
+
+        return byKey.values.sorted { $0.tStart < $1.tStart }
     }
 
     // ─── Vault persistence + meeting.saved (Phase 5 Slice 2, ADR-0015/0016) ──
@@ -696,6 +791,10 @@ actor EngineSession {
                 ))
             }
         }
+        // The drain pass can itself supersede earlier fragments (it re-decodes
+        // the whole tail buffer). Broadcast those before stop completes so the
+        // live UI and the retention filter both see them. See ADR-0018.
+        drainAndEmitSupersessions(ledger)
     }
 
     // ─── Offline diarization pass (Phase 5, ADR-0016) ───────────────────
@@ -736,6 +835,11 @@ actor EngineSession {
         let started = Date()
         let result: DiarizationResult
         do {
+            // OFFLINE pipeline (ADR-0016 / offline rewire): VBx global clustering
+            // over overlapping windows → EXCLUSIVE (non-overlapping) segments.
+            // Finer/exclusive segments make the max-overlap assignment below
+            // accurate on rapid back-and-forth; the debug ambiguity summary
+            // confirms the straddle case drops toward zero.
             result = try await diarizer.diarize(samples)
         } catch {
             FileHandle.standardError.write(Data(
@@ -757,37 +861,87 @@ actor EngineSession {
         }
         let speakerCount = ordinalForSpeakerId.count
 
-        // Always-on summary line.
+        // Always-on summary line. avg_seg_dur lets a verification run see the
+        // offline pipeline's finer/exclusive segmentation at a glance (shorter
+        // average vs the old streaming chunked pass = the expected improvement).
+        let totalSegDur = result.segments.reduce(0.0) { $0 + Double($1.durationSeconds) }
+        let avgSegDur = result.segments.isEmpty ? 0.0 : totalSegDur / Double(result.segments.count)
         FileHandle.standardError.write(Data(String(
-            format: "harkd: diarization done — speakers=%d  diar_segments=%d  utterances=%d  audio=%.1fs  diar_time=%.2fs  rtf=%.3f\n",
-            speakerCount, result.segments.count, utterances.count,
+            format: "harkd: diarization done (offline) — speakers=%d  diar_segments=%d  avg_seg_dur=%.2fs  utterances=%d  audio=%.1fs  diar_time=%.2fs  rtf=%.3f\n",
+            speakerCount, result.segments.count, avgSegDur, utterances.count,
             audioSeconds, diarSeconds, rtf
         ).utf8))
+
+        // Verbose diagnostics gate. When set, dump the full diar-segment table
+        // up front so the per-utterance overlap lines below can be read against
+        // it. All extra output stays behind this flag — the summary line above
+        // is unconditional and unchanged.
+        let debug = ProcessInfo.processInfo.environment["HARK_DIAR_DEBUG"] == "1"
+        if debug {
+            FileHandle.standardError.write(Data(
+                "harkd: diar-segments (idx | speakerId→ord | start..end | dur)\n".utf8))
+            for (i, seg) in result.segments.enumerated() {
+                let ord = ordinalForSpeakerId[seg.speakerId].map { "S\($0)" } ?? "—"
+                FileHandle.standardError.write(Data(String(
+                    format: "harkd:   %3d | %@ %@ | %8.2f..%8.2f | %6.2f\n",
+                    i, seg.speakerId.isEmpty ? "(empty)" : seg.speakerId, ord,
+                    Double(seg.startTimeSeconds), Double(seg.endTimeSeconds),
+                    Double(seg.durationSeconds)
+                ).utf8))
+            }
+        }
 
         // Label each utterance by max temporal overlap, and collect the
         // distinct labels in the order utterances first reference them (i.e.
         // session-time order) so `attendees` reads naturally. "Speaker ?" is a
         // valid label but is NOT added to attendees — it's "unattributed", not
         // a roster member.
-        let debug = ProcessInfo.processInfo.environment["HARK_DIAR_DEBUG"] == "1"
         var labeled: [VaultWriter.Utterance] = []
         labeled.reserveCapacity(utterances.count)
         var attendees: [String] = []
         var seen = Set<String>()
+        // Ambiguity accounting (debug summary only — no behavior change).
+        var ambiguousCount = 0
+        var zeroOverlapCount = 0
         for u in utterances {
-            let label = speakerLabel(
+            let m = matchSpeaker(
                 forUtteranceStart: u.tStart, end: u.tEnd,
                 diarSegments: result.segments, ordinals: ordinalForSpeakerId)
+            let label = m.label
             if label != "Speaker ?", seen.insert(label).inserted {
                 attendees.append(label)
             }
             labeled.append(VaultWriter.Utterance(tStart: u.tStart, label: label, text: u.text))
             if debug {
+                // "Ambiguous" = the chosen and runner-up overlaps are within
+                // 25% of each other AND the runner-up is a DIFFERENT speaker —
+                // i.e. a near-tie across a speaker boundary, the straddle case.
+                let ambiguous = m.runnerUpOverlap > 0
+                    && m.runnerUpSpeakerOrdinal != m.chosenSpeakerOrdinal
+                    && m.runnerUpOverlap >= m.chosenOverlap * 0.75
+                if m.chosenOverlap <= 0 { zeroOverlapCount += 1 }
+                if ambiguous { ambiguousCount += 1 }
+                let chosenDesc = m.chosenSegmentIndex.map { idx in
+                    String(format: "seg#%d %@ ovl=%.2f", idx,
+                            m.chosenSpeakerOrdinal.map { "S\($0)" } ?? "—", m.chosenOverlap)
+                } ?? "none"
+                let runnerDesc = m.runnerUpSegmentIndex.map { idx in
+                    String(format: "seg#%d %@ ovl=%.2f", idx,
+                            m.runnerUpSpeakerOrdinal.map { "S\($0)" } ?? "—", m.runnerUpOverlap)
+                } ?? "none"
+                let flag = m.chosenOverlap <= 0 ? " [ZERO-OVERLAP]" : (ambiguous ? " [AMBIGUOUS]" : "")
                 FileHandle.standardError.write(Data(String(
-                    format: "harkd: diar  %7.2f..%7.2f → %@\n",
-                    u.tStart, u.tEnd, label
+                    format: "harkd: diar  %8.2f..%8.2f → %@  chosen={%@}  runnerUp={%@}%@\n",
+                    u.tStart, u.tEnd, label, chosenDesc, runnerDesc, flag
                 ).utf8))
             }
+        }
+
+        if debug {
+            FileHandle.standardError.write(Data(String(
+                format: "harkd: diar-ambiguity — utterances=%d  ambiguous=%d  zeroOverlap(Speaker ?)=%d\n",
+                utterances.count, ambiguousCount, zeroOverlapCount
+            ).utf8))
         }
 
         // Sort attendees by their ordinal so the roster reads Speaker 1,
@@ -796,29 +950,80 @@ actor EngineSession {
         return (labeled, attendees)
     }
 
-    /// Pick the "Speaker N" label whose diarization segment has the greatest
-    /// temporal overlap with the utterance interval [start, end]. Returns
-    /// "Speaker ?" when no diarization segment overlaps (e.g. cross-talk
-    /// dropped by the segmenter, or a sub-minSpeechDuration utterance).
-    private func speakerLabel(
+    /// Diagnostic-rich result of matching one utterance to a diar segment.
+    /// `label` is the SAME value the old `speakerLabel` returned; the rest is
+    /// observability for the debug log (which segment won, by how much, and
+    /// what the strongest competing-speaker segment was). Sendable-free; it
+    /// never crosses an actor boundary.
+    private struct SpeakerMatch {
+        let label: String
+        let chosenSegmentIndex: Int?
+        let chosenSpeakerOrdinal: Int?
+        let chosenOverlap: Double
+        let runnerUpSegmentIndex: Int?
+        let runnerUpSpeakerOrdinal: Int?
+        let runnerUpOverlap: Double
+    }
+
+    /// Match the utterance interval [start, end] to the diarization segment with
+    /// the greatest temporal overlap, returning a "Speaker N" label (or
+    /// "Speaker ?" when nothing overlaps). The label decision is identical to
+    /// the prior `speakerLabel`: pick the single max-overlap segment, require
+    /// overlap > 0. The extra fields are pure diagnostics — they DO NOT affect
+    /// the label — and surface the straddle case (a diar segment spanning a
+    /// speaker change so a back-and-forth all inherits one label): when the
+    /// runner-up belongs to a different speaker with comparable overlap, the
+    /// caller marks the assignment ambiguous.
+    ///
+    /// NOTE: the runner-up is the best overlap from a speaker DIFFERENT from the
+    /// chosen one, so "ambiguous" specifically means a near-tie ACROSS speakers,
+    /// not two segments of the same speaker.
+    private func matchSpeaker(
         forUtteranceStart start: Double, end: Double,
         diarSegments: [TimedSpeakerSegment], ordinals: [String: Int]
-    ) -> String {
+    ) -> SpeakerMatch {
         var bestOrdinal: Int? = nil
         var bestOverlap = 0.0
-        for seg in diarSegments where !seg.speakerId.isEmpty {
+        var bestIndex: Int? = nil
+        // Strongest overlap from a speaker other than the current best.
+        var runnerOrdinal: Int? = nil
+        var runnerOverlap = 0.0
+        var runnerIndex: Int? = nil
+
+        for (i, seg) in diarSegments.enumerated() where !seg.speakerId.isEmpty {
             let segStart = Double(seg.startTimeSeconds)
             let segEnd = Double(seg.endTimeSeconds)
             let overlap = max(0.0, min(end, segEnd) - max(start, segStart))
+            if overlap <= 0 { continue }
+            let ord = ordinals[seg.speakerId]
             if overlap > bestOverlap {
+                // The previous best becomes the runner-up only if it's a
+                // different speaker; otherwise keep searching for a competitor.
+                if let prevOrd = bestOrdinal, prevOrd != ord, bestOverlap > runnerOverlap {
+                    runnerOverlap = bestOverlap
+                    runnerOrdinal = bestOrdinal
+                    runnerIndex = bestIndex
+                }
                 bestOverlap = overlap
-                bestOrdinal = ordinals[seg.speakerId]
+                bestOrdinal = ord
+                bestIndex = i
+            } else if ord != bestOrdinal, overlap > runnerOverlap {
+                runnerOverlap = overlap
+                runnerOrdinal = ord
+                runnerIndex = i
             }
         }
-        if let n = bestOrdinal, bestOverlap > 0 {
-            return "Speaker \(n)"
-        }
-        return "Speaker ?"
+
+        let label: String = (bestOrdinal != nil && bestOverlap > 0) ? "Speaker \(bestOrdinal!)" : "Speaker ?"
+        return SpeakerMatch(
+            label: label,
+            chosenSegmentIndex: bestIndex,
+            chosenSpeakerOrdinal: bestOrdinal,
+            chosenOverlap: bestOverlap,
+            runnerUpSegmentIndex: runnerIndex,
+            runnerUpSpeakerOrdinal: runnerOrdinal,
+            runnerUpOverlap: runnerOverlap
+        )
     }
 
     // ─── Heartbeat ──────────────────────────────────────────────────────
@@ -865,6 +1070,26 @@ actor EngineSession {
         let env = WireEnvelope(type: isFinal ? "segment.final" : "segment.partial",
                                payload: payload)
         broadcast(env)
+    }
+
+    /// Drain any supersession events the ledger recorded since the last drain
+    /// and, for each, broadcast a `segment.superseded { utteranceId, supersededBy }`
+    /// ONCE and remember the retracted id (ADR-0018). The UI deletes the old
+    /// utterance from its live map on receipt; the at-stop vault writer filters
+    /// it from the retained set via `supersededIds`. Chains (A→B→C) surface as
+    /// separate events and each is emitted in order — only the final survivor
+    /// is left unretracted. Pure retraction signal: it never changes when a
+    /// `segment.final` fires for a non-superseded utterance.
+    private func drainAndEmitSupersessions(_ ledger: UtteranceLedger) {
+        for ev in ledger.drainSupersessions() {
+            supersededIds.insert(ev.oldId)
+            FileHandle.standardError.write(Data(
+                "harkd: superseded \(ev.oldId) → \(ev.newId)\n".utf8))
+            broadcast(WireEnvelope(type: "segment.superseded",
+                                   payload: SegmentSupersededPayload(
+                                       utteranceId: ev.oldId,
+                                       supersededBy: ev.newId)))
+        }
     }
 
     private func sendAck(_ client: WebSocketClient, id: String?) {

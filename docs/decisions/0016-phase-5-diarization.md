@@ -1,7 +1,7 @@
 # ADR-0016: Phase 5 speaker diarization — FluidAudio, offline pass, engine-owned write
 
 - **Date:** 2026-06-01
-- **Status:** Accepted
+- **Status:** Accepted — **pipeline choice superseded by [ADR-0017](0017-diarization-offline-pipeline.md)** (§2's streaming `performCompleteDiarization` → offline `OfflineDiarizerManager`); the rest of this ADR stands.
 - **Deciders:** Dang Anh Tuan
 
 ## Context
