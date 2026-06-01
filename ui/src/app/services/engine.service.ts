@@ -228,6 +228,19 @@ export class EngineService {
   }
 
   /**
+   * Rename speakers in a previously-saved meeting. `names` maps each
+   * speaker's CURRENT label (the key the engine knows — "Speaker 1", or an
+   * already-applied name) to its new display name. Only changed rows should
+   * be passed; a no-op (empty map) sends nothing. The engine acks on success
+   * and emits an `error` frame on failure, which surfaces through the
+   * existing `errors$` / `lastError` channel — no new inbound frame.
+   */
+  renameSpeakers(sessionId: string, names: Record<string, string>): void {
+    if (Object.keys(names).length === 0) return;
+    this.send({ type: 'speaker.rename', payload: { session_id: sessionId, names } });
+  }
+
+  /**
    * Clear the displayed segments + bookmarks. Doesn't touch the engine —
    * purely a local reset, e.g. for "clear screen between meetings."
    */

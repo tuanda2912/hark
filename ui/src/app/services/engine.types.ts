@@ -185,10 +185,32 @@ export interface BookmarkCreateCommand {
   readonly payload: { readonly t: number; readonly label?: string };
 }
 
+/**
+ * Rename one or more speakers in a saved meeting. Sent from the
+ * meeting-saved card's roster editor (Phase 5.1).
+ *
+ * `names` maps the speaker's CURRENT label (the map key the engine knows —
+ * "Speaker 1", or a previously-applied name on a second edit) to the user's
+ * chosen display name. Include ONLY rows whose name actually changed; the
+ * engine rewrites those labels in the vault file for `session_id`. The
+ * engine replies with a plain `ack` on success and an `error` frame on
+ * failure (no dedicated inbound frame). Matches the Swift
+ * `SpeakerRenameCommand` decoder — keys are passed through verbatim, so
+ * `.convertFromSnakeCase` does not touch the dictionary values/keys.
+ */
+export interface SpeakerRenameCommand {
+  readonly type: 'speaker.rename';
+  readonly payload: {
+    readonly session_id: string;
+    readonly names: Record<string, string>;
+  };
+}
+
 export type EngineCommand =
   | CaptureStartCommand
   | CaptureStopCommand
-  | BookmarkCreateCommand;
+  | BookmarkCreateCommand
+  | SpeakerRenameCommand;
 
 // ─── Renderer-side derived types ─────────────────────────────────────
 
