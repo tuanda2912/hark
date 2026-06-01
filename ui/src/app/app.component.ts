@@ -307,14 +307,43 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   onStart(): void {
+    // The service-side view (segments, saved card, bookmarks, lastError) is
+    // reset inside startCapture(); here we only clear the component-local
+    // signals it can't reach (the warning banner + the locally-mirrored
+    // meeting-saved card).
     this.warning.set(null);
     this.meetingSaved.set(null);
-    this.engine.clearSegments();
     this.engine.startCapture({
       mic: this.micEnabled(),
       system: this.systemEnabled(),
       language: this.language(),
     });
+  }
+
+  /**
+   * "New meeting" — explicit clear of the on-screen transcript between
+   * meetings, without starting a capture. Resets the service-side view and
+   * the component-local card/banner. Gated by `canClear()` so it can't fire
+   * mid-capture. View-only: the saved vault files are untouched.
+   */
+  onNewMeeting(): void {
+    if (!this.canClear()) return;
+    this.warning.set(null);
+    this.meetingSaved.set(null);
+    this.engine.clearTranscript();
+  }
+
+  /**
+   * The "New meeting" button is allowed only when NOT capturing and there's
+   * actually something on screen to clear — either live segments or the
+   * retained saved-meeting card. We never let the user wipe a transcript
+   * mid-capture.
+   */
+  canClear(): boolean {
+    return (
+      !this.isCapturing() &&
+      (this.segments().length > 0 || this.meetingSaved() !== null)
+    );
   }
 
   onStop(): void {

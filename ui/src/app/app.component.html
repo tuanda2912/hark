@@ -80,6 +80,26 @@
       Stop
     </button>
 
+    <!-- New meeting — clears the on-screen transcript between meetings so a
+         fresh session starts clean (the live view otherwise accumulates).
+         Enabled only when idle AND there's something to clear; a new capture
+         also auto-clears. View-only — saved vault files are untouched. -->
+    <button
+      type="button"
+      class="no-drag inline-flex items-center gap-1.5 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      [disabled]="!canClear()"
+      (click)="onNewMeeting()"
+      title="Clear the transcript and start fresh"
+      aria-label="New meeting — clear the on-screen transcript"
+    >
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+        stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+      New meeting
+    </button>
+
     <!-- Bookmark — marks the current moment (engine bookmark.create →
          bookmark.created). ⌘⇧B works globally; see onKeydown. -->
     <button

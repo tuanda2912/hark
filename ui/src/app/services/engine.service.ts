@@ -124,7 +124,7 @@ export class EngineService {
   /**
    * The most recent `meeting.saved` payload, retained so a component that
    * mounts (or re-renders) after the event can still show the saved
-   * confirmation + speaker roster. Cleared on `clearSegments()`.
+   * confirmation + speaker roster. Cleared on `clearTranscript()`.
    */
   private readonly _lastMeetingSaved = signal<MeetingSavedPayload | null>(null);
   readonly lastMeetingSaved: Signal<MeetingSavedPayload | null> =
@@ -208,7 +208,12 @@ export class EngineService {
     const payload: { sources: typeof sources; language?: string } = { sources };
     if (opts?.language) payload.language = opts.language;
     const cmd: EngineCommand = { type: 'capture.start', payload };
-    this._lastError.set(null);
+    // A fresh capture is a fresh meeting: reset the on-screen view so the
+    // previous meeting's segments, saved card, bookmarks, and stale error
+    // don't bleed into the new session. View-only — does not touch the
+    // socket, readiness, or capture state. (Pause/resume must NOT call this;
+    // only startCapture begins a new session.)
+    this.clearTranscript();
     this._capture.set({ kind: 'starting' });
     this.send(cmd);
   }
@@ -241,14 +246,23 @@ export class EngineService {
   }
 
   /**
-   * Clear the displayed segments + bookmarks. Doesn't touch the engine —
-   * purely a local reset, e.g. for "clear screen between meetings."
+   * Reset the on-screen transcript view to empty — the "New meeting" /
+   * clear-screen action, and the auto-reset at the top of startCapture().
+   *
+   * Clears: the displayed segments map (+ tick so `segments()` recomputes to
+   * empty), the retained `meeting.saved` card state, the per-session bookmark
+   * highlights, and the last engine error banner.
+   *
+   * Does NOT touch the WebSocket connection, readiness, or capture state —
+   * this is view-only. The saved vault files are untouched (each
+   * capture.start→stop is its own meeting file).
    */
-  clearSegments(): void {
+  clearTranscript(): void {
     this.segmentsMap.clear();
     this._segmentsTick.update((v) => v + 1);
     this._bookmarks.set([]);
     this._lastMeetingSaved.set(null);
+    this._lastError.set(null);
   }
 
   // ─── Internals ──────────────────────────────────────────────────────

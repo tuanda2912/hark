@@ -105,10 +105,6 @@ The shipped UI is a deliberate **functional core** of the full ~9-surface design
 data/phase exists — building empty shells now would be dead UI. `STATUS.md` "remaining
 Phase 4 surfaces" carries the live detail; summary:
 
-- **New-meeting / clear-transcript control.** The live transcript view doesn't reset
-  between meetings (user-reported — currently requires restarting the app). Saved vault
-  files are unaffected; this is view-only. *Pick up:* a "New meeting" button that clears
-  the live view + auto-clear on the next `capture.start`. Small, UI-only.
 - **3-column layout** (attendees | transcript | Q&A). Blocked on diarization (partial now)
   + Q&A (Phase 6). Single-column until the side columns have data.
 - **Q&A side panel** (`QAPanel.jsx`). Blocked on Phase 6 (Claude API).
