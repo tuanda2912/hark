@@ -5,6 +5,8 @@
 **Stack:** validated (Phase 0 RTF 0.075 on M4 — see [ADR-0005](docs/decisions/0005-phase-0-rtf-validated.md))
 
 > This file is the **session handoff**. It gets updated every time work pauses so the next session (or the next machine) can pick up without re-deriving context.
+>
+> **Deferred-work ledger:** [docs/BACKLOG.md](docs/BACKLOG.md) — every deliberate "better, but not now" scope cut is recorded there with context to finish it later. When you defer something, add it there in the same turn.
 
 ---
 
