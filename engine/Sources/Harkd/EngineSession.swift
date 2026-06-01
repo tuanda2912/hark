@@ -143,6 +143,29 @@ actor EngineSession {
     // ─── Heartbeat ──────────────────────────────────────────────────────
     private var heartbeatTask: Task<Void, Never>?
 
+    // ─── Post-save speaker rename (most-recent meeting) ──────────────────
+    //
+    // Diarization labels live ONLY in the written vault markdown — `segment.final`
+    // carries `speaker: nil` live — so renaming a speaker is a RE-RENDER of the
+    // already-saved file with the user's display names. We retain everything
+    // `persistMeeting`/`renderMarkdown` needs to reproduce that file identically
+    // EXCEPT the labels: the vault path, the session-time anchors, and each
+    // utterance's label+text+tStart. Set right after a successful vault write;
+    // it deliberately SURVIVES capture.stop's session-state wipe (unlike the
+    // session-scoped fields above) so a rename can land after stop. MVP: only the
+    // single most-recent meeting is renameable.
+    private struct SavedMeetingSnapshot {
+        let sessionId: String
+        let vaultPath: URL
+        let sessionStart: Date
+        let durationSec: Double
+        let rtfAvg: Double
+        let segmentCount: Int
+        var labeled: [VaultWriter.Utterance]   // each utterance's label+text+tStart
+        var attendees: [String]
+    }
+    private var lastSavedMeeting: SavedMeetingSnapshot?
+
     init(server: HarkdWebSocketServer) {
         self.server = server
         self.dedupWindowSeconds = EngineSession.resolveDedupWindow(
@@ -223,6 +246,8 @@ actor EngineSession {
             dispatchCaptureResume(client, id: header.id)
         case "bookmark.create":
             dispatchBookmarkCreate(client, id: header.id, data: data)
+        case "speaker.rename":
+            dispatchSpeakerRename(client, id: header.id, data: data)
         case "meta.heartbeat":
             // Client heartbeat — ignored beyond noting liveness. NIO's
             // protocol ping/pong is the actual liveness signal.
@@ -418,6 +443,76 @@ actor EngineSession {
         )))
         // Persisting to the vault is Phase 5/6 — for now bookmarks are
         // event-only and the UI is expected to mirror them locally.
+    }
+
+    /// Post-save speaker rename. Re-renders the most-recently-saved meeting's OWN
+    /// vault file with the user's display names and git-commits the change.
+    ///
+    /// MVP scope (hard rule #4, "the vault is sacred"): only the single most-
+    /// recent meeting is renameable, and we only ever overwrite ITS file at its
+    /// existing path — never another file, never a new one. The rewrite is always
+    /// git-committed so history stays recoverable. No network — names stay local.
+    ///
+    /// The label-application is the PURE `applySpeakerNames` (unit-tested); this
+    /// handler only does decode → guard → I/O → snapshot-update → ack.
+    private func dispatchSpeakerRename(_ client: WebSocketClient, id: String?, data: Data) {
+        let cmd: SpeakerRenameCommand
+        do {
+            cmd = try decodeInbound(data, payloadType: SpeakerRenameCommand.self)
+        } catch {
+            sendError(client, id: id, code: "PROTOCOL_MISMATCH",
+                      message: "bad speaker.rename payload", recoverable: false)
+            return
+        }
+
+        guard let snapshot = lastSavedMeeting, snapshot.sessionId == cmd.sessionId else {
+            sendError(client, id: id, code: "MEETING_NOT_FOUND",
+                      message: "can only rename the most recently saved meeting",
+                      recoverable: true)
+            return
+        }
+
+        // Apply the rename (pure): map matching labels, rebuild the attendee
+        // roster as distinct labels in first-appearance order AFTER mapping.
+        let (relabeled, attendees) = Self.applySpeakerNames(
+            to: snapshot.labeled, names: cmd.names)
+
+        // Re-render + overwrite the SAME file, then git-commit. The title is
+        // re-derived from the same session start so the front-matter matches the
+        // original render exactly except for the (now renamed) attendee roster.
+        let title = VaultWriter.autoTitle(forStart: snapshot.sessionStart)
+        let writer = VaultWriter()
+        let result: VaultWriter.Result
+        do {
+            result = try writer.rewrite(
+                fileURL: snapshot.vaultPath,
+                title: title,
+                sessionStart: snapshot.sessionStart,
+                durationSec: snapshot.durationSec,
+                attendees: attendees,
+                utterances: relabeled,
+                commitMessage: "chore(vault): rename speakers in \(snapshot.vaultPath.lastPathComponent)")
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harkd: speaker rename write failed (\(type(of: error))); file unchanged\n".utf8))
+            sendError(client, id: id, code: "INTERNAL",
+                      message: "could not rewrite the meeting transcript", recoverable: true)
+            return
+        }
+
+        // Update the snapshot in place so a SECOND rename within this session maps
+        // from the NOW-current names (e.g. a key of "Alice", not "Speaker 1").
+        var updated = snapshot
+        updated.labeled = relabeled
+        updated.attendees = attendees
+        lastSavedMeeting = updated
+
+        FileHandle.standardError.write(Data(String(
+            format: "harkd: speakers renamed — %@  (committed=%@  attendees=%d)\n",
+            result.fileURL.path, result.committed ? "yes" : "no", attendees.count
+        ).utf8))
+
+        sendAck(client, id: id)
     }
 
     // ─── Capture wiring ─────────────────────────────────────────────────
@@ -1008,6 +1103,41 @@ actor EngineSession {
         return candidate.tStart < current.tStart
     }
 
+    // ─── Post-save speaker rename (pure relabel) ────────────────────────────
+
+    /// Apply a `currentLabel -> newName` map to a set of labeled utterances and
+    /// rebuild the attendee roster. PURE — no actor state, no I/O — so the live
+    /// rename path and its regression tests share one definition.
+    ///
+    ///   - Each utterance whose `label` is a key in `names` is relabeled to the
+    ///     mapped name; unmatched utterances keep their existing label (so an
+    ///     un-renamed "Speaker N" stays "Speaker N"). Text + tStart are untouched.
+    ///   - `attendees` is rebuilt as the DISTINCT labels in first-APPEARANCE order
+    ///     across the (already time-ordered) utterances, AFTER mapping — so the
+    ///     roster reads in speaking order using the new names.
+    ///
+    /// Idempotent for the snapshot-update path: feeding the result back in with a
+    /// map keyed by the NOW-current names renames again from where it left off
+    /// (the second-rename case). An empty `names` is a no-op relabel that still
+    /// rebuilds a correct roster.
+    static func applySpeakerNames(
+        to utterances: [VaultWriter.Utterance],
+        names: [String: String]
+    ) -> (utterances: [VaultWriter.Utterance], attendees: [String]) {
+        var relabeled: [VaultWriter.Utterance] = []
+        relabeled.reserveCapacity(utterances.count)
+        var attendees: [String] = []
+        var seen = Set<String>()
+        for u in utterances {
+            let newLabel = names[u.label] ?? u.label
+            relabeled.append(VaultWriter.Utterance(tStart: u.tStart, label: newLabel, text: u.text))
+            if seen.insert(newLabel).inserted {
+                attendees.append(newLabel)
+            }
+        }
+        return (relabeled, attendees)
+    }
+
     // ─── Vault persistence + meeting.saved (Phase 5 Slice 2, ADR-0015/0016) ──
     //
     // Runs only at stop, after diarization — OFF the live hot path. Writes the
@@ -1049,6 +1179,21 @@ actor EngineSession {
             result.fileURL.path, result.committed ? "yes" : "no",
             segmentCount, attendees.count
         ).utf8))
+
+        // Retain the snapshot so a post-save `speaker.rename` can re-render THIS
+        // file with the user's display names (see SavedMeetingSnapshot). Captured
+        // only on a successful write — we never offer to rename a file we didn't
+        // write. Overwrites any prior meeting's snapshot: MVP renames the single
+        // most-recent meeting only.
+        lastSavedMeeting = SavedMeetingSnapshot(
+            sessionId: sessionId,
+            vaultPath: result.fileURL,
+            sessionStart: sessionStart,
+            durationSec: durationSec,
+            rtfAvg: rtfAvg,
+            segmentCount: segmentCount,
+            labeled: labeled,
+            attendees: attendees)
 
         // v1 is anonymous: every speaker carries matchedName/confidence == nil.
         // Phase 5.1 (enrollment/naming) populates them without a contract change.

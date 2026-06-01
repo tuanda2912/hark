@@ -99,14 +99,50 @@ struct VaultWriter: Sendable {
 
         // Git is best-effort and entirely local (ADR-0015 §4). Any failure
         // logs and returns committed=false; the .md is already durable.
-        let committed = gitCommit(fileURL: fileURL, slug: finalSlug)
+        let committed = gitCommit(fileURL: fileURL, slug: finalSlug,
+                                  message: "feat(meeting): add \(finalSlug)")
 
         return Result(fileURL: fileURL, slug: finalSlug, committed: committed)
     }
 
+    /// RE-RENDER an already-written meeting in place and (best-effort) git-commit
+    /// the change. Used by the post-save speaker-rename path: diarization labels
+    /// live only in the saved markdown, so renaming re-renders that same file with
+    /// the user's display names. Mirrors `write`'s render→atomicWrite→commit core,
+    /// but writes to the EXISTING `fileURL` (overwrite, hard rule #4: this is the
+    /// meeting's OWN file, never another) and takes a caller-supplied commit
+    /// message. Does NOT touch `uniqueFileURL` — no second file is ever created.
+    ///
+    /// - Throws: only on the FILE write (atomic write). Git failures are swallowed
+    ///   and reported via `Result.committed == false` — same contract as `write`.
+    func rewrite(
+        fileURL: URL,
+        title: String,
+        sessionStart: Date,
+        durationSec: Double,
+        attendees: [String],
+        utterances: [Utterance],
+        commitMessage: String
+    ) throws -> Result {
+        let markdown = renderMarkdown(
+            title: title,
+            sessionStart: sessionStart,
+            durationSec: durationSec,
+            attendees: attendees,
+            utterances: utterances
+        )
+        try atomicWrite(markdown, to: fileURL)
+        let slug = fileURL.deletingPathExtension().lastPathComponent
+        let committed = gitCommit(fileURL: fileURL, slug: slug, message: commitMessage)
+        return Result(fileURL: fileURL, slug: slug, committed: committed)
+    }
+
     // ─── Markdown rendering (ADR-0015 §1, design doc 07) ────────────────────
 
-    private func renderMarkdown(
+    // `internal` (not `private`) so the rename re-render path's regression tests
+    // can assert the output carries the new names in both the front-matter
+    // `attendees:` line and the `> **Name** ·` headers. Pure value→string.
+    func renderMarkdown(
         title: String,
         sessionStart: Date,
         durationSec: Double,
@@ -225,7 +261,7 @@ struct VaultWriter: Sendable {
     // (local identity, no remote, no push all unchanged).
     private static let hooksOff = ["-c", "core.hooksPath=/dev/null"]
 
-    private func gitCommit(fileURL: URL, slug: String) -> Bool {
+    private func gitCommit(fileURL: URL, slug: String, message: String) -> Bool {
         let vault = vaultRoot.path
         let h = Self.hooksOff
         let gitDir = vaultRoot.appendingPathComponent(".git", isDirectory: true)
@@ -250,7 +286,7 @@ struct VaultWriter: Sendable {
             eprint("harkd: vault git add failed; meeting written but uncommitted")
             return false
         }
-        let commit = runGit(h + ["-C", vault, "commit", "-m", "feat(meeting): add \(slug)"])
+        let commit = runGit(h + ["-C", vault, "commit", "-m", message])
         if !commit.ok {
             eprint("harkd: vault git commit failed (status \(commit.status)); meeting written but uncommitted")
             return false

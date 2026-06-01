@@ -282,3 +282,20 @@ struct BookmarkCreateCommand: Decodable {
     let t: Double
     let label: String?
 }
+
+/// Post-save speaker rename (UI → engine). Diarization runs as a post-stop
+/// batch pass, so "Speaker N" labels exist ONLY in the already-written vault
+/// markdown — renaming is necessarily a re-render of that file with the user's
+/// chosen display names. `names` maps a CURRENT speaker label (as it appears in
+/// the saved file, e.g. "Speaker 1") to a new display name (e.g. "Alice"); only
+/// changed speakers are included. `sessionId` scopes the edit to the meeting —
+/// MVP only the most-recently-saved meeting is renameable.
+///
+/// `session_id` arrives snake_case and is folded to `sessionId` by
+/// `decodeInbound`'s `.convertFromSnakeCase`. The `names` DICTIONARY is NOT key-
+/// transformed — only struct property names are — so its keys/values pass
+/// through verbatim ("Speaker 1" stays "Speaker 1").
+struct SpeakerRenameCommand: Decodable {
+    let sessionId: String          // ← session_id
+    let names: [String: String]    // currentLabel -> newName
+}
