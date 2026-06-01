@@ -102,6 +102,19 @@ struct HarkdCommand: AsyncParsableCommand {
         await session.attachModel(loaded.pipe, name: loaded.modelName)
         eprint("Model ready: \(loaded.modelName) — capture available")
 
+        // Load the offline diarizer behind the same readiness gate (Phase 5,
+        // ADR-0016). This is NON-FATAL: if the download/compile fails, capture
+        // and live transcription still work — only the post-stop speaker pass
+        // is skipped. Loaded AFTER WhisperKit so the live path is available as
+        // early as possible (capture doesn't need the diarizer to start).
+        do {
+            let diar = try await loadDiarizerModels(progressOutput: .standardError)
+            await session.attachDiarizer(Diarizer(manager: diar.manager))
+            eprint("Diarizer ready — offline speaker pass enabled (models: \(diar.modelsDir.path))")
+        } catch {
+            eprint("harkd: diarizer load failed (\(error)); continuing WITHOUT speaker labels")
+        }
+
         if verbose {
             eprint("harkd: pid=\(ProcessInfo.processInfo.processIdentifier) ready, waiting for client")
         }

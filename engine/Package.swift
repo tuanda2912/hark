@@ -50,6 +50,15 @@ let package = Package(
         .package(
             url: "https://github.com/apple/swift-nio.git",
             from: "2.65.0"
+        ),
+        // FluidAudio — pyannote-on-ANE offline speaker diarization (Phase 5).
+        // PINNED to an exact tag (not a range) because the API iterates fast;
+        // we code against the resolved checkout, not a moving target.
+        // CoreML models download once into Hark's app-support dir (hard rule
+        // #2). No network beyond that one-time fetch. (ADR pending.)
+        .package(
+            url: "https://github.com/FluidInference/FluidAudio.git",
+            exact: "0.14.8"
         )
     ],
     targets: [
@@ -108,7 +117,8 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
-                .product(name: "NIOWebSocket", package: "swift-nio")
+                .product(name: "NIOWebSocket", package: "swift-nio"),
+                .product(name: "FluidAudio", package: "FluidAudio")
             ],
             path: "Sources/Harkd"
         ),

@@ -33,6 +33,7 @@ import Foundation
 import WhisperKit
 import HarkCore
 import HarkCapture
+import FluidAudio
 
 @available(macOS 14.4, *)
 actor EngineSession {
@@ -45,6 +46,11 @@ actor EngineSession {
     private var modelName: String = ""
     private var modelReady: Bool { whisperKit != nil }
     private weak var server: HarkdWebSocketServer?
+
+    /// Offline speaker diarizer (Phase 5, ADR-0016). nil until the models
+    /// finish loading; nil-tolerant everywhere — a missing/failed diarizer
+    /// NEVER blocks capture or stop. Used only by the post-stop pass.
+    private var diarizer: Diarizer?
 
     // ─── Session-scoped state (reset per capture.start) ────────────────
     private var sessionId: String?
@@ -65,6 +71,31 @@ actor EngineSession {
     /// `nil` means auto-detect per transcribe call. Passed to WhisperKit's
     /// `DecodingOptions.language` at every hop + the flushOnStop drain.
     private var sessionLanguage: String?
+
+    // ─── Offline diarization buffers (Phase 5, ADR-0016) ───────────────
+    //
+    // Full-meeting 16 kHz mono audio retained in RAM for the post-stop
+    // diarization pass. Unlike `SlidingWindowBuffer` (speech-only, trimmed
+    // to 30 s) this is the CONTINUOUS recording — every mixed frame batch,
+    // including silence — so its sample-index timeline maps 1:1 to the
+    // wall-clock session time the segments are emitted against. That shared
+    // time axis is what makes the time-overlap speaker assignment correct.
+    //
+    // Memory bound (ADR-0016 §5): Float @ 16 kHz = 64 KB/s ≈ 3.84 MB/min;
+    // a 60-min meeting ≈ 230 MB. Acceptable for v1; spill-to-temp-WAV is the
+    // escape hatch if long meetings pressure memory. Cleared at capture.start
+    // and after the diarization pass at stop.
+    private var sessionAudio: [Float] = []
+
+    /// Finalized utterances accumulated during the session, kept so the
+    /// post-stop diarization pass can label them by time-overlap. We retain
+    /// only timing + uid (NOT text) — diarization needs intervals, not words.
+    private struct FinalizedUtterance {
+        let utteranceId: String
+        let tStart: Double
+        let tEnd: Double
+    }
+    private var finalizedUtterances: [FinalizedUtterance] = []
 
     // ─── Connected clients ──────────────────────────────────────────────
     private var clients: [String: WebSocketClient] = [:]
@@ -94,6 +125,13 @@ actor EngineSession {
         // Push readiness to any clients already connected behind the warmup
         // gate, so the UI clears "warming up" without polling capture.start.
         broadcast(WireEnvelope(type: "meta.ready", payload: MetaReadyPayload(modelLoaded: name)))
+    }
+
+    /// Inject the offline diarizer once its models finish loading (Phase 5).
+    /// Optional capability: capture works whether or not this ever runs. No
+    /// wire frame in Slice 1 — readiness is logged in HarkdCommand.
+    func attachDiarizer(_ diarizer: Diarizer) {
+        self.diarizer = diarizer
     }
 
     // ─── Client connection lifecycle (called by WS delegate) ────────────
@@ -324,6 +362,16 @@ actor EngineSession {
         self.vad = EnergyVAD()
         self.sessionLanguage = language
 
+        // Reset the offline-diarization buffers for the new session and
+        // pre-reserve ~10 min of audio so early growth doesn't reallocate.
+        // (10 min × 60 s × 16 kHz = 9.6M floats ≈ 38 MB.) Longer meetings
+        // grow past this via amortized doubling — still off the audio thread.
+        self.sessionAudio.removeAll(keepingCapacity: true)
+        if diarizer != nil {
+            self.sessionAudio.reserveCapacity(16_000 * 60 * 10)
+        }
+        self.finalizedUtterances.removeAll(keepingCapacity: true)
+
         // CapturePipeline runs its pump on a background DispatchQueue. The
         // floatFrameSink fires there. We bounce into the actor via a Task
         // — capturing self weakly because the pump may outlive a stop().
@@ -345,6 +393,20 @@ actor EngineSession {
 
     private func ingestFrames(_ frames: [Float]) {
         guard let window = window else { return }
+
+        // Retain the CONTINUOUS recording for the offline diarization pass
+        // (Phase 5). This runs on the actor's executor — NOT the audio pump
+        // thread (the pump bounces here via `Task { await ingestFrames }`), so
+        // a plain `append(contentsOf:)` is safe: it never blocks the audio
+        // callback, and array growth is amortized O(1). We only buffer while
+        // the diarizer exists (else it'd be wasted RAM) and only the raw mixed
+        // frames — pre-VAD — so the sample timeline stays continuous and maps
+        // 1:1 to wall-clock session time. See the `sessionAudio` declaration
+        // for the memory bound.
+        if diarizer != nil {
+            sessionAudio.append(contentsOf: frames)
+        }
+
         // Wall-clock session time for these frames. We use real elapsed
         // time rather than sample-count arithmetic so that silence gaps
         // (which the VAD drops) still advance the timeline.
@@ -483,6 +545,26 @@ actor EngineSession {
     /// window once (if any speech is present) and emits remaining partials
     /// as finals so the UI doesn't leave dangling partials.
     private func flushOnStop() async {
+        // Snapshot + detach the full-session audio BEFORE the transcription
+        // drain's `await` (which suspends this actor and could let a fresh
+        // capture.start wipe the live buffer). The drain itself only appends
+        // to `finalizedUtterances`, not to `sessionAudio`, so taking the audio
+        // here is safe; we grab the finalized list after the drain.
+        let capturedAudio = sessionAudio
+        sessionAudio.removeAll(keepingCapacity: false)
+
+        // Drain the live transcription buffer first (this emits the last
+        // finals, populating `finalizedUtterances`), then (Phase 5) run the
+        // offline diarization pass over the captured audio and log the speaker
+        // assignment. Guarded so it can never break the capture/stop lifecycle.
+        await flushTranscriptionDrain()
+
+        let capturedUtterances = finalizedUtterances
+        finalizedUtterances.removeAll(keepingCapacity: false)
+        await runDiarizationPass(audio: capturedAudio, utterances: capturedUtterances)
+    }
+
+    private func flushTranscriptionDrain() async {
         guard let window = window, let ledger = ledger else { return }
         if window.windowSamples.isEmpty { return }
         // One last pass — pretend the whole buffer is a hop.
@@ -517,6 +599,98 @@ actor EngineSession {
         }
     }
 
+    // ─── Offline diarization pass (Phase 5, ADR-0016) ───────────────────
+    //
+    // Slice 1: log-only. Runs after the transcription drain, over the full
+    // session audio. Assigns each finalized utterance a "Speaker N" label by
+    // max time-overlap against FluidAudio's diarization segments, and logs a
+    // summary (always) + per-utterance lines (HARK_DIAR_DEBUG=1). No wire
+    // frame, no vault write — those are Slice 2. Guarded end-to-end: any
+    // failure logs and returns; capture/stop already completed by here.
+
+    private func runDiarizationPass(audio samples: [Float],
+                                    utterances: [FinalizedUtterance]) async {
+        guard let diarizer = diarizer else { return }
+
+        let audioSeconds = Double(samples.count) / 16_000.0
+        if samples.isEmpty || audioSeconds < 1.0 {
+            FileHandle.standardError.write(Data(
+                "harkd: diarization skipped (only \(String(format: "%.2f", audioSeconds))s of audio)\n".utf8))
+            return
+        }
+
+        let started = Date()
+        let result: DiarizationResult
+        do {
+            result = try await diarizer.diarize(samples)
+        } catch {
+            FileHandle.standardError.write(Data(
+                "harkd: diarization failed (\(error)); no speaker labels this session\n".utf8))
+            return
+        }
+        let diarSeconds = Date().timeIntervalSince(started)
+        let rtf = audioSeconds > 0 ? diarSeconds / audioSeconds : 0
+
+        // Map FluidAudio speakerId strings → stable "Speaker N" ordinals in
+        // first-seen order across the diarization segments.
+        var ordinalForSpeakerId: [String: Int] = [:]
+        var nextOrdinal = 1
+        for seg in result.segments where !seg.speakerId.isEmpty {
+            if ordinalForSpeakerId[seg.speakerId] == nil {
+                ordinalForSpeakerId[seg.speakerId] = nextOrdinal
+                nextOrdinal += 1
+            }
+        }
+        let speakerCount = ordinalForSpeakerId.count
+
+        // Always-on summary line.
+        FileHandle.standardError.write(Data(String(
+            format: "harkd: diarization done — speakers=%d  diar_segments=%d  utterances=%d  audio=%.1fs  diar_time=%.2fs  rtf=%.3f\n",
+            speakerCount, result.segments.count, utterances.count,
+            audioSeconds, diarSeconds, rtf
+        ).utf8))
+
+        // Per-utterance assignment by max temporal overlap. Verbose — gated
+        // behind HARK_DIAR_DEBUG=1 so the default run stays quiet.
+        let debug = ProcessInfo.processInfo.environment["HARK_DIAR_DEBUG"] == "1"
+        guard debug else { return }
+
+        for u in utterances {
+            let label = speakerLabel(
+                forUtteranceStart: u.tStart, end: u.tEnd,
+                diarSegments: result.segments, ordinals: ordinalForSpeakerId)
+            FileHandle.standardError.write(Data(String(
+                format: "harkd: diar  %7.2f..%7.2f → %@\n",
+                u.tStart, u.tEnd, label
+            ).utf8))
+        }
+    }
+
+    /// Pick the "Speaker N" label whose diarization segment has the greatest
+    /// temporal overlap with the utterance interval [start, end]. Returns
+    /// "Speaker ?" when no diarization segment overlaps (e.g. cross-talk
+    /// dropped by the segmenter, or a sub-minSpeechDuration utterance).
+    private func speakerLabel(
+        forUtteranceStart start: Double, end: Double,
+        diarSegments: [TimedSpeakerSegment], ordinals: [String: Int]
+    ) -> String {
+        var bestOrdinal: Int? = nil
+        var bestOverlap = 0.0
+        for seg in diarSegments where !seg.speakerId.isEmpty {
+            let segStart = Double(seg.startTimeSeconds)
+            let segEnd = Double(seg.endTimeSeconds)
+            let overlap = max(0.0, min(end, segEnd) - max(start, segStart))
+            if overlap > bestOverlap {
+                bestOverlap = overlap
+                bestOrdinal = ordinals[seg.speakerId]
+            }
+        }
+        if let n = bestOrdinal, bestOverlap > 0 {
+            return "Speaker \(n)"
+        }
+        return "Speaker ?"
+    }
+
     // ─── Heartbeat ──────────────────────────────────────────────────────
 
     private func startHeartbeatIfNeeded() {
@@ -539,6 +713,13 @@ actor EngineSession {
     // ─── Emission helpers ───────────────────────────────────────────────
 
     private func emitSegment(uid: String, isFinal: Bool, seg: WindowSegment) {
+        // Retain finalized intervals for the post-stop diarization pass
+        // (Phase 5). Only when a diarizer is attached — otherwise it's dead
+        // bookkeeping. Timing only; no text is stored here.
+        if isFinal, diarizer != nil {
+            finalizedUtterances.append(FinalizedUtterance(
+                utteranceId: uid, tStart: seg.tStart, tEnd: seg.tEnd))
+        }
         let payload = SegmentPayload(
             utteranceId: uid,
             segmentId: isFinal ? UUID().uuidString : nil,

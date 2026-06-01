@@ -1,12 +1,12 @@
 # ADR-0015: Transcript persistence to the vault (v1)
 
 - **Date:** 2026-06-01
-- **Status:** Accepted (decision locked 2026-06-01; implementation deferred to a later phase — see status note below). Supersedes [08-websocket-api-contract.md](../../../hark-docs/docs/design/08-websocket-api-contract.md) line 295 "engine writes" **for v1 only** — see Decision.
+- **Status:** Accepted (decisions locked 2026-06-01; the engine-side write is now being implemented in **Phase 5** — see [ADR-0016](0016-phase-5-diarization.md) and the status note below). Supersedes [08-websocket-api-contract.md](../../../hark-docs/docs/design/08-websocket-api-contract.md) line 295 "engine writes" **for v1 only** — see Decision.
 - **Deciders:** Dang Anh Tuan
 
 ## Context
 
-**Status note (2026-06-01):** The four decisions below — the markdown **format**, the **write-owner** (Electron main for v1), **auto-save on `capture.stop`**, and **local-only git** — are **locked now** and won't be re-litigated. The **build is deferred to a later phase** (after the current Phase 4 UI surfaces land); when it's scheduled, this ADR is the spec to follow verbatim.
+**Status note (2026-06-01):** The four decisions below — the markdown **format**, the **write-owner** (Electron main for v1), **auto-save on `capture.stop`**, and **local-only git** — are **locked now** and won't be re-litigated. The interim Electron-main writer was **never built** (implementation was deferred); **Phase 5 has now arrived**, so the write is being implemented **engine-side from the start**, per the migration path in §2 — see [ADR-0016](0016-phase-5-diarization.md). This ADR remains the spec for the **format**, **save trigger**, and **git discipline**, which are unchanged; only the writer moves.
 
 Hark is a **second-brain**: the whole point is a durable, searchable markdown record of every meeting. Yet today the engine **discards every final segment on `capture.stop`** — nothing is written anywhere. The user ran a meeting, stopped capture, went looking for the transcript file the product promises, and found **nothing**. That gap has to close for v1.
 
@@ -43,7 +43,7 @@ hark_version: 0.1.0
 `date` is ISO-8601 with offset; `duration_sec`, `bookmarks`, `hark_version` as shown. **v1 is pre-diarization, so there are no speaker names:** `attendees: []` and utterance headers are **just the timestamp** (no `**Speaker N**` prefix). When Phase 5 adds diarization, the `**Name** · HH:MM:SS` header and a populated `attendees` array slot straight back in.
 
 **2. Write-owner for v1 = the Electron main process** — a deliberate deviation from [08 line 295](../../../hark-docs/docs/design/08-websocket-api-contract.md) ("engine writes them"). The docs assign the write to the engine **because the engine will own FluidAudio diarization** — the speaker-bearing fields, name matching, and the `meeting.saved` frame are all diarization outputs the engine alone can produce. **Pre-diarization, the engine holds no privileged information the renderer lacks:** the renderer already has the full ordered final-segment list plus bookmarks. Writing from main is **smaller, all-TypeScript, reuses the atomic temp-file-write-then-rename pattern from `prefs.ts`** ([ADR-0014](0014-ui-preferences-persistence.md)), and needs **zero engine or wire changes**.
-**Migration path:** when Phase 5 lands, the write moves into the engine, triggered by the `meeting.saved` frame, exactly as the docs specify. This ADR supersedes line 295 **for v1 only**.
+**Migration path:** when Phase 5 lands, the write moves into the engine, triggered by the `meeting.saved` frame, exactly as the docs specify. **Phase 5 has now arrived — [ADR-0016](0016-phase-5-diarization.md) executes this migration:** the engine becomes the sole writer (the interim main writer was never built). This ADR supersedes line 295 **for v1 only**.
 
 **3. Save trigger = auto-save on `capture.stop`,** with a user-initiated **Discard** affordance. Discarding **deletes the file and commits the deletion** — so the content is still recoverable from git history (rule #4: never auto-delete, history recoverable). The deletion is **user-initiated**, not automatic, and the commit keeps it reversible.
 
@@ -82,7 +82,7 @@ hark_version: 0.1.0
 
 **Must remain true / revisit trigger:**
 - Git stays **local-only** — no remote, no push. The instant a remote/push is contemplated, that's a new ADR under rule #6 (it would open a network socket) and a privacy review of what's in the repo.
-- When **Phase 5 (FluidAudio diarization)** lands, move the write into the engine behind `meeting.saved` and retire this ADR's deviation from line 295. The format does not change — only the writer.
+- When **Phase 5 (FluidAudio diarization)** lands, move the write into the engine behind `meeting.saved` and retire this ADR's deviation from line 295. The format does not change — only the writer. **(Done: triggered now — see [ADR-0016](0016-phase-5-diarization.md).)**
 - `.speakers/` must remain gitignored so embeddings never enter the repo (rule #5).
 
 ## Privacy / threat-model note
@@ -101,4 +101,4 @@ The write targets the **vault** — the single sanctioned location for transcrip
 - Vault layout / data stores: [06-architecture-overview.md](../../../hark-docs/docs/design/06-architecture-overview.md) (~180)
 - `meeting.saved` frame and "engine writes" (~line 295): [08-websocket-api-contract.md](../../../hark-docs/docs/design/08-websocket-api-contract.md) (~172–189, 295) — superseded for v1 by this ADR
 - Atomic-write pattern reused: [ADR-0014](0014-ui-preferences-persistence.md) (`prefs.ts`)
-- Migration trigger: Phase 5 (FluidAudio diarization)
+- Migration trigger: Phase 5 (FluidAudio diarization) — executed by [ADR-0016](0016-phase-5-diarization.md)
