@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hark — TOP-LEVEL app entitlements (the Electron .app bundle).
+
+  Applied by electron-builder to Contents/MacOS/Hark (the Electron host).
+  Keep this list MINIMAL: every entitlement widens the threat model and
+  privacy-auditor will challenge each one. We ship the fewest that let a
+  hardened-runtime Electron app run a JIT (V8) and capture audio.
+
+  Hardened runtime is ON (electron-builder mac.hardenedRuntime: true).
+  Hardened runtime is REQUIRED for notarization, and it is also what makes
+  the code identity stable enough for TCC to remember the audio-capture grant.
+
+  WHAT WE DELIBERATELY DO NOT INCLUDE (privacy / threat-model reasons):
+    * com.apple.security.network.client / .server — harkd is loopback-only
+      (127.0.0.1 WebSocket). It never opens an outbound socket. The only
+      network path in the product is the explicit, user-invoked Claude API
+      call, which goes through the SYSTEM (Electron net), not through a
+      raw socket harkd opens, and is gated by user action (CLAUDE.md rule 1).
+      If a future feature needs harkd to talk to the network, that requires
+      an ADR FIRST (CLAUDE.md rule 6) and only then this entitlement.
+    * com.apple.security.app-sandbox — we are NOT App-Store sandboxing v1.
+      Sandbox would block the loopback socket handshake, the vault path
+      outside the container (~/Documents/vault/hark), and Process Tap APIs.
+      Notarization does NOT require the sandbox; only the App Store does.
+    * com.apple.security.cs.disable-library-validation — NOT needed. The
+      sidecar (harkd) is signed with the SAME Team ID as the app, so library
+      validation passes. We only add this if a third-party UNSIGNED dylib
+      ever has to load, which it must not (see the bundling map: harkd is a
+      single self-contained Mach-O).
+-->
+<plist version="1.0">
+<dict>
+    <!--
+      V8 (and Electron's renderer) JIT-compile JavaScript. Under hardened
+      runtime, generating executable code at runtime is blocked unless one
+      of these is present. allow-jit is the narrow, correct one for a JIT.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!--
+      Electron / Chromium maps writable+executable pages for code generation
+      beyond the strict JIT region. Electron's own signing guidance requires
+      this for the framework to run under hardened runtime. It is broad-ish
+      but is the documented, expected pairing for Electron + hardened runtime.
+    -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!--
+      Microphone capture. Maps to the TCC Microphone service. Paired with
+      NSMicrophoneUsageDescription in Info.plist (extendInfo). Required so
+      harkd (child, inheriting this entitlement) can open the mic source.
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>

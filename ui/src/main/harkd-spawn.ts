@@ -31,7 +31,10 @@ export interface HarkdHandle {
  */
 async function resolveBinaryPath(): Promise<string> {
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'harkd');
+    // Packaged: electron-builder `extraResources` copies harkd to
+    // Contents/Resources/engine/harkd (see ui/electron-builder.yml). The
+    // `engine/` subdir keeps Resources tidy and leaves room for future assets.
+    return path.join(process.resourcesPath, 'engine', 'harkd');
   }
   // Dev path: ui/src/main/harkd-spawn.ts → dist/main/harkd-spawn.js when
   // compiled. We resolve relative to the ui directory (one above dist).

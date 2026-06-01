@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hark — INHERITED entitlements for child Mach-Os inside the app bundle
+  (Electron's Helper processes AND our Swift sidecar `harkd`).
+
+  electron-builder applies this (mac.entitlementsInherit) to every nested
+  executable it signs. The key line is com.apple.security.inherit: a child
+  signed with this entitlement INHERITS the parent app's entitlements and,
+  crucially for us, its CODE-SIGNING IDENTITY context — so the TCC
+  audio-capture grant attributes to the Hark app, not to a standalone
+  "harkd" identity. This is the unlock for ADR-0011 #18 (Process Taps as a
+  child process keeping the grant).
+
+  WHY harkd needs the SAME inherited entitlements:
+    * harkd opens the microphone (mic source) -> needs audio-input, inherited.
+    * harkd creates a Core Audio Process Tap for system audio -> the tap is
+      gated by kTCCServiceAudioCapture, which the OS prompts for (public
+      path, NSAudioCaptureUsageDescription) and attributes to the Launch
+      Services app. Inheriting identity is what makes that attribution be
+      "Hark", which is what makes the grant STICK across launches.
+    * harkd does CoreML inference (WhisperKit + diarization). CoreML / the
+      ANE compiler can JIT — under hardened runtime that needs allow-jit.
+-->
+<plist version="1.0">
+<dict>
+    <!--
+      THE load-bearing line. A nested executable signed with cs.inherit
+      runs under the parent's sandbox/entitlement context and identity.
+      Without it, harkd would have its OWN code identity and TCC would
+      attribute the audio-capture grant to "harkd" (or worse, refuse to
+      remember it), breaking the persist-across-launch behavior ADR-0011
+      depends on.
+    -->
+    <key>com.apple.security.inherit</key>
+    <true/>
+
+    <!--
+      CoreML / Accelerate / the Swift runtime can generate executable code
+      at runtime (ANE model compilation, Metal shader JIT). Under hardened
+      runtime that is blocked without allow-jit. Narrow JIT permission,
+      not the broader allow-unsigned-executable-memory.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!--
+      Microphone (TCC Microphone service). Inherited so harkd can open the
+      mic capture source. Paired with NSMicrophoneUsageDescription.
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>

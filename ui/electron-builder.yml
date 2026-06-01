@@ -1,0 +1,128 @@
+# Hark — electron-builder configuration (DRAFT — see PLAN, not yet wired into
+# package.json scripts; needs `npm i -D electron-builder @electron/notarize`).
+#
+# Privacy posture (CLAUDE.md): NO auto-update, NO telemetry, NO publish target.
+# This config builds a signed, notarization-READY .app + dmg + zip and stops.
+# It never phones home except to Apple's notary service (expected, opt-in,
+# only when a Developer ID identity + APPLE_* env vars are present).
+
+appId: com.hark.app
+productName: Hark
+copyright: © 2026 Hark
+
+# Build artifacts land here (gitignored). Keep out of the repo.
+directories:
+  output: release
+  buildResources: build
+
+# ── What goes INTO the app bundle (the renderer + compiled main) ──────────
+# electron-builder packs the app root; we only ship the compiled output and
+# the production node_modules. `dist/**` is the Angular renderer + the tsc'd
+# Electron main. Source TS, Angular cache, and dev configs are excluded.
+files:
+  - dist/**
+  - "!**/*.map"
+  - package.json
+
+# ── The Swift sidecar (harkd) ─────────────────────────────────────────────
+# harkd is a single, self-contained 18MB Mach-O (verified: otool -L shows
+# only system frameworks + the OS-provided /usr/lib/swift runtime; WhisperKit,
+# FluidAudio, swift-nio, ArgumentParser are ALL statically linked — there are
+# NO sibling .dylib/.framework/.bundle to co-locate). So we ship exactly one
+# file. It lands at Contents/Resources/engine/harkd inside the .app, which is
+# what harkd-spawn.ts resolves to in prod (process.resourcesPath + engine/harkd).
+#
+# NOTE: the path below is the engine release build. CI/build script must run
+# `cd engine && swift build -c release` (arm64) FIRST. For a universal app
+# the binary must be a `lipo`-merged arm64+x86_64 fat Mach-O — see PLAN §A
+# (decision pending; arm64-only is the recommended v1 default).
+extraResources:
+  - from: ../engine/.build/release/harkd
+    to: engine/harkd
+
+# ── macOS target ──────────────────────────────────────────────────────────
+mac:
+  category: public.app-category.productivity
+  # Engine pins macOS 14 (Package.swift .macOS(.v14); harkd LC_BUILD_VERSION
+  # minos 14.0). The dev tap bundle used 14.4; align the app floor to 14.4 to
+  # be safe re: Process Tap behavior validated on 14.4+ (ADR-0011).
+  minimumSystemVersion: "14.4"
+
+  # arm64-only by default (Apple Silicon — the only supported target per
+  # CLAUDE.md "Mac on Apple Silicon"). To ship Intel too, set target arch to
+  # universal AND produce a universal harkd (see PLAN §A footgun). Shipping a
+  # universal Electron with an arm64-only harkd would crash on Intel.
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+
+  # Hardened runtime: REQUIRED for notarization, and the stable-identity
+  # foundation the TCC audio-capture grant needs to persist (ADR-0011).
+  hardenedRuntime: true
+
+  # Do NOT run a local Gatekeeper assessment during build — it's noise before
+  # the app is notarized + stapled, and would fail on a not-yet-notarized app.
+  # Real Gatekeeper verification happens post-notarize via `spctl -a -vvv`.
+  gatekeeperAssess: false
+
+  # Entitlements: the top-level app gets entitlements.mac.plist; every nested
+  # Mach-O (Electron Helpers AND harkd) gets the inherit plist. cs.inherit in
+  # the inherit plist is what makes harkd run under the app's identity so the
+  # audio-capture TCC grant attributes to Hark (ADR-0011 #18).
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+
+  # Sign the sidecar too. electron-builder signs nested executables it finds;
+  # listing harkd here (path RELATIVE to Contents/Resources after copy) makes
+  # the binary part of the deep-sign pass so it inherits the app identity.
+  # (If electron-builder misses it, the afterSign/sign script signs it
+  # deepest-first explicitly — see PLAN §E.)
+  signIgnore: []
+
+  # App icon. Provide build/icon.icns (1024px source). DECISION NEEDED: no
+  # icon asset exists yet. Until then electron-builder warns and uses the
+  # default Electron icon (fine for a notarization dry-run, not for release).
+  icon: build/icon.icns
+
+  # Info.plist additions injected into Contents/Info.plist. These usage
+  # strings are what the OS shows in the TCC prompt; they MUST be present or
+  # the audio-capture / mic prompt is suppressed and capture silently fails.
+  extendInfo:
+    NSMicrophoneUsageDescription: >-
+      Hark transcribes meeting audio locally on your Mac. The microphone is
+      used only to capture what you say; audio never leaves the machine.
+    NSAudioCaptureUsageDescription: >-
+      Hark captures system audio locally to transcribe meeting participants
+      you hear through your speakers or headphones. Audio never leaves the
+      machine.
+    # Single instance / background posture is handled in code; nothing else
+    # needed here. We deliberately do NOT add NSScreenCaptureUsageDescription:
+    # the default backend is Process Taps (no Screen Recording). If the SCK
+    # fallback backend is ever made user-selectable in the shipped app, add it
+    # then (and only then) — see ADR-0011.
+
+# DMG cosmetics (optional; safe defaults). No background asset required.
+dmg:
+  title: Hark ${version}
+  contents:
+    - x: 130
+      y: 220
+      type: file
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+# ── Notarization ────────────────────────────────────────────────────────
+# afterSign runs build/notarize.js, which is a NO-OP unless a Developer ID
+# identity is in use AND APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID
+# (or APPLE_API_KEY*) are set. This keeps `npm run pack` (dev, ad-hoc/Apple
+# Development cert) working without ever contacting Apple. See PLAN §E.
+afterSign: build/notarize.js
+
+# NO `publish:` block. We do not auto-update and do not push artifacts
+# anywhere. Distribution is manual (CLAUDE.md: no telemetry/phone-home).
