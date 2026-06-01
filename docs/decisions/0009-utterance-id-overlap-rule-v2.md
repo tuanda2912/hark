@@ -1,7 +1,7 @@
 # ADR-0009: Utterance-identity rule v2 — max-denominator overlap with prune
 
 - **Date:** 2026-05-28
-- **Status:** Accepted — **extended by [ADR-0018](0018-utterance-supersession-signal.md)** (adds the `segment.superseded` retraction signal this ADR never provided); the decision below is unchanged.
+- **Status:** Accepted — **extended by [ADR-0018](0018-utterance-supersession-signal.md)** (adds the `segment.superseded` retraction signal this ADR never provided) and **refined by [ADR-0019](0019-region-based-finalization.md)** (region-based commit-watermark finalization — the partial identity rule below is unchanged; only *when a segment becomes a* `segment.final` changed); the decision below is unchanged.
 - **Deciders:** Dang Anh Tuan
 
 ## Context

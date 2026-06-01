@@ -309,10 +309,95 @@ final class UtteranceLedger {
         entries.first(where: { $0.id == utteranceId })?.finalized ?? false
     }
 
+    /// True if a segment occupying [tStart, tEnd] substantially overlaps an
+    /// already-FINALIZED entry — i.e. that audio region has already been
+    /// committed as a `segment.final`. Used by the at-stop drain (ADR-0019) to
+    /// decide "already committed?" by what was ACTUALLY finalized, not by the
+    /// commit watermark.
+    ///
+    /// Why a separate test instead of the watermark: the watermark
+    /// (`committedUpTo`) can advance PAST hot-region content without finalizing
+    /// it — a long sentence that straddles the commit horizon is finalized with
+    /// its full span, advancing the watermark to its `tEnd` (the ADR-0019
+    /// straddle refinement), even though later, overlapping speech in that span
+    /// was only ever shown as `segment.partial`. The drain must finalize that
+    /// still-uncommitted tail, so it cannot gate on the watermark; it gates on
+    /// "does this region overlap something we genuinely finalized?" instead.
+    ///
+    /// `resolve` deliberately does NOT match finalized entries (emitting a
+    /// partial after a final confuses the UI), so the drain can't use `resolve`
+    /// + `isFinalized` to recognise the head it already committed — it would
+    /// mint a fresh id and re-finalize it. This overlap test is the head guard.
+    ///
+    /// Uses the SAME max-denominator overlap score as `resolve` (ADR-0009) with
+    /// the same 0.5 threshold, so "this is the region I already finalized" is
+    /// judged by the identical rule that minted the id in the first place.
+    func overlapsFinalized(tStart: Double, tEnd: Double) -> Bool {
+        let segLen = max(0.0, tEnd - tStart)
+        guard segLen > 0 else { return false }
+        for e in entries where e.finalized {
+            let overlapStart = max(tStart, e.tStart)
+            let overlapEnd = min(tEnd, e.tEnd)
+            let overlap = max(0.0, overlapEnd - overlapStart)
+            let eLen = max(0.0, e.tEnd - e.tStart)
+            let longer = max(segLen, eLen)
+            guard longer > 0 else { continue }
+            if overlap / longer >= overlapThreshold { return true }
+        }
+        return false
+    }
+
     func markFinalized(utteranceId: String) {
         if let i = entries.firstIndex(where: { $0.id == utteranceId }) {
             entries[i].finalized = true
         }
+    }
+
+    /// A live (non-finalized, non-superseded) ledger entry that still has a
+    /// known interval + last-emitted text. Returned by `liveEntriesAbove` for
+    /// the at-stop hot-region finalize (ADR-0019 content-loss fix). These are
+    /// exactly the trailing `segment.partial`s the user saw on screen but that
+    /// the live loop never promoted to `segment.final` (their start was always
+    /// ahead of the commit horizon, then behind the over-advanced watermark).
+    struct LiveEntry: Equatable {
+        let id: String
+        let tStart: Double
+        let tEnd: Double
+        let lastText: String
+    }
+
+    /// Enumerate the live (non-finalized, non-superseded) entries whose
+    /// `tStart` lies AT OR AFTER `cutoff` (the commit watermark), in ascending
+    /// `tStart` order. This is the hot region the user saw as partials but that
+    /// was never finalized. Entries with empty `lastText` (minted but never
+    /// given text) are skipped — there's nothing to write.
+    ///
+    /// Why `>=` and not strictly `>`: on device the last live `segment.final`
+    /// ended exactly where the lost tail began (watermark ≈ 174 s, first lost
+    /// partial started ≈ 174 s). A strict `>` drops a tail utterance that
+    /// starts exactly on the watermark — re-introducing the bug at the
+    /// boundary. Inclusivity is safe here because `finalizeHotRegion` gates on
+    /// `overlapsFinalized` (what was ACTUALLY finalized), not on the watermark:
+    /// a boundary entry that genuinely IS the committed region overlaps a
+    /// finalized entry and is skipped there; a boundary entry that was only
+    /// ever a partial does NOT overlap (zero-length boundary overlap scores 0)
+    /// and is correctly recovered. The watermark is the coarse filter; the
+    /// overlap test is the precise guard.
+    ///
+    /// The at-stop path (`finalizeHotRegion`) finalizes each of these directly
+    /// from its stored text, deterministically — it does NOT depend on
+    /// WhisperKit re-producing the same segments from the residual audio buffer
+    /// (the fragile path that dropped the tail). See ADR-0019.
+    ///
+    /// Read-only: it does not mutate the ledger. Callers mark each entry
+    /// finalized via `markFinalized` once they've emitted it.
+    func liveEntriesAbove(_ cutoff: Double) -> [LiveEntry] {
+        entries
+            .filter { !$0.finalized && !$0.superseded
+                && $0.tStart >= cutoff
+                && !$0.lastText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { LiveEntry(id: $0.id, tStart: $0.tStart, tEnd: $0.tEnd, lastText: $0.lastText) }
+            .sorted { $0.tStart < $1.tStart }
     }
 
     /// Information about an entry that fell out of the active window
@@ -453,6 +538,18 @@ final class SlidingWindowBuffer {
         let firstOffsetSeconds = Double(first.offsetInWindow) / Double(sampleRate)
         let windowStartSessionTime = first.sessionTime - firstOffsetSeconds
         return (Array(windowSamples), windowStartSessionTime)
+    }
+
+    /// Session time of the oldest sample currently in the buffer, computed the
+    /// same way `popHopIfReady` derives `windowStartSessionTime`. `nil` if the
+    /// buffer is empty. Used by the at-stop drain (ADR-0019) to map the final
+    /// buffer's segments back to absolute session time so the commit watermark
+    /// can gate them — the drain doesn't go through `popHopIfReady`, so it needs
+    /// this anchor directly.
+    var currentWindowStartSessionTime: Double? {
+        guard let first = anchors.first else { return nil }
+        let firstOffsetSeconds = Double(first.offsetInWindow) / Double(sampleRate)
+        return first.sessionTime - firstOffsetSeconds
     }
 
     /// Maps a window-relative time (seconds from start of `windowSamples`)

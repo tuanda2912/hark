@@ -79,6 +79,16 @@ actor EngineSession {
     /// `DecodingOptions.language` at every hop + the flushOnStop drain.
     private var sessionLanguage: String?
 
+    /// Commit watermark (ADR-0019): the session-relative audio time (seconds
+    /// since capture start) up to which we have ALREADY finalized. Monotonic,
+    /// starts at 0. Each hop finalizes the segments whose `t_start` lies in
+    /// `(committedUpTo, commitHorizon]` exactly once, then advances this to the
+    /// horizon. Audio at/before this is NEVER re-finalized — that is what kills
+    /// the duplicate `segment.final` frames the old older-zone rule produced.
+    /// Reset to 0 per capture.start. The hot region (`t_start > committedUpTo`)
+    /// still flows partials with ADR-0009-stable utterance_ids, unchanged.
+    private var committedUpTo: Double = 0
+
     // ─── Offline diarization buffers (Phase 5, ADR-0016) ───────────────
     //
     // Full-meeting 16 kHz mono audio retained in RAM for the post-stop
@@ -325,13 +335,31 @@ actor EngineSession {
         } catch {
             FileHandle.standardError.write(Data("harkd: pipeline stop error: \(error)\n".utf8))
         }
+        // Snapshot the live transcription state (ledger + window + commit
+        // watermark) BEFORE we wipe session state below. `dispatchCaptureStop`
+        // is non-async — it runs atomically on the actor with no suspension —
+        // so it sets `self.ledger`/`self.window`/`self.committedUpTo` to nil/0
+        // at the bottom of THIS call, which happens before the detached
+        // `flushTask` ever runs. If `flushOnStop` read `self.ledger` it would
+        // see nil and the drain + hot-region finalize would no-op — which is
+        // EXACTLY why the tail was lost (the drain never had a ledger to work
+        // with). We hand the ledger/window/watermark in, mirroring how `sid`/
+        // `start` are snapshotted just above. (`ledger`/`window` are reference
+        // types, so this passes the live objects, not copies — the flush
+        // mutates them, which is fine: they're about to be discarded anyway.)
+        let drainLedger = self.ledger
+        let drainWindow = self.window
+        let drainCommittedUpTo = self.committedUpTo
+
         // Flush remaining buffered speech, run the offline diarization pass,
         // then write the meeting to the vault + emit `meeting.saved`. All
         // best-effort and OFF the live path — we don't block the ack on it,
         // and a write/git failure can never break the stop lifecycle.
         let flushTask = Task { [weak self] in
             await self?.flushOnStop(sessionId: sid, sessionStart: start,
-                                    durationSec: durationSec, rtfAvg: avgRTF)
+                                    durationSec: durationSec, rtfAvg: avgRTF,
+                                    ledger: drainLedger, window: drainWindow,
+                                    committedUpTo: drainCommittedUpTo)
         }
         _ = flushTask
 
@@ -349,6 +377,7 @@ actor EngineSession {
         self.captureWallStart = nil
         self.sessionTimeSeconds = 0
         self.sessionLanguage = nil
+        self.committedUpTo = 0
         self.rtfSum = 0
         self.rtfSamples = 0
         // NOTE: `finalizedUtterances`, `sessionAudio`, and `supersededIds` are
@@ -404,6 +433,7 @@ actor EngineSession {
         self.ledger = UtteranceLedger()
         self.vad = EnergyVAD()
         self.sessionLanguage = language
+        self.committedUpTo = 0  // ADR-0019: nothing finalized yet this session.
         self.rtfSum = 0
         self.rtfSamples = 0
 
@@ -542,17 +572,48 @@ actor EngineSession {
             }
         }
 
-        // Reconciliation:
-        //   - segments whose t_start falls in the OLDER 25 s of the window
-        //     are candidates for promotion to final (same text twice).
-        //   - segments in the NEW 5 s tail are partials.
-        let hopSeconds = 5.0
-        let oldestOldEnd = windowStartSessionTime + (30.0 - hopSeconds)
+        // Reconciliation — COMMIT-WATERMARK model (ADR-0019).
+        //
+        // Each hop re-transcribes the whole 30 s window, so every audio span is
+        // decoded ~6×. The old rule promoted a segment to final whenever its
+        // t_start was in the "older zone" AND its text was stable — but because
+        // WhisperKit re-segments coarsely across hops, ADR-0009 mints a FRESH
+        // utterance_id for each re-shape, so the SAME speech was finalized 3–4×.
+        //
+        // Instead we finalize each audio REGION exactly once, behind a monotonic
+        // watermark `committedUpTo`:
+        //   - commitHorizon = the oldest `hop` seconds of speech in the window —
+        //     the span that ages out next hop and will NEVER be re-transcribed.
+        //     We anchor on the window's left edge (the one timeline point we
+        //     always know exactly; the speech-only buffer may not be full).
+        //   - Finalize, ONCE, the segments whose t_start is in
+        //     (committedUpTo, commitHorizon]. Straddle rule: a segment is
+        //     committed when its t_start crosses the horizon, using THIS hop's
+        //     (most-refined, fullest-context) text for that region.
+        //   - Everything after committedUpTo (the still-hot region) keeps
+        //     flowing `segment.partial` with ADR-0009-stable utterance_ids,
+        //     exactly as before — the live caption experience is unchanged.
+        //   - Advance committedUpTo = commitHorizon. Audio at/before the
+        //     watermark is never finalized or re-emitted again.
+        let hopSeconds = self.window?.hopSeconds ?? 5.0
+        let commitHorizon = windowStartSessionTime + hopSeconds
 
         guard let ledger = self.ledger else {
             self.transcribeInFlight = false
             return
         }
+
+        // Track the farthest `t_end` of any segment we FINALIZE this hop. A
+        // segment is committed when its START crosses the horizon (the straddle
+        // rule), but a long sentence can START before the horizon and END well
+        // past it — and we emit it with its FULL text. So that whole span is
+        // now committed, not just up to the horizon. We advance the watermark
+        // to max(horizon, this end) below, so subsequent hops skip any segment
+        // whose start falls inside the span the long sentence already covered
+        // (they hit `.skipAlreadyCommitted`). Without this, a long sentence's
+        // TAIL gets re-committed as overlapping fragments on the following hops
+        // — the boundary-overlap bug ADR-0019's refinement fixes.
+        var maxCommittedEnd = committedUpTo
 
         for seg in winSegments {
             // Resolve utterance identity by overlap, not by t_start bucket.
@@ -561,17 +622,43 @@ actor EngineSession {
             if ledger.isFinalized(utteranceId: uid) {
                 continue
             }
-            let textChanged = ledger.updateText(seg.text, utteranceId: uid)
-            let isInOlderZone = seg.tStart < oldestOldEnd
-            // Final: a segment in the older zone that didn't change is
-            // confirmed by this window; emit `segment.final` and lock it.
-            if isInOlderZone && !textChanged {
+            // Keep the ledger's last-known text current (for supersession's
+            // prefix test + orphan finals). The "did it change?" result is no
+            // longer the finalize trigger under the watermark model.
+            _ = ledger.updateText(seg.text, utteranceId: uid)
+            // Region-commit decision (pure; unit-tested in CommitWatermarkTests).
+            switch Self.commitDecision(segmentStart: seg.tStart,
+                                       committedUpTo: committedUpTo,
+                                       commitHorizon: commitHorizon) {
+            case .finalize:
                 ledger.markFinalized(utteranceId: uid)
                 emitSegment(uid: uid, isFinal: true, seg: seg)
-            } else {
-                // Partial: either fresh (tail) or refined (text changed).
+                // This region — its FULL span [tStart, tEnd] — is now committed.
+                maxCommittedEnd = max(maxCommittedEnd, seg.tEnd)
+            case .partial:
+                // Still-hot region (after the watermark, ahead of the horizon):
+                // a partial — fresh tail or refined. Live replace-in-place.
                 emitSegment(uid: uid, isFinal: false, seg: seg)
+            case .skipAlreadyCommitted:
+                // seg.tStart <= committedUpTo — already finalized in a prior hop.
+                // Never re-emit (this is what kills the duplicate finals).
+                break
             }
+        }
+
+        // Advance the watermark to the farther of the horizon and the longest
+        // committed segment's end (ADR-0019 refinement). The oldest `hop`
+        // seconds of speech are committed by the horizon; a long sentence that
+        // straddled the horizon "consumes" its full audio span so its tail
+        // can't be re-committed as overlapping fragments next hop. Monotonic by
+        // construction — windowStartSessionTime only increases as the window
+        // slides, and we only ever take a max. Trade-off (accepted for v1): an
+        // overlapping interjection that STARTS within a committed long span is
+        // skipped. WhisperKit rarely emits clean overlapping segments, and a
+        // dropped sub-second interjection beats re-covering a whole sentence.
+        let advanceTo = max(commitHorizon, maxCommittedEnd)
+        if advanceTo > committedUpTo {
+            committedUpTo = advanceTo
         }
 
         // Drop entries that have fallen out of the active window. Anything
@@ -585,6 +672,12 @@ actor EngineSession {
             // A superseded orphan is NOT closed with a synthetic final — it was
             // already retracted in favour of the segment that grew past it
             // (ADR-0018); a closing final would resurrect the fragment.
+            //
+            // ADR-0019: also skip orphans whose region is already behind the
+            // commit watermark. That span was finalized exactly once when it
+            // aged past the horizon; a closing final here would re-emit
+            // already-committed audio — the very duplicate this model removes.
+            if p.tStart <= committedUpTo { continue }
             let orphanSeg = WindowSegment(
                 tStart: p.tStart, tEnd: p.tEnd, text: p.lastText, language: nil
             )
@@ -602,8 +695,17 @@ actor EngineSession {
     /// Drain whatever's left after capture.stop. Transcribes the buffered
     /// window once (if any speech is present) and emits remaining partials
     /// as finals so the UI doesn't leave dangling partials.
+    ///
+    /// `ledger`/`window`/`committedUpTo` are SNAPSHOTTED by the caller
+    /// (`dispatchCaptureStop`) before it wipes session state — see the snapshot
+    /// comment there. We must NOT read `self.ledger`/`self.window`/
+    /// `self.committedUpTo` here: by the time this detached Task runs they are
+    /// already nil/0, which is exactly why the drain (and the lost tail) never
+    /// had a ledger to finalize.
     private func flushOnStop(sessionId: String, sessionStart: Date,
-                             durationSec: Double, rtfAvg: Double) async {
+                             durationSec: Double, rtfAvg: Double,
+                             ledger: UtteranceLedger?, window: SlidingWindowBuffer?,
+                             committedUpTo: Double) async {
         // Snapshot + detach the full-session audio BEFORE the transcription
         // drain's `await` (which suspends this actor and could let a fresh
         // capture.start wipe the live buffer). The drain itself only appends
@@ -612,12 +714,46 @@ actor EngineSession {
         let capturedAudio = sessionAudio
         sessionAudio.removeAll(keepingCapacity: false)
 
+        // The commit watermark is carried across the drain + hot-region
+        // finalize as a local (the actor's `committedUpTo` was reset to 0 when
+        // stop wiped session state). Both steps advance it.
+        var committedUpTo = committedUpTo
+
         // Drain the live transcription buffer first (this emits the last
         // finals, populating `finalizedUtterances`), then run the offline
         // diarization pass to label each utterance "Speaker N", then write the
         // meeting to the vault + emit `meeting.saved`. Guarded end-to-end so it
         // can never break the capture/stop lifecycle.
-        await flushTranscriptionDrain()
+        await flushTranscriptionDrain(ledger: ledger, window: window,
+                                      committedUpTo: &committedUpTo)
+
+        // ADR-0019 (CONTENT-LOSS FIX, 2nd attempt — DETERMINISTIC):
+        //
+        // The re-transcription drain above is FRAGILE: it depends on WhisperKit
+        // re-producing the hot-region segments from the residual audio buffer,
+        // and it has THREE early-return paths (no window/ledger, empty buffer,
+        // transcribe error) that skip the tail entirely. On-device this dropped
+        // the last ~30 s of every recording: that content was transcribed by the
+        // REGULAR hops and shown as `segment.partial`, but its start was always
+        // ahead of the commit horizon (never finalized live), then behind the
+        // over-advanced watermark (skipped on later hops), and the drain never
+        // re-finalized it.
+        //
+        // So finalize the hot region DETERMINISTICALLY from the ledger itself,
+        // UNCONDITIONALLY (not inside the drain — outside it, so no drain
+        // early-return can skip it): take every LIVE (non-finalized,
+        // non-superseded) ledger entry whose t_start is above the watermark —
+        // exactly the trailing partials the user saw, each carrying its
+        // last-known text — and emit each as a `segment.final`. This captures
+        // EVERYTHING above the watermark through end-of-audio regardless of what
+        // the re-transcription leftover contained. Dedup/supersession backstops
+        // still apply (the head-overlap guard here + `collapseReemissions` at
+        // vault write). Runs BEFORE `dedupedFinalizedUtterances()` below, so the
+        // recovered tail is in `finalizedUtterances` for the diarization +
+        // vault-write pass.
+        if let ledger = ledger {
+            finalizeHotRegion(ledger, committedUpTo: &committedUpTo)
+        }
 
         // `finalizedUtterances` is the APPEND-ONLY emission log: `emitSegment`
         // pushes a row every time a `segment.final` fires. A single utterance
@@ -722,6 +858,43 @@ actor EngineSession {
                 resolved).utf8))
         }
         return resolved
+    }
+
+    // ─── Commit-watermark finalization decision (ADR-0019) ──────────────────
+
+    /// What to do with one transcribed segment under the commit-watermark model.
+    enum CommitDecision: Equatable {
+        /// The segment's region has aged into the stable band and is not yet
+        /// behind the watermark — finalize it ONCE.
+        case finalize
+        /// The segment is in the still-hot region (after the watermark, ahead
+        /// of the horizon) — emit/refresh a `segment.partial`.
+        case partial
+        /// The segment's region is already behind the watermark — it was
+        /// finalized in a prior hop. Do nothing (no re-emit). This is the guard
+        /// that eliminates duplicate finals.
+        case skipAlreadyCommitted
+    }
+
+    /// PURE region-commit decision (ADR-0019). Given a segment's absolute
+    /// `segmentStart` (session-relative seconds), the current `committedUpTo`
+    /// watermark, and this hop's `commitHorizon`:
+    ///
+    ///   - `committedUpTo < start <= commitHorizon` → `.finalize` (commit once;
+    ///     `committedUpTo < start` is the exactly-once guard, `start <= horizon`
+    ///     is the straddle rule — a segment is committed when its START is).
+    ///   - `start > commitHorizon` (and necessarily `> committedUpTo` since the
+    ///     watermark never passes the horizon) → `.partial` (still hot).
+    ///   - `start <= committedUpTo` → `.skipAlreadyCommitted`.
+    ///
+    /// No actor state, no I/O — unit-tested in CommitWatermarkTests so the live
+    /// loop and the tests share one definition of "finalize this region once."
+    static func commitDecision(segmentStart start: Double,
+                               committedUpTo: Double,
+                               commitHorizon: Double) -> CommitDecision {
+        if start <= committedUpTo { return .skipAlreadyCommitted }
+        if start <= commitHorizon { return .finalize }
+        return .partial
     }
 
     /// TIME-GATED collapse of re-emitted utterances. Input is already deduped by
@@ -891,7 +1064,12 @@ actor EngineSession {
         broadcast(WireEnvelope(type: "meeting.saved", payload: payload))
     }
 
-    private func flushTranscriptionDrain() async {
+    /// `ledger`/`window`/`committedUpTo` are passed in (snapshotted by
+    /// `dispatchCaptureStop` before session wipe) — NOT read from `self`, which
+    /// is already nil/0 by the time this detached Task runs. See `flushOnStop`.
+    private func flushTranscriptionDrain(ledger: UtteranceLedger?,
+                                         window: SlidingWindowBuffer?,
+                                         committedUpTo: inout Double) async {
         guard let window = window, let ledger = ledger else { return }
         if window.windowSamples.isEmpty { return }
         // One last pass — pretend the whole buffer is a hop.
@@ -909,25 +1087,147 @@ actor EngineSession {
         }
         _ = Date().timeIntervalSince(started)
         let language = results.first?.language
+
+        // ADR-0019 (CONTENT-LOSS FIX): finalize the ENTIRE remaining hot region
+        // — every segment in the buffer that was NOT already committed live —
+        // through the end of captured audio. Map the drain buffer's
+        // window-relative segment times back to absolute session time (the drain
+        // doesn't go through `popHopIfReady`, so we read the anchor directly).
+        //
+        // We must NOT gate on the commit watermark here. The watermark
+        // (`committedUpTo`) can advance PAST hot-region content WITHOUT
+        // finalizing it: when a long sentence straddles the commit horizon it is
+        // finalized with its full span and the watermark jumps to its `tEnd` (the
+        // straddle refinement above), even though later overlapping speech in
+        // that span was only ever emitted as `segment.partial`. A
+        // `tStart <= committedUpTo → skip` gate would then drop that whole tail
+        // — the verified bug (last ~30 s of every recording lost).
+        //
+        // Instead we gate on what was ACTUALLY finalized: skip a drained segment
+        // only when its region substantially overlaps an already-finalized ledger
+        // entry (the committed head). Everything else is hot-region content that
+        // was shown live as a partial and never finalized — finalize it now. The
+        // ledger's `isFinalized` (on the resolved id) is the within-drain dedup
+        // backstop, and `collapseReemissions` at vault write mops up residual
+        // near-duplicates; the watermark still advances to the tail end below so
+        // the post-stop bookkeeping stays consistent.
+        let windowStart = window.currentWindowStartSessionTime
+        var tailEnd = committedUpTo
         for r in results {
             for s in r.segments {
                 let cleaned = stripWhisperSpecials(s.text).trimmingCharacters(in: .whitespaces)
                 if cleaned.isEmpty { continue }
-                // Best-effort time mapping (anchors may have been trimmed).
-                let tStart = Double(s.start)
-                let tEnd = Double(s.end)
+                // Absolute session time when we have anchors; fall back to the
+                // raw window-relative offset only if the anchor table is gone.
+                let tStart: Double
+                let tEnd: Double
+                if let ws = windowStart {
+                    tStart = window.windowTimeToSessionTime(
+                        windowOffsetSeconds: Double(s.start), windowStartSessionTime: ws)
+                    tEnd = window.windowTimeToSessionTime(
+                        windowOffsetSeconds: Double(s.end), windowStartSessionTime: ws)
+                } else {
+                    tStart = Double(s.start)
+                    tEnd = Double(s.end)
+                }
+                // Skip the already-committed HEAD: a region that substantially
+                // overlaps an entry we genuinely finalized live. This is the
+                // watermark-immune "already committed?" test — see
+                // `UtteranceLedger.overlapsFinalized`. Hot-region partials are
+                // NOT finalized entries, so they pass through and get committed.
+                if ledger.overlapsFinalized(tStart: tStart, tEnd: tEnd) { continue }
                 let uid = ledger.resolve(tStart: tStart, tEnd: tEnd, text: cleaned)
                 if ledger.isFinalized(utteranceId: uid) { continue }
                 ledger.markFinalized(utteranceId: uid)
                 emitSegment(uid: uid, isFinal: true, seg: WindowSegment(
                     tStart: tStart, tEnd: tEnd, text: cleaned, language: language
                 ))
+                tailEnd = max(tailEnd, tEnd)
             }
         }
+        // Everything up to the end of the drained tail is now committed.
+        committedUpTo = max(committedUpTo, tailEnd)
         // The drain pass can itself supersede earlier fragments (it re-decodes
         // the whole tail buffer). Broadcast those before stop completes so the
         // live UI and the retention filter both see them. See ADR-0018.
         drainAndEmitSupersessions(ledger)
+    }
+
+    /// At-stop hot-region finalize (ADR-0019 content-loss fix). Enumerates the
+    /// ledger's LIVE entries above the commit watermark — the trailing partials
+    /// the user saw but the live loop never finalized — and emits each as a
+    /// `segment.final`, marking it finalized and advancing `committedUpTo` to the
+    /// max t_end. Deterministic: it reads the ledger's stored text directly, it
+    /// does NOT re-transcribe.
+    ///
+    /// The actual decision (which entries, in what order, new watermark) is the
+    /// PURE `hotRegionFinalizeDecision` below — the SAME function the unit tests
+    /// drive, so the live path and the regression tests share one definition. We
+    /// only do the emission + ledger mutation here. `committedUpTo` is the
+    /// caller's local watermark (the actor's was reset at stop); we advance it.
+    private func finalizeHotRegion(_ ledger: UtteranceLedger, committedUpTo: inout Double) {
+        let live = ledger.liveEntriesAbove(committedUpTo)
+        let decision = Self.hotRegionFinalizeDecision(
+            liveEntries: live, committedUpTo: committedUpTo)
+
+        for entry in decision.toFinalize {
+            // Dedup backstop: never re-emit a region that substantially overlaps
+            // something we genuinely finalized live (the committed head). Mirrors
+            // the drain's head guard so a straddle sentence's region isn't
+            // double-written. Hot-region partials are NOT finalized entries, so
+            // they pass through. Cheap (linear, off the live path).
+            if ledger.overlapsFinalized(tStart: entry.tStart, tEnd: entry.tEnd) { continue }
+            if ledger.isFinalized(utteranceId: entry.id) { continue }
+            ledger.markFinalized(utteranceId: entry.id)
+            emitSegment(uid: entry.id, isFinal: true, seg: WindowSegment(
+                tStart: entry.tStart, tEnd: entry.tEnd, text: entry.lastText, language: nil))
+        }
+        if decision.advanceTo > committedUpTo {
+            committedUpTo = decision.advanceTo
+        }
+
+        // Diagnostic (state only, no transcript text): lets an on-device run
+        // confirm the tail was captured — N>0 and Y≈Z≈duration.
+        FileHandle.standardError.write(Data(String(
+            format: "harkd: stop finalized %d hot-region utterances (committedUpTo %.1fs -> %.1fs, audio end %.1fs)\n",
+            decision.toFinalize.count,
+            decision.committedUpToBefore,
+            committedUpTo,
+            decision.audioEnd
+        ).utf8))
+    }
+
+    /// The PURE hot-region-finalize decision (ADR-0019 content-loss fix).
+    /// Given the ledger's LIVE entries above the watermark (already filtered to
+    /// non-finalized, non-superseded, non-empty, t_start-ascending by
+    /// `liveEntriesAbove`) and the current `committedUpTo`, decide:
+    ///   - which entries to finalize (ALL of them — they're the trailing
+    ///     partials never promoted to final), in t_start order;
+    ///   - the new watermark = max(committedUpTo, max entry t_end);
+    ///   - the audio end (max t_end across the live set), for the diagnostic.
+    ///
+    /// No actor state, no I/O, no re-transcription — unit-tested in
+    /// CommitWatermarkTests by driving the REAL `UtteranceLedger`, so the live
+    /// stop path and the regression test share one definition of "finalize the
+    /// hot region the user saw."
+    struct HotRegionFinalizeDecision: Equatable {
+        let toFinalize: [UtteranceLedger.LiveEntry]
+        let committedUpToBefore: Double
+        let advanceTo: Double
+        let audioEnd: Double
+    }
+
+    static func hotRegionFinalizeDecision(
+        liveEntries: [UtteranceLedger.LiveEntry],
+        committedUpTo: Double
+    ) -> HotRegionFinalizeDecision {
+        var maxEnd = committedUpTo
+        for e in liveEntries { maxEnd = max(maxEnd, e.tEnd) }
+        return HotRegionFinalizeDecision(
+            toFinalize: liveEntries,
+            committedUpToBefore: committedUpTo,
+            advanceTo: max(committedUpTo, maxEnd),
+            audioEnd: maxEnd)
     }
 
     // ─── Offline diarization pass (Phase 5, ADR-0016) ───────────────────
