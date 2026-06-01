@@ -9,11 +9,41 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import * as path from 'node:path';
 import { spawnHarkd, HarkdHandle } from './harkd-spawn';
+import { HarkTray, TrayState } from './tray';
 
 let mainWindow: BrowserWindow | null = null;
 let harkd: HarkdHandle | null = null;
+let tray: HarkTray | null = null;
+
+// True once the user has chosen to quit (tray "Quit Hark" or ⌘Q). The
+// window's `close` handler reads this to decide between hiding (the normal
+// red-button / ⌘W close, which keeps the tray alive) and actually being
+// destroyed during teardown. Electron has no built-in "is quitting" flag,
+// so we maintain our own and set it from every real-quit entry point.
+let isQuitting = false;
 
 const DEV_URL = 'http://localhost:4200';
+
+/** Show the window if hidden, hide it if visible — the tray click + the
+ *  tray menu "Show/Hide" both route here. */
+function toggleWindow(): void {
+  const win = mainWindow;
+  if (!win) return;
+  if (win.isVisible()) {
+    win.hide();
+  } else {
+    win.show();
+    win.focus();
+  }
+}
+
+/** Begin a real quit: flip the flag so the window stops intercepting close,
+ *  then let Electron run the normal quit sequence (before-quit tears down
+ *  harkd + the tray). */
+function quitApp(): void {
+  isQuitting = true;
+  app.quit();
+}
 
 async function createWindow(): Promise<void> {
   const win = new BrowserWindow({
@@ -29,6 +59,14 @@ async function createWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Keep the renderer running at full speed even when hidden to the
+      // tray. Default `true` throttles a hidden window's rAF/timers, which
+      // would (a) stall WebSocket segment processing and the per-second REC
+      // counter while capturing in the background, and (b) starve Angular's
+      // `_trayStatePush` effect so the tray never learns capture started —
+      // leaving the icon stuck on the idle ring. A live-transcription app
+      // must keep working while its window is tucked away.
+      backgroundThrottling: false,
       // Hard rule #3: no remote content, no telemetry.
       webSecurity: true,
       // DevTools available in dev; safely off when packaged. Toggle on
@@ -61,11 +99,48 @@ async function createWindow(): Promise<void> {
     win.webContents.openDevTools({ mode: 'detach' });
   }
 
+  // Hide-on-close, don't destroy: the tray is the app's persistent home, so
+  // the red traffic-light / ⌘W must just tuck the window away. We only let
+  // the window actually close during a real quit (isQuitting), at which
+  // point the renderer + WebSocket tear down with it.
+  win.on('close', (ev) => {
+    if (!isQuitting) {
+      ev.preventDefault();
+      win.hide();
+      // Reflect the now-hidden state in the tray menu's Show/Hide label.
+      tray?.setState(lastTrayState);
+    }
+  });
+
   win.on('closed', () => {
     mainWindow = null;
   });
 
+  // Keep the tray menu's Show/Hide label honest as the window is shown
+  // again (e.g. via Dock or tray click) without waiting for a state push.
+  win.on('show', () => tray?.setState(lastTrayState));
+  win.on('hide', () => tray?.setState(lastTrayState));
+
   mainWindow = win;
+}
+
+// Last state snapshot pushed by the renderer. Cached so window show/hide
+// events can rebuild the tray menu without inventing a state (the only
+// field that changes off a state-push is the Show/Hide label, which we
+// derive from window visibility inside the tray).
+let lastTrayState: TrayState = { capturing: false, ready: false, connected: false };
+
+function createTray(): void {
+  tray = new HarkTray({
+    getWindow: () => mainWindow,
+    // Start/Stop live in the renderer (EngineService owns capture). Forward
+    // the action; the renderer reuses its current source/language selections.
+    onAction: (action) => {
+      mainWindow?.webContents.send('hark:tray-action', action);
+    },
+    onToggleWindow: toggleWindow,
+    onQuit: quitApp,
+  });
 }
 
 async function bootstrap(): Promise<void> {
@@ -78,6 +153,7 @@ async function bootstrap(): Promise<void> {
     // slice surfaces this via EngineService.connection.kind === 'error'.
   }
   await createWindow();
+  createTray();
 }
 
 ipcMain.handle('hark:get-engine-port', (): number => {
@@ -87,6 +163,26 @@ ipcMain.handle('hark:get-engine-port', (): number => {
   return harkd.port;
 });
 
+// Renderer → main: capture/connection state push. The renderer's
+// EngineService is the source of truth; the tray is a projection of it.
+// We validate the shape defensively (it crosses the contextBridge as a
+// plain structured-clone object) before trusting it.
+ipcMain.on('hark:tray-state', (_ev, raw: unknown) => {
+  if (!isTrayState(raw)) return;
+  lastTrayState = raw;
+  tray?.setState(raw);
+});
+
+function isTrayState(v: unknown): v is TrayState {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o['capturing'] === 'boolean' &&
+    typeof o['ready'] === 'boolean' &&
+    typeof o['connected'] === 'boolean'
+  );
+}
+
 app.whenReady().then(bootstrap).catch((err) => {
   // eslint-disable-next-line no-console
   console.error('[hark] bootstrap failed:', err);
@@ -94,12 +190,24 @@ app.whenReady().then(bootstrap).catch((err) => {
 });
 
 app.on('window-all-closed', () => {
-  // macOS convention is to keep the app alive when all windows close;
-  // for v1 we exit on close to match a typical single-window utility.
-  app.quit();
+  // Intentionally a no-op. The window hides (not destroys) on close, so this
+  // normally won't fire while the app is alive. Even if it did, the tray is
+  // the app's persistent home — quitting only happens via the tray
+  // "Quit Hark" item or ⌘Q, both of which route through quitApp()/before-quit.
+});
+
+// macOS: clicking the Dock icon (if shown) re-opens / un-hides the window.
+app.on('activate', () => {
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
 });
 
 app.on('before-quit', async (ev) => {
+  // A real quit is underway — make sure the window's close handler stops
+  // intercepting (it checks isQuitting) and tear down harkd + the tray.
+  isQuitting = true;
   if (harkd) {
     ev.preventDefault();
     const h = harkd;
@@ -110,6 +218,12 @@ app.on('before-quit', async (ev) => {
       // eslint-disable-next-line no-console
       console.warn('[hark] error stopping harkd:', err);
     }
+    tray?.destroy();
+    tray = null;
     app.quit();
+    return;
   }
+  // No harkd to stop (e.g. spawn failed) — still drop the tray cleanly.
+  tray?.destroy();
+  tray = null;
 });

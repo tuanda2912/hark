@@ -10,6 +10,7 @@ import {
   afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
+  effect,
   ElementRef,
   HostListener,
   OnDestroy,
@@ -103,6 +104,21 @@ export class AppComponent implements OnInit, OnDestroy {
     if (el) el.scrollTop = el.scrollHeight;
   });
 
+  // ─── Menu-bar tray state push ───────────────────────────────────────
+  // The tray (Electron main) mirrors capture/connection state for its icon
+  // and Start/Stop menu-item enablement. State lives here, so we push a
+  // snapshot whenever the relevant signals change. window.hark is undefined
+  // outside Electron (e.g. bare `ng serve` in a browser), so guard it — the
+  // effect simply no-ops there.
+  private readonly _trayStatePush = effect(() => {
+    const state = {
+      capturing: this.isCapturing(),
+      ready: this.ready(),
+      connected: this.isConnected(),
+    };
+    window.hark?.setTrayState(state);
+  });
+
   /** Elapsed capture time as HH:MM:SS, derived from capture.startedAt. */
   readonly recCounter = computed(() => this.formatClock(this.elapsedSeconds()));
 
@@ -116,6 +132,17 @@ export class AppComponent implements OnInit, OnDestroy {
     // Surface the latest engine warning (e.g. rtf_high) in a banner.
     this.warningSub = this.engine.warnings$.subscribe((w) => {
       this.warning.set(w.message);
+    });
+    // Route tray Start/Stop to the same handlers the top-bar buttons use, so
+    // the tray reuses the current source/language selections. No-op when
+    // running outside Electron (window.hark undefined). The callback is
+    // fire-once registration; the preload whitelists the action strings.
+    window.hark?.onTrayAction((action) => {
+      if (action === 'start') {
+        if (this.canStart()) this.onStart();
+      } else if (action === 'stop') {
+        this.onStop();
+      }
     });
     void this.engine.connect();
   }

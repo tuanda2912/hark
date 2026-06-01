@@ -33,10 +33,25 @@ import {
   EngineCommand,
 } from './engine.types';
 
+/** Capture/connection snapshot pushed to the menu-bar tray. Mirrors
+ *  TrayState in main/tray.ts and preload.ts. */
+export interface TrayState {
+  capturing: boolean;
+  ready: boolean;
+  connected: boolean;
+}
+
+/** Tray-initiated actions routed from main → renderer. */
+export type TrayAction = 'start' | 'stop';
+
 declare global {
   interface Window {
     hark?: {
       getEnginePort(): Promise<number>;
+      /** Push capture/connection state to the tray (icon + menu enablement). */
+      setTrayState(state: TrayState): void;
+      /** Register a handler for tray Start/Stop. Whitelisted in preload. */
+      onTrayAction(cb: (action: TrayAction) => void): void;
     };
   }
 }
