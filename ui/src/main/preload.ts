@@ -7,6 +7,7 @@
 // surface below crosses the boundary.
 
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+import type { Prefs } from './prefs';
 
 /** State snapshot the renderer pushes to the tray. Mirrors TrayState in
  *  main/tray.ts and the Window.hark interface in engine.service.ts. */
@@ -14,6 +15,13 @@ interface TrayState {
   capturing: boolean;
   ready: boolean;
   connected: boolean;
+}
+
+/** Response from `hark:load-prefs` — the persisted prefs plus the vault
+ *  path (so the renderer can show it without a second round-trip). */
+interface PrefsResult {
+  prefs: Prefs;
+  vaultPath: string;
 }
 
 /** Tray actions the main process can ask the renderer to perform. The
@@ -47,5 +55,31 @@ contextBridge.exposeInMainWorld('hark', {
         cb(action as TrayAction);
       }
     });
+  },
+
+  /** Load persisted prefs + the vault path. Returns defaults on first run
+   *  or a corrupt file (main never throws). */
+  loadPrefs(): Promise<PrefsResult> {
+    return ipcRenderer.invoke('hark:load-prefs');
+  },
+
+  /** Persist prefs (fire-and-forget). We re-shape to ONLY the whitelisted
+   *  fields here so nothing extra crosses the bridge; main re-validates
+   *  again before writing. */
+  savePrefs(prefs: Prefs): void {
+    ipcRenderer.send('hark:save-prefs', {
+      version: 1,
+      audio: {
+        mic: !!prefs.audio.mic,
+        system: !!prefs.audio.system,
+        language:
+          typeof prefs.audio.language === 'string' ? prefs.audio.language : null,
+      },
+    });
+  },
+
+  /** Open the vault folder in Finder. main holds the fixed path. */
+  revealVault(): void {
+    ipcRenderer.send('hark:reveal-vault');
   },
 });

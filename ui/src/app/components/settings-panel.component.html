@@ -1,0 +1,171 @@
+<!-- Backdrop. Click anywhere outside the card closes the panel; the card
+     stops propagation so inner clicks don't bubble here. -->
+<div
+  class="settings-backdrop fixed inset-0 z-50 flex items-center justify-center p-6"
+  (click)="onBackdropClick()"
+>
+  <div
+    class="settings-card w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-card bg-surface border border-border-2 text-text"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Settings"
+    (click)="$event.stopPropagation()"
+  >
+    <!-- Header -->
+    <header
+      class="flex items-center justify-between px-5 py-3 border-b border-border"
+    >
+      <h2 class="text-sm font-semibold tracking-wide">Settings</h2>
+      <button
+        type="button"
+        class="inline-flex items-center justify-center w-7 h-7 rounded-input text-text-2 hover:text-text hover:bg-surface-2 cursor-pointer"
+        (click)="onClose()"
+        title="Close (Esc)"
+        aria-label="Close settings"
+      >
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    </header>
+
+    <div class="px-5 py-4 flex flex-col gap-6">
+      <!-- ─── General (read-only) ─── -->
+      <section class="flex flex-col gap-2">
+        <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+          General
+        </h3>
+        <dl class="flex flex-col gap-1.5 text-sm">
+          <div class="flex items-center justify-between gap-4">
+            <dt class="text-text-2">Engine version</dt>
+            <dd class="font-mono text-xs text-text">{{ engineVersion() }}</dd>
+          </div>
+          <div class="flex items-center justify-between gap-4">
+            <dt class="text-text-2">Model</dt>
+            <dd class="font-mono text-xs text-text">{{ modelLoaded() }}</dd>
+          </div>
+          <div class="flex items-center justify-between gap-4">
+            <dt class="text-text-2">Connection</dt>
+            <dd class="inline-flex items-center gap-1.5 font-mono text-xs text-text">
+              <span
+                class="inline-block w-2 h-2 rounded-full"
+                [style.background]="connectionColor()"
+                aria-hidden="true"
+              ></span>
+              {{ connectionLabel() }}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <!-- ─── Audio defaults ─── -->
+      <section class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+            Audio defaults
+          </h3>
+          <p class="text-xs text-text-3">
+            Applied when Hark launches. Changing these does not affect a
+            capture already in progress.
+          </p>
+        </div>
+
+        <!-- Mic default -->
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex flex-col">
+            <span class="text-sm text-text">Microphone</span>
+            <span class="text-xs text-text-3">
+              Turn off to keep a Bluetooth headset in A2DP.
+            </span>
+          </div>
+          <button
+            type="button"
+            class="setting-toggle"
+            [class.is-on]="mic()"
+            role="switch"
+            [attr.aria-checked]="mic()"
+            (click)="toggleMicDefault()"
+            aria-label="Default microphone capture"
+          >
+            <span class="setting-knob" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <!-- System default -->
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex flex-col">
+            <span class="text-sm text-text">System audio</span>
+            <span class="text-xs text-text-3">
+              What's playing through your output device.
+            </span>
+          </div>
+          <button
+            type="button"
+            class="setting-toggle"
+            [class.is-on]="system()"
+            role="switch"
+            [attr.aria-checked]="system()"
+            (click)="toggleSystemDefault()"
+            aria-label="Default system-audio capture"
+          >
+            <span class="setting-knob" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <!-- Language default -->
+        <div class="flex items-center justify-between gap-4">
+          <label class="flex flex-col" for="settings-language">
+            <span class="text-sm text-text">Language</span>
+            <span class="text-xs text-text-3">
+              Locking a language is recommended for non-English speech.
+            </span>
+          </label>
+          <select
+            id="settings-language"
+            class="px-2 py-1 rounded-input border border-border-2 bg-surface text-text text-sm cursor-pointer"
+            [value]="language() ?? ''"
+            (change)="onLanguageChange($any($event.target).value)"
+          >
+            @for (choice of languageChoices; track choice.code) {
+              <option [value]="choice.code ?? ''">{{ choice.label }}</option>
+            }
+          </select>
+        </div>
+      </section>
+
+      <!-- ─── Vault ─── -->
+      <section class="flex flex-col gap-2">
+        <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+          Vault
+        </h3>
+        <p class="text-xs text-text-3">
+          Transcripts and notes are stored here, on this Mac only.
+        </p>
+        <div
+          class="flex items-center gap-2 px-3 py-2 rounded-input border border-border bg-bg-2"
+        >
+          <span
+            class="flex-1 font-mono text-xs text-text-2 truncate"
+            [title]="vaultPath()"
+          >
+            {{ vaultPath() || '—' }}
+          </span>
+          <!-- Always enabled: the vault path is a fixed server-side constant
+               and the main-process handler ensures the dir exists before
+               opening it, so there is no state in which revealing is invalid.
+               (The displayed path is briefly empty during the async prefs
+               load; that must not gate the action.) -->
+          <button
+            type="button"
+            class="shrink-0 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text text-xs cursor-pointer"
+            (click)="revealVault()"
+          >
+            Reveal in Finder
+          </button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>

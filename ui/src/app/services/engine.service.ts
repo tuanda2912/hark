@@ -32,6 +32,7 @@ import {
   CaptureState,
   EngineCommand,
 } from './engine.types';
+import type { Prefs, PrefsResult } from './preferences.service';
 
 /** Capture/connection snapshot pushed to the menu-bar tray. Mirrors
  *  TrayState in main/tray.ts and preload.ts. */
@@ -52,6 +53,12 @@ declare global {
       setTrayState(state: TrayState): void;
       /** Register a handler for tray Start/Stop. Whitelisted in preload. */
       onTrayAction(cb: (action: TrayAction) => void): void;
+      /** Load persisted prefs + the vault path. */
+      loadPrefs(): Promise<PrefsResult>;
+      /** Persist prefs (fire-and-forget; re-validated in main). */
+      savePrefs(prefs: Prefs): void;
+      /** Reveal the vault folder in Finder. */
+      revealVault(): void;
     };
   }
 }

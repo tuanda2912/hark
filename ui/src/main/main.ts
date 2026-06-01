@@ -8,8 +8,35 @@
 
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import * as path from 'node:path';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
 import { spawnHarkd, HarkdHandle } from './harkd-spawn';
 import { HarkTray, TrayState } from './tray';
+import { loadPrefs, savePrefs, getPrefsPath, Prefs } from './prefs';
+
+// The user's vault lives OUTSIDE the repo and the app-support dir. Per
+// CLAUDE.md it is the only place transcripts/notes are written, so the
+// "Reveal in Finder" affordance and the Settings "Vault" section point
+// here. Constructed from the home dir so it's correct on any machine.
+const VAULT_DIR = path.join(os.homedir(), 'Documents', 'vault', 'hark');
+
+/**
+ * Ensure the vault directory exists on disk. CLAUDE.md hard rule #4 forbids
+ * auto-DELETING or auto-REWRITING vault files — creating the empty home
+ * directory is neither and is expected: it's the product's home, and
+ * `shell.openPath` simply no-ops on a missing path (which reads to the user
+ * as a dead "Reveal in Finder" button). `recursive: true` is idempotent, so
+ * this is safe to call on every boot and again before each reveal. Never
+ * throws — a failure here must not crash boot or the reveal action.
+ */
+function ensureVaultDir(): void {
+  try {
+    fs.mkdirSync(VAULT_DIR, { recursive: true });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[hark] failed to create vault dir:', VAULT_DIR, err);
+  }
+}
 
 let mainWindow: BrowserWindow | null = null;
 let harkd: HarkdHandle | null = null;
@@ -144,6 +171,8 @@ function createTray(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  // Make the vault's home directory exist before anything tries to open it.
+  ensureVaultDir();
   try {
     harkd = await spawnHarkd();
   } catch (err) {
@@ -182,6 +211,39 @@ function isTrayState(v: unknown): v is TrayState {
     typeof o['connected'] === 'boolean'
   );
 }
+
+// ─── Preferences IPC ──────────────────────────────────────────────────
+// The prefs module owns disk I/O + validation; main only mediates the IPC.
+// load is a `handle` (request/response — the renderer awaits the value);
+// save is a fire-and-forget `on` (no reply needed). The save payload
+// crosses the contextBridge as untrusted structured-clone data, so
+// savePrefs() re-validates it (whitelisted keys only) before writing —
+// the renderer can never coerce a write to an arbitrary path or shape.
+ipcMain.handle('hark:load-prefs', (): { prefs: Prefs; vaultPath: string } => {
+  return { prefs: loadPrefs(), vaultPath: VAULT_DIR };
+});
+
+ipcMain.on('hark:save-prefs', (_ev, raw: unknown) => {
+  savePrefs(raw);
+});
+
+// Open the vault folder in Finder. The path is fixed (VAULT_DIR) — the
+// renderer cannot ask main to reveal an arbitrary directory. We re-ensure the
+// dir exists first: openPath no-ops on a missing path (the button would read
+// as "does nothing"), and boot-time creation may have been skipped/failed.
+ipcMain.on('hark:reveal-vault', () => {
+  ensureVaultDir();
+  void shell.openPath(VAULT_DIR).then((err) => {
+    // openPath resolves to a non-empty string ONLY on failure.
+    if (err) {
+      // eslint-disable-next-line no-console
+      console.error('[hark] failed to reveal vault:', VAULT_DIR, err);
+    }
+  });
+});
+
+// eslint-disable-next-line no-console
+console.log(`[hark] prefs file: ${getPrefsPath()}`);
 
 app.whenReady().then(bootstrap).catch((err) => {
   // eslint-disable-next-line no-console

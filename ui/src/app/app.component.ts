@@ -22,20 +22,23 @@ import {
 } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { EngineService } from './services/engine.service';
+import { PreferencesService } from './services/preferences.service';
 import { LANGUAGE_CHOICES, DisplayedSegment } from './services/engine.types';
 import { TranscriptLineComponent } from './components/transcript-line.component';
 import { StatusBannerComponent } from './components/status-banner.component';
+import { SettingsPanelComponent } from './components/settings-panel.component';
 
 @Component({
   selector: 'hark-root',
   standalone: true,
-  imports: [TranscriptLineComponent, StatusBannerComponent],
+  imports: [TranscriptLineComponent, StatusBannerComponent, SettingsPanelComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AppComponent implements OnInit, OnDestroy {
   private readonly engine = inject(EngineService);
+  private readonly prefs = inject(PreferencesService);
 
   readonly connection = this.engine.connection;
   readonly capture = this.engine.capture;
@@ -66,6 +69,36 @@ export class AppComponent implements OnInit, OnDestroy {
   // audio you're hearing through BT headphones, turn Mic OFF.
   readonly micEnabled = signal(true);
   readonly systemEnabled = signal(true);
+
+  /** Settings modal visibility. Toggled by the gear button + ⌘, . */
+  readonly settingsOpen = signal(false);
+
+  /** Seed the live top-bar selections from the persisted defaults once the
+   *  prefs have loaded from disk. Runs once: after `loaded()` flips true we
+   *  copy the saved values into the live signals, then mark seeded so the
+   *  persist effect below can start mirroring user changes back. We can't
+   *  seed synchronously because PreferencesService loads over async IPC. */
+  private seeded = false;
+  private readonly _seedFromPrefs = effect(() => {
+    if (this.seeded || !this.prefs.loaded()) return;
+    this.micEnabled.set(this.prefs.mic());
+    this.systemEnabled.set(this.prefs.system());
+    this.language.set(this.prefs.language());
+    this.seeded = true;
+  });
+
+  /** Persist the live selections as the new defaults whenever the user
+   *  changes them — but only while NOT capturing (the toggles + picker are
+   *  already locked during capture, so this only fires on deliberate idle
+   *  edits) and only after the initial seed (so we never write placeholder
+   *  defaults over freshly-loaded prefs). */
+  private readonly _persistDefaults = effect(() => {
+    const mic = this.micEnabled();
+    const system = this.systemEnabled();
+    const language = this.language();
+    if (!this.seeded || this.isCapturing()) return;
+    this.prefs.setAudioDefaults({ mic, system, language });
+  });
 
   /** Transient confirmation shown after a bookmark is created. */
   readonly bookmarkToast = signal<string | null>(null);
@@ -154,13 +187,25 @@ export class AppComponent implements OnInit, OnDestroy {
     this.warningSub?.unsubscribe();
   }
 
-  /** ⌘⇧B — mark the current moment. Mirrors the design's shortcut. */
+  /** ⌘⇧B — mark the current moment (the design's shortcut). ⌘, — open
+   *  Settings (the macOS convention). */
   @HostListener('window:keydown', ['$event'])
   onKeydown(ev: KeyboardEvent): void {
     if (ev.metaKey && ev.shiftKey && ev.key.toLowerCase() === 'b') {
       ev.preventDefault();
       this.onBookmark();
+    } else if (ev.metaKey && !ev.shiftKey && ev.key === ',') {
+      ev.preventDefault();
+      this.openSettings();
     }
+  }
+
+  openSettings(): void {
+    this.settingsOpen.set(true);
+  }
+
+  closeSettings(): void {
+    this.settingsOpen.set(false);
   }
 
   // ─── Template helpers ───────────────────────────────────────────────
