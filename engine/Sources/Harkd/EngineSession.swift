@@ -47,6 +47,11 @@ actor EngineSession {
     private var modelReady: Bool { whisperKit != nil }
     private weak var server: HarkdWebSocketServer?
 
+    /// At-stop dedup time-gate, seconds (stage 2 of `dedupedFinalizedUtterances`).
+    /// Resolved once at init from `HARK_DEDUP_WINDOW_SEC` (clamped, logged) so it
+    /// can be swept on-device without recompiling. See `resolveDedupWindow`.
+    private let dedupWindowSeconds: Double
+
     /// Offline speaker diarizer (Phase 5, ADR-0016). Wraps FluidAudio's
     /// `OfflineDiarizerManager` (VBx global clustering, overlapping windows,
     /// exclusive segments). nil until the models finish loading; nil-tolerant
@@ -95,12 +100,6 @@ actor EngineSession {
     /// + uid (for diarization overlap) + text (for the markdown body). The text
     /// lives ONLY in this in-RAM buffer during the session and is written ONLY
     /// to the vault at stop — never logged, never sent anywhere else (rule #2).
-    private struct FinalizedUtterance {
-        let utteranceId: String
-        let tStart: Double
-        let tEnd: Double
-        let text: String
-    }
     private var finalizedUtterances: [FinalizedUtterance] = []
 
     /// utterance_ids the ledger reported as SUPERSEDED during the session
@@ -136,6 +135,8 @@ actor EngineSession {
 
     init(server: HarkdWebSocketServer) {
         self.server = server
+        self.dedupWindowSeconds = EngineSession.resolveDedupWindow(
+            ProcessInfo.processInfo.environment["HARK_DEDUP_WINDOW_SEC"])
     }
 
     /// Inject the model once it has finished loading. Until this runs,
@@ -656,23 +657,22 @@ actor EngineSession {
     /// the vault should contain — each utterance ONCE — then return it sorted by
     /// `tStart` ascending. Off the live path (stop only).
     ///
-    /// Dedup is two-stage:
+    /// Stages:
+    ///   0. Drop SUPERSEDED fragments (ADR-0018): a fragment retracted live via
+    ///      `segment.superseded` must not survive into the written file. The live
+    ///      UI deleted it on the wire frame; the writer filters the same ids here.
     ///   1. By `utterance_id`, last-write-wins. The final emit for a uid is the
     ///      most-complete text (text only ever grows/refines before lock), so
     ///      keeping the last occurrence mirrors the live feed's reconciliation.
-    ///   2. By (rounded t_start, normalized text) for DISTINCT uids that are
-    ///      really the same utterance — ADR-0009 mints a fresh id when WhisperKit
-    ///      re-segments coarsely, yielding duplicate rows with identical text and
-    ///      near-identical timing. We round t_start to 1 s so a 1-3 s boundary
-    ///      shift still collapses, and lowercase/trim the text so casing/spacing
-    ///      jitter across passes doesn't defeat the match. Keep the later row.
+    ///   2. Interval-based, TIME-GATED collapse of distinct-uid re-emissions.
+    ///      The sliding window re-emits the SAME spoken sentence on successive
+    ///      hops at t_start values 1–4 s apart; ADR-0009's max-denominator rule
+    ///      mints a fresh uid for each (distinct ids, near-identical text), and
+    ///      the conservative supersession gate (which requires the new text to
+    ///      EXTEND the old, "not identical") deliberately lets identical copies
+    ///      through. Stage 2 mops them up — but ONLY when their timing proves
+    ///      re-emission, never on text alone (see `collapseReemissions`).
     ///
-    /// Before either stage, SUPERSEDED utterances (ADR-0018) are dropped: a
-    /// fragment retracted live via `segment.superseded` must not survive into
-    /// the written file. This is the at-stop half of the one-signal-two-readers
-    /// rule — the live UI deleted it on the wire frame; the writer filters the
-    /// same ids here. (Stages 1+2 still run as a backstop for re-segmentation
-    /// duplicates the conservative supersession gate intentionally let through.)
     /// The sort is unconditional — a safety net so the body is chronological even
     /// if dedup ever leaves rows in a different order.
     private func dedupedFinalizedUtterances() -> [FinalizedUtterance] {
@@ -686,20 +686,153 @@ actor EngineSession {
             if byId[u.utteranceId] == nil { idOrder.append(u.utteranceId) }
             byId[u.utteranceId] = u
         }
+        let oncePerId = idOrder.compactMap { byId[$0] }
 
-        // Stage 2: collapse distinct-uid duplicates (same text + ~same start).
-        func key(_ u: FinalizedUtterance) -> String {
-            let t = (u.tStart).rounded()  // 1 s bucket absorbs boundary jitter
-            let text = u.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            return "\(Int(t))|\(text)"
+        // Stage 2: time-gated re-emission collapse, then sort by t_start.
+        let collapsed = Self.collapseReemissions(oncePerId, windowSeconds: dedupWindowSeconds)
+        return collapsed.sorted { $0.tStart < $1.tStart }
+    }
+
+    /// Default at-stop dedup time-gate (seconds). Two normalized-equal (or
+    /// prefix/superset) utterances collapse when their [tStart,tEnd] intervals
+    /// overlap OR their gap is below this. ~2.5 s covers the 1–4 s hop-to-hop
+    /// re-emission drift observed on real conversational audio while staying
+    /// well under the multi-second pause that separates a deliberate repeat.
+    static let defaultDedupWindowSeconds: Double = 2.5
+    /// Upper clamp for the env override. A window beyond this would start eating
+    /// legitimately-repeated phrases, defeating the whole safety mechanism.
+    static let maxDedupWindowSeconds: Double = 15.0
+
+    /// Parse + clamp `HARK_DEDUP_WINDOW_SEC` and log the resolved value once at
+    /// startup. Unset / unparseable → the default; a parsed value is clamped to
+    /// [0, maxDedupWindowSeconds]. 0 disables the gap-window (overlap-only
+    /// collapse still runs). Logged on stderr — value only, no transcript text.
+    static func resolveDedupWindow(_ raw: String?) -> Double {
+        let resolved: Double
+        if let raw = raw?.trimmingCharacters(in: .whitespaces), !raw.isEmpty,
+           let parsed = Double(raw) {
+            resolved = min(maxDedupWindowSeconds, max(0.0, parsed))
+            FileHandle.standardError.write(Data(String(
+                format: "harkd: dedup window = %.2fs (from HARK_DEDUP_WINDOW_SEC=%@, clamped to [0,%.0f])\n",
+                resolved, raw, maxDedupWindowSeconds).utf8))
+        } else {
+            resolved = defaultDedupWindowSeconds
+            FileHandle.standardError.write(Data(String(
+                format: "harkd: dedup window = %.2fs (default; set HARK_DEDUP_WINDOW_SEC to override)\n",
+                resolved).utf8))
         }
-        var byKey: [String: FinalizedUtterance] = [:]
-        for id in idOrder {
-            guard let u = byId[id] else { continue }
-            byKey[key(u)] = u  // later occurrence wins
+        return resolved
+    }
+
+    /// TIME-GATED collapse of re-emitted utterances. Input is already deduped by
+    /// utterance_id (stage 1); this collapses DISTINCT-uid rows that are really
+    /// the same speech re-decoded on successive sliding-window hops.
+    ///
+    /// Rule (per group of normalized-equal text, plus a prefix/superset pass):
+    ///   - Two utterances are "linked" (the same re-emitted speech) when their
+    ///     [tStart, tEnd] intervals OVERLAP, OR the GAP between them is
+    ///     < `windowSeconds`. Gap = the gap between the intervals (0 if they
+    ///     touch/overlap); for two points it's |tStart − tStart|.
+    ///   - Linking is TRANSITIVE within a group: a chain of close copies
+    ///     (A~B~C) collapses to ONE. But links only form across copies within
+    ///     the window — copies separated by more than the window stay separate
+    ///     clusters, so a genuinely-repeated phrase survives (the HARD rule).
+    ///   - The kept representative of a cluster is the LONGEST text (most
+    ///     complete); ties → earliest tStart.
+    ///
+    /// Two matching passes, both behind the SAME time gate:
+    ///   (a) normalized-equality groups — the dominant re-emission case;
+    ///   (b) prefix/superset — one normalized text is a prefix of another
+    ///       (mops up residual prefix variants the supersession path didn't
+    ///       catch). NO fuzzy / edit-distance matching — too risky.
+    ///
+    /// When in doubt this DOES NOT collapse: a leftover duplicate is a lesser
+    /// evil than deleting real content. Pure function — no actor state, no I/O.
+    static func collapseReemissions(_ utterances: [FinalizedUtterance],
+                                    windowSeconds: Double) -> [FinalizedUtterance] {
+        let n = utterances.count
+        if n < 2 { return utterances }
+
+        let norms = utterances.map { normalizeForDedup($0.text) }
+
+        // Union-Find over the utterances. We union i,j when they are the same
+        // re-emitted speech: time-linked AND (normalized-equal OR one norm is a
+        // prefix of the other). O(n²) link scan — n is small per meeting (tens
+        // to low hundreds of finals), and this runs once at stop, off the live
+        // path. See class doc note on UtteranceLedger's linear scan.
+        var parent = Array(0..<n)
+        func find(_ x: Int) -> Int {
+            var r = x
+            while parent[r] != r { parent[r] = parent[parent[r]]; r = parent[r] }
+            return r
+        }
+        func union(_ a: Int, _ b: Int) {
+            let ra = find(a), rb = find(b)
+            if ra != rb { parent[ra] = rb }
         }
 
-        return byKey.values.sorted { $0.tStart < $1.tStart }
+        for i in 0..<n {
+            let ni = norms[i]
+            if ni.isEmpty { continue }
+            for j in (i + 1)..<n {
+                let nj = norms[j]
+                if nj.isEmpty { continue }
+                // Text gate: identical, OR one is a prefix of the other.
+                let textLinked = ni == nj || ni.hasPrefix(nj) || nj.hasPrefix(ni)
+                guard textLinked else { continue }
+                // Time gate — the entire safety mechanism. Overlap OR small gap.
+                guard timeLinked(utterances[i], utterances[j], windowSeconds: windowSeconds) else { continue }
+                union(i, j)
+            }
+        }
+
+        // Pick one representative per cluster: longest text, ties → earliest start.
+        var repForRoot: [Int: Int] = [:]
+        for i in 0..<n {
+            let root = find(i)
+            if let cur = repForRoot[root] {
+                if isBetterRepresentative(utterances[i], than: utterances[cur]) {
+                    repForRoot[root] = i
+                }
+            } else {
+                repForRoot[root] = i
+            }
+        }
+
+        // Emit one row per cluster, preserving first-seen order of clusters so
+        // the (later, unconditional) sort has a stable input.
+        var emitted = Set<Int>()
+        var out: [FinalizedUtterance] = []
+        out.reserveCapacity(repForRoot.count)
+        for i in 0..<n {
+            let root = find(i)
+            if emitted.insert(root).inserted, let rep = repForRoot[root] {
+                out.append(utterances[rep])
+            }
+        }
+        return out
+    }
+
+    /// True when two utterances' intervals overlap OR their gap is below the
+    /// window. Gap is clamped at 0 for overlapping/touching intervals. This is
+    /// the time gate that protects genuine repeats: identical text spoken far
+    /// apart (non-overlapping AND gap >= window) is NOT linked.
+    private static func timeLinked(_ a: FinalizedUtterance, _ b: FinalizedUtterance,
+                                   windowSeconds: Double) -> Bool {
+        let overlap = min(a.tEnd, b.tEnd) - max(a.tStart, b.tStart)
+        if overlap >= 0 { return true }  // intervals overlap or touch
+        let gap = -overlap                // strictly positive separation
+        return gap < windowSeconds
+    }
+
+    /// The kept representative is the LONGEST text (most complete); ties resolve
+    /// to the earliest tStart. Length is on the RAW text (what gets written),
+    /// not the normalized form.
+    private static func isBetterRepresentative(_ candidate: FinalizedUtterance,
+                                               than current: FinalizedUtterance) -> Bool {
+        let cLen = candidate.text.count, curLen = current.text.count
+        if cLen != curLen { return cLen > curLen }
+        return candidate.tStart < current.tStart
     }
 
     // ─── Vault persistence + meeting.saved (Phase 5 Slice 2, ADR-0015/0016) ──
@@ -1133,6 +1266,51 @@ func stripWhisperSpecials(_ s: String) -> String {
     return _harkdSpecialTokenRegex.stringByReplacingMatches(
         in: s, options: [], range: range, withTemplate: ""
     )
+}
+
+// ─── At-stop dedup model + text normalization ────────────────────────────
+//
+// `FinalizedUtterance` is the in-RAM record of a `segment.final` emit, retained
+// for the post-stop diarization + vault write (timing for overlap-labelling,
+// text for the markdown body). File-scope (not actor-private) so the pure dedup
+// logic in `EngineSession.collapseReemissions` can be unit-tested without an
+// actor. The text lives ONLY here during a session and is written ONLY to the
+// vault at stop — never logged, never sent anywhere else (hard rule #2).
+
+struct FinalizedUtterance {
+    let utteranceId: String
+    let tStart: Double
+    let tEnd: Double
+    let text: String
+}
+
+/// Normalize text for the at-stop dedup text gate: lowercase, trim, collapse
+/// internal whitespace, and strip punctuation/symbols (letters/digits/space
+/// survive). Same semantics as `UtteranceLedger.normalize` — kept separate
+/// because that one is `private` to the ledger; Phase 4+ should hoist both into
+/// HarkCore. This makes "We're getting there." and "We're getting there"
+/// (trailing-punctuation jitter across hops) compare equal, while genuine
+/// number-format mismatches like "10 years" vs "Ten years" correctly do NOT
+/// match — left alone on purpose (no fuzzy matching, per the dedup contract).
+func normalizeForDedup(_ s: String) -> String {
+    let lowered = s.lowercased()
+    var out = String.UnicodeScalarView()
+    var lastWasSpace = false
+    for scalar in lowered.unicodeScalars {
+        if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+            if !lastWasSpace && !out.isEmpty {
+                out.append(" ")
+                lastWasSpace = true
+            }
+        } else if CharacterSet.alphanumerics.contains(scalar) {
+            out.append(scalar)
+            lastWasSpace = false
+        }
+        // else: punctuation/symbol → drop, don't reset lastWasSpace.
+    }
+    var result = String(out)
+    if result.hasSuffix(" ") { result.removeLast() }
+    return result
 }
 
 // ─── "Speaker N" ordinal parsing ─────────────────────────────────────────
