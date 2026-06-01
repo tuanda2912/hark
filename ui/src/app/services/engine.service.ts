@@ -27,6 +27,7 @@ import {
   ErrorPayload,
   WarningPayload,
   BookmarkCreatedPayload,
+  MeetingSavedPayload,
   DisplayedSegment,
   ConnectionState,
   CaptureState,
@@ -116,6 +117,17 @@ export class EngineService {
   readonly errors$ = new Subject<ErrorPayload>();
   readonly warnings$ = new Subject<WarningPayload>();
   readonly bookmarkCreated$ = new Subject<BookmarkCreatedPayload>();
+  /** Fired once per meeting when the engine reports a vault write complete. */
+  readonly meetingSaved$ = new Subject<MeetingSavedPayload>();
+
+  /**
+   * The most recent `meeting.saved` payload, retained so a component that
+   * mounts (or re-renders) after the event can still show the saved
+   * confirmation + speaker roster. Cleared on `clearSegments()`.
+   */
+  private readonly _lastMeetingSaved = signal<MeetingSavedPayload | null>(null);
+  readonly lastMeetingSaved: Signal<MeetingSavedPayload | null> =
+    this._lastMeetingSaved.asReadonly();
 
   /** All bookmarks created this session, in creation order. */
   private readonly _bookmarks = signal<BookmarkCreatedPayload[]>([]);
@@ -222,6 +234,7 @@ export class EngineService {
     this.segmentsMap.clear();
     this._segmentsTick.update((v) => v + 1);
     this._bookmarks.set([]);
+    this._lastMeetingSaved.set(null);
   }
 
   // ─── Internals ──────────────────────────────────────────────────────
@@ -302,6 +315,12 @@ export class EngineService {
         const bm = env.payload as BookmarkCreatedPayload;
         this._bookmarks.update((list) => [...list, bm]);
         this.bookmarkCreated$.next(bm);
+        break;
+      }
+      case 'meeting.saved': {
+        const saved = env.payload as MeetingSavedPayload;
+        this._lastMeetingSaved.set(saved);
+        this.meetingSaved$.next(saved);
         break;
       }
       case 'warning':

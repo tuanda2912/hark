@@ -23,15 +23,25 @@ import {
 import { Subscription } from 'rxjs';
 import { EngineService } from './services/engine.service';
 import { PreferencesService } from './services/preferences.service';
-import { LANGUAGE_CHOICES, DisplayedSegment } from './services/engine.types';
+import {
+  LANGUAGE_CHOICES,
+  DisplayedSegment,
+  MeetingSavedPayload,
+} from './services/engine.types';
 import { TranscriptLineComponent } from './components/transcript-line.component';
 import { StatusBannerComponent } from './components/status-banner.component';
 import { SettingsPanelComponent } from './components/settings-panel.component';
+import { MeetingSavedToastComponent } from './components/meeting-saved-toast.component';
 
 @Component({
   selector: 'hark-root',
   standalone: true,
-  imports: [TranscriptLineComponent, StatusBannerComponent, SettingsPanelComponent],
+  imports: [
+    TranscriptLineComponent,
+    StatusBannerComponent,
+    SettingsPanelComponent,
+    MeetingSavedToastComponent,
+  ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -105,6 +115,12 @@ export class AppComponent implements OnInit, OnDestroy {
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private bookmarkSub: Subscription | null = null;
 
+  /** Saved-confirmation card (path + speaker roster). Unlike the bookmark
+   *  toast it's retained — it carries actionable content the user reads, so
+   *  it stays until they dismiss it or start the next capture. */
+  readonly meetingSaved = signal<MeetingSavedPayload | null>(null);
+  private meetingSavedSub: Subscription | null = null;
+
   /** Ticks every second so the REC counter advances. */
   private readonly nowMs = signal<number>(0);
   private timerId: ReturnType<typeof setInterval> | null = null;
@@ -162,6 +178,11 @@ export class AppComponent implements OnInit, OnDestroy {
     this.bookmarkSub = this.engine.bookmarkCreated$.subscribe((bm) => {
       this.showBookmarkToast(`Bookmark saved at ${this.formatClock(bm.t)}`);
     });
+    // Surface the vault-write confirmation (fired at capture.stop, after
+    // diarization). Retained until dismissed or the next capture start.
+    this.meetingSavedSub = this.engine.meetingSaved$.subscribe((saved) => {
+      this.meetingSaved.set(saved);
+    });
     // Surface the latest engine warning (e.g. rtf_high) in a banner.
     this.warningSub = this.engine.warnings$.subscribe((w) => {
       this.warning.set(w.message);
@@ -185,6 +206,7 @@ export class AppComponent implements OnInit, OnDestroy {
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
     this.bookmarkSub?.unsubscribe();
     this.warningSub?.unsubscribe();
+    this.meetingSavedSub?.unsubscribe();
   }
 
   /** ⌘⇧B — mark the current moment (the design's shortcut). ⌘, — open
@@ -286,6 +308,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
   onStart(): void {
     this.warning.set(null);
+    this.meetingSaved.set(null);
     this.engine.clearSegments();
     this.engine.startCapture({
       mic: this.micEnabled(),
@@ -311,6 +334,18 @@ export class AppComponent implements OnInit, OnDestroy {
     const startedMs = Date.parse(c.startedAt);
     if (Number.isNaN(startedMs)) return 0;
     return Math.max(0, (this.nowMs() - startedMs) / 1000);
+  }
+
+  /** Dismiss the saved-confirmation card (its × button). */
+  dismissMeetingSaved(): void {
+    this.meetingSaved.set(null);
+  }
+
+  /** Open the vault folder in Finder. Reuses the existing revealVault bridge
+   *  (opens the vault root, not the specific file). A reveal-specific-file
+   *  IPC is a possible Phase 5.x follow-up. No-op outside Electron. */
+  revealVault(): void {
+    this.prefs.revealVault();
   }
 
   private showBookmarkToast(message: string): void {

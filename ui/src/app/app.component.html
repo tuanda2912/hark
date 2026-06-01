@@ -235,6 +235,19 @@
     </div>
   }
 
+  <!-- Saved-confirmation card. Retained (carries the path + speaker roster
+       the user may act on) until dismissed or the next capture start.
+       Sits above the bookmark toast so the two never overlap. -->
+  @if (meetingSaved(); as saved) {
+    <div class="fixed bottom-20 right-6">
+      <hark-meeting-saved-toast
+        [saved]="saved"
+        (dismiss)="dismissMeetingSaved()"
+        (reveal)="revealVault()"
+      />
+    </div>
+  }
+
   <!-- Settings modal. Mounted only while open; closes on Esc, backdrop
        click, or the close button (all emit `close`). -->
   @if (settingsOpen()) {

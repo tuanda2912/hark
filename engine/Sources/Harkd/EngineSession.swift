@@ -88,12 +88,16 @@ actor EngineSession {
     private var sessionAudio: [Float] = []
 
     /// Finalized utterances accumulated during the session, kept so the
-    /// post-stop diarization pass can label them by time-overlap. We retain
-    /// only timing + uid (NOT text) — diarization needs intervals, not words.
+    /// post-stop diarization pass can label them by time-overlap AND so the
+    /// vault writer (Slice 2) can render the transcript body. We retain timing
+    /// + uid (for diarization overlap) + text (for the markdown body). The text
+    /// lives ONLY in this in-RAM buffer during the session and is written ONLY
+    /// to the vault at stop — never logged, never sent anywhere else (rule #2).
     private struct FinalizedUtterance {
         let utteranceId: String
         let tStart: Double
         let tEnd: Double
+        let text: String
     }
     private var finalizedUtterances: [FinalizedUtterance] = []
 
@@ -108,6 +112,13 @@ actor EngineSession {
     private var startingCapture = false
     private var lastTranscribeRTF: Double = 0
     private var pendingDroppedHops: Int = 0
+    /// Running average of per-hop transcription RTF across the session, for the
+    /// `meeting.saved` stats. We accumulate sum + count rather than keep only a
+    /// last/current value so `rtfAvg` is an honest session mean, not a snapshot.
+    /// Reset at capture.start; sampled at stop. (Excludes the diarization pass's
+    /// own RTF — this is the live transcription RTF the latency budget targets.)
+    private var rtfSum: Double = 0
+    private var rtfSamples: Int = 0
 
     // ─── Heartbeat ──────────────────────────────────────────────────────
     private var heartbeatTask: Task<Void, Never>?
@@ -283,18 +294,30 @@ actor EngineSession {
                       message: "no capture in progress", recoverable: true)
             return
         }
-        let sid = sessionId ?? "unknown"
-        let durationSec: Double = sessionStartDate.map { Date().timeIntervalSince($0) } ?? 0
+        // Snapshot session identity + start BEFORE we clear session state
+        // below: `dispatchCaptureStop` runs to completion on the actor and
+        // wipes `sessionId`/`sessionStartDate` synchronously, so the flush Task
+        // (which acquires the actor later) would otherwise see them already
+        // nil. We pass them in so the vault file + `meeting.saved` carry the
+        // real session id and the correct wall-clock anchor. No session id is
+        // ever generated here — `startCapture` always assigns one.
+        let sid = sessionId ?? UUID().uuidString
+        let start = sessionStartDate ?? Date()
+        let durationSec: Double = Date().timeIntervalSince(start)
+        let avgRTF = rtfSamples > 0 ? rtfSum / Double(rtfSamples) : lastTranscribeRTF
 
         do {
             try pipeline.stop()
         } catch {
             FileHandle.standardError.write(Data("harkd: pipeline stop error: \(error)\n".utf8))
         }
-        // Flush any remaining buffered speech as a final transcription pass.
-        // Best-effort — we don't block the ack on it.
+        // Flush remaining buffered speech, run the offline diarization pass,
+        // then write the meeting to the vault + emit `meeting.saved`. All
+        // best-effort and OFF the live path — we don't block the ack on it,
+        // and a write/git failure can never break the stop lifecycle.
         let flushTask = Task { [weak self] in
-            await self?.flushOnStop()
+            await self?.flushOnStop(sessionId: sid, sessionStart: start,
+                                    durationSec: durationSec, rtfAvg: avgRTF)
         }
         _ = flushTask
 
@@ -312,6 +335,8 @@ actor EngineSession {
         self.captureWallStart = nil
         self.sessionTimeSeconds = 0
         self.sessionLanguage = nil
+        self.rtfSum = 0
+        self.rtfSamples = 0
         self.vad = EnergyVAD()
     }
 
@@ -361,6 +386,8 @@ actor EngineSession {
         self.ledger = UtteranceLedger()
         self.vad = EnergyVAD()
         self.sessionLanguage = language
+        self.rtfSum = 0
+        self.rtfSamples = 0
 
         // Reset the offline-diarization buffers for the new session and
         // pre-reserve ~10 min of audio so early growth doesn't reallocate.
@@ -466,6 +493,10 @@ actor EngineSession {
         let elapsed = Date().timeIntervalSince(started)
         let rtf = audioSeconds > 0 ? elapsed / audioSeconds : 0
         self.lastTranscribeRTF = rtf
+        if audioSeconds > 0 {
+            self.rtfSum += rtf
+            self.rtfSamples += 1
+        }
 
         // Map WhisperKit segments → reconciled emissions.
         let language = results.first?.language
@@ -544,7 +575,8 @@ actor EngineSession {
     /// Drain whatever's left after capture.stop. Transcribes the buffered
     /// window once (if any speech is present) and emits remaining partials
     /// as finals so the UI doesn't leave dangling partials.
-    private func flushOnStop() async {
+    private func flushOnStop(sessionId: String, sessionStart: Date,
+                             durationSec: Double, rtfAvg: Double) async {
         // Snapshot + detach the full-session audio BEFORE the transcription
         // drain's `await` (which suspends this actor and could let a fresh
         // capture.start wipe the live buffer). The drain itself only appends
@@ -554,14 +586,79 @@ actor EngineSession {
         sessionAudio.removeAll(keepingCapacity: false)
 
         // Drain the live transcription buffer first (this emits the last
-        // finals, populating `finalizedUtterances`), then (Phase 5) run the
-        // offline diarization pass over the captured audio and log the speaker
-        // assignment. Guarded so it can never break the capture/stop lifecycle.
+        // finals, populating `finalizedUtterances`), then run the offline
+        // diarization pass to label each utterance "Speaker N", then write the
+        // meeting to the vault + emit `meeting.saved`. Guarded end-to-end so it
+        // can never break the capture/stop lifecycle.
         await flushTranscriptionDrain()
 
         let capturedUtterances = finalizedUtterances
         finalizedUtterances.removeAll(keepingCapacity: false)
-        await runDiarizationPass(audio: capturedAudio, utterances: capturedUtterances)
+
+        let (labeled, attendees) = await runDiarizationPass(
+            audio: capturedAudio, utterances: capturedUtterances)
+
+        await persistMeeting(
+            sessionId: sessionId, sessionStart: sessionStart,
+            durationSec: durationSec, rtfAvg: rtfAvg,
+            segmentCount: capturedUtterances.count,
+            labeled: labeled, attendees: attendees)
+    }
+
+    // ─── Vault persistence + meeting.saved (Phase 5 Slice 2, ADR-0015/0016) ──
+    //
+    // Runs only at stop, after diarization — OFF the live hot path. Writes the
+    // meeting markdown to the vault and broadcasts `meeting.saved`. Guarded:
+    // a write/git failure logs and returns; it must NOT crash stop, must NOT
+    // prevent the session from finalizing, and must NOT emit a malformed frame.
+
+    private func persistMeeting(
+        sessionId: String, sessionStart: Date,
+        durationSec: Double, rtfAvg: Double, segmentCount: Int,
+        labeled: [VaultWriter.Utterance], attendees: [String]
+    ) async {
+        let title = VaultWriter.autoTitle(forStart: sessionStart)
+        let writer = VaultWriter()
+        let result: VaultWriter.Result
+        do {
+            result = try writer.write(
+                title: title,
+                sessionStart: sessionStart,
+                durationSec: durationSec,
+                attendees: attendees,
+                utterances: labeled)
+        } catch {
+            // The .md write itself failed (mkdir / atomic write). Surface a
+            // warning on the existing `warning` frame — do NOT invent a new
+            // frame — and bail. The session has already finalized.
+            FileHandle.standardError.write(Data(
+                "harkd: vault write failed (\(type(of: error))); meeting not saved this session\n".utf8))
+            broadcast(WireEnvelope(type: "warning", payload: WarningPayload(
+                code: "vault_write_failed",
+                message: "could not write the meeting transcript to the vault",
+                severity: "high"
+            )))
+            return
+        }
+
+        FileHandle.standardError.write(Data(String(
+            format: "harkd: meeting saved — %@  (committed=%@  segments=%d  speakers=%d)\n",
+            result.fileURL.path, result.committed ? "yes" : "no",
+            segmentCount, attendees.count
+        ).utf8))
+
+        // v1 is anonymous: every speaker carries matchedName/confidence == nil.
+        // Phase 5.1 (enrollment/naming) populates them without a contract change.
+        let speakers = attendees.map { MeetingSpeaker(label: $0, matchedName: nil, confidence: nil) }
+        let payload = MeetingSavedPayload(
+            sessionId: sessionId,
+            vaultPath: result.fileURL.path,
+            speakers: speakers,
+            stats: MeetingStats(
+                segments: segmentCount,
+                durationSec: durationSec,
+                rtfAvg: rtfAvg))
+        broadcast(WireEnvelope(type: "meeting.saved", payload: payload))
     }
 
     private func flushTranscriptionDrain() async {
@@ -601,22 +698,37 @@ actor EngineSession {
 
     // ─── Offline diarization pass (Phase 5, ADR-0016) ───────────────────
     //
-    // Slice 1: log-only. Runs after the transcription drain, over the full
-    // session audio. Assigns each finalized utterance a "Speaker N" label by
-    // max time-overlap against FluidAudio's diarization segments, and logs a
-    // summary (always) + per-utterance lines (HARK_DIAR_DEBUG=1). No wire
-    // frame, no vault write — those are Slice 2. Guarded end-to-end: any
-    // failure logs and returns; capture/stop already completed by here.
+    // Runs after the transcription drain, over the full session audio. Assigns
+    // each finalized utterance a "Speaker N" label by max time-overlap against
+    // FluidAudio's diarization segments. Returns the labeled, time-ordered
+    // utterances ready for the vault body PLUS the distinct attendee labels in
+    // first-seen order, so `persistMeeting` can write the file + emit
+    // `meeting.saved`. Guarded end-to-end: on no-diarizer / too-short-audio /
+    // diarize failure it returns the utterances labeled "Speaker ?" (and no
+    // attendees), so the meeting is STILL written — just without attribution.
+    // Capture/stop already completed by the time this runs.
 
-    private func runDiarizationPass(audio samples: [Float],
-                                    utterances: [FinalizedUtterance]) async {
-        guard let diarizer = diarizer else { return }
+    private func runDiarizationPass(
+        audio samples: [Float],
+        utterances: [FinalizedUtterance]
+    ) async -> (labeled: [VaultWriter.Utterance], attendees: [String]) {
+
+        // Fallback used on every non-success path: no labels, no attendees, but
+        // the transcript text is preserved so the vault file is never empty.
+        func unlabeled() -> ([VaultWriter.Utterance], [String]) {
+            let labeled = utterances.map {
+                VaultWriter.Utterance(tStart: $0.tStart, label: "Speaker ?", text: $0.text)
+            }
+            return (labeled, [])
+        }
+
+        guard let diarizer = diarizer else { return unlabeled() }
 
         let audioSeconds = Double(samples.count) / 16_000.0
         if samples.isEmpty || audioSeconds < 1.0 {
             FileHandle.standardError.write(Data(
                 "harkd: diarization skipped (only \(String(format: "%.2f", audioSeconds))s of audio)\n".utf8))
-            return
+            return unlabeled()
         }
 
         let started = Date()
@@ -626,7 +738,7 @@ actor EngineSession {
         } catch {
             FileHandle.standardError.write(Data(
                 "harkd: diarization failed (\(error)); no speaker labels this session\n".utf8))
-            return
+            return unlabeled()
         }
         let diarSeconds = Date().timeIntervalSince(started)
         let rtf = audioSeconds > 0 ? diarSeconds / audioSeconds : 0
@@ -650,20 +762,36 @@ actor EngineSession {
             audioSeconds, diarSeconds, rtf
         ).utf8))
 
-        // Per-utterance assignment by max temporal overlap. Verbose — gated
-        // behind HARK_DIAR_DEBUG=1 so the default run stays quiet.
+        // Label each utterance by max temporal overlap, and collect the
+        // distinct labels in the order utterances first reference them (i.e.
+        // session-time order) so `attendees` reads naturally. "Speaker ?" is a
+        // valid label but is NOT added to attendees — it's "unattributed", not
+        // a roster member.
         let debug = ProcessInfo.processInfo.environment["HARK_DIAR_DEBUG"] == "1"
-        guard debug else { return }
-
+        var labeled: [VaultWriter.Utterance] = []
+        labeled.reserveCapacity(utterances.count)
+        var attendees: [String] = []
+        var seen = Set<String>()
         for u in utterances {
             let label = speakerLabel(
                 forUtteranceStart: u.tStart, end: u.tEnd,
                 diarSegments: result.segments, ordinals: ordinalForSpeakerId)
-            FileHandle.standardError.write(Data(String(
-                format: "harkd: diar  %7.2f..%7.2f → %@\n",
-                u.tStart, u.tEnd, label
-            ).utf8))
+            if label != "Speaker ?", seen.insert(label).inserted {
+                attendees.append(label)
+            }
+            labeled.append(VaultWriter.Utterance(tStart: u.tStart, label: label, text: u.text))
+            if debug {
+                FileHandle.standardError.write(Data(String(
+                    format: "harkd: diar  %7.2f..%7.2f → %@\n",
+                    u.tStart, u.tEnd, label
+                ).utf8))
+            }
         }
+
+        // Sort attendees by their ordinal so the roster reads Speaker 1,
+        // Speaker 2… regardless of who happened to speak first.
+        attendees.sort { ($0.ordinalSuffix ?? .max) < ($1.ordinalSuffix ?? .max) }
+        return (labeled, attendees)
     }
 
     /// Pick the "Speaker N" label whose diarization segment has the greatest
@@ -713,12 +841,14 @@ actor EngineSession {
     // ─── Emission helpers ───────────────────────────────────────────────
 
     private func emitSegment(uid: String, isFinal: Bool, seg: WindowSegment) {
-        // Retain finalized intervals for the post-stop diarization pass
-        // (Phase 5). Only when a diarizer is attached — otherwise it's dead
-        // bookkeeping. Timing only; no text is stored here.
-        if isFinal, diarizer != nil {
+        // Retain finalized utterances for the post-stop pass: timing+uid drive
+        // the diarization time-overlap labelling, and text feeds the vault
+        // markdown body (Slice 2). We retain UNCONDITIONALLY now (not only when
+        // a diarizer is attached) so the meeting file is written even if the
+        // diarizer failed to load — those utterances just get "Speaker ?".
+        if isFinal {
             finalizedUtterances.append(FinalizedUtterance(
-                utteranceId: uid, tStart: seg.tStart, tEnd: seg.tEnd))
+                utteranceId: uid, tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text))
         }
         let payload = SegmentPayload(
             utteranceId: uid,
@@ -776,4 +906,16 @@ func stripWhisperSpecials(_ s: String) -> String {
     return _harkdSpecialTokenRegex.stringByReplacingMatches(
         in: s, options: [], range: range, withTemplate: ""
     )
+}
+
+// ─── "Speaker N" ordinal parsing ─────────────────────────────────────────
+//
+// Used to sort the attendee roster by speaker ordinal (Speaker 1, Speaker 2…)
+// rather than by who spoke first. "Speaker ?" has no ordinal (returns nil).
+
+private extension String {
+    var ordinalSuffix: Int? {
+        guard let n = self.split(separator: " ").last else { return nil }
+        return Int(n)
+    }
 }

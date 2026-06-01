@@ -182,6 +182,46 @@ struct BookmarkCreatedPayload: Encodable {
     let label: String
 }
 
+/// Emitted once per meeting after capture.stop, when diarization has run and
+/// the transcript has been written to the vault. Carries the vault path so the
+/// UI can offer "reveal in Finder", the speaker roster, and a few stats.
+///
+/// Phase 5 v1 is anonymous: every speaker has `matchedName == nil` and
+/// `confidence == nil`. The fields are modelled nullable so Phase 5.1
+/// (enrollment / naming) can populate them without a contract change. As with
+/// `SegmentPayload`, nested nullables use explicit `encode(to:)` so they
+/// serialize as JSON `null` rather than dropped keys — the wire shape stays
+/// stable across phases.
+struct MeetingSavedPayload: Encodable {
+    let sessionId: String
+    let vaultPath: String
+    let speakers: [MeetingSpeaker]
+    let stats: MeetingStats
+}
+
+struct MeetingSpeaker: Encodable {
+    let label: String
+    let matchedName: String?
+    let confidence: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case label, matchedName, confidence
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(label, forKey: .label)
+        if let v = matchedName { try c.encode(v, forKey: .matchedName) } else { try c.encodeNil(forKey: .matchedName) }
+        if let v = confidence { try c.encode(v, forKey: .confidence) } else { try c.encodeNil(forKey: .confidence) }
+    }
+}
+
+struct MeetingStats: Encodable {
+    let segments: Int
+    let durationSec: Double
+    let rtfAvg: Double
+}
+
 struct WarningPayload: Encodable {
     let code: String
     let message: String

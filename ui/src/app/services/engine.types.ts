@@ -87,6 +87,37 @@ export interface ErrorPayload {
   readonly action: string | null;
 }
 
+/** One row of the speaker roster in `meeting.saved`. */
+export interface MeetingSpeaker {
+  readonly label: string;
+  /**
+   * Phase 5 v1 is anonymous, so this is always `null`. Phase 5.1
+   * (enrollment / naming) populates it from a matched voice profile.
+   */
+  readonly matched_name: string | null;
+  /** Match confidence 0..1, or `null` when unmatched (Phase 5 v1). */
+  readonly confidence: number | null;
+}
+
+export interface MeetingStats {
+  readonly segments: number;
+  readonly duration_sec: number;
+  readonly rtf_avg: number;
+}
+
+/**
+ * Emitted once after `capture.stop`, when diarization has run and the
+ * transcript has been written to the vault. The UI uses `vault_path` for a
+ * "reveal in Finder" affordance and renders the speaker roster + stats as a
+ * saved-confirmation.
+ */
+export interface MeetingSavedPayload {
+  readonly session_id: string;
+  readonly vault_path: string;
+  readonly speakers: readonly MeetingSpeaker[];
+  readonly stats: MeetingStats;
+}
+
 // ─── UI → Engine command shapes ──────────────────────────────────────
 
 export interface CaptureStartCommand {
