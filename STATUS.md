@@ -1,7 +1,7 @@
 # Hark — Current Status
 
 **Last updated:** 2026-06-01
-**Current phase:** Phase 4 in progress · UI scaffold + English live transcript working · **full live loop validated: Bluetooth system audio → Process Taps → harkd → WebSocket segments** · menu-bar tray + Settings panel + prefs persistence shipped · adding surfaces incrementally
+**Current phase:** Phase 5 diarization v1 **shipped** · offline FluidAudio speaker labels + engine-written diarized transcripts committed to the vault · Phase 4 UI surfaces largely in place (live transcript, tray, Settings, prefs) · next: clustering-threshold tuning + Phase 5.1 speaker enrollment/naming
 **Stack:** validated (Phase 0 RTF 0.075 on M4 — see [ADR-0005](docs/decisions/0005-phase-0-rtf-validated.md))
 
 > This file is the **session handoff**. It gets updated every time work pauses so the next session (or the next machine) can pick up without re-deriving context.
@@ -34,8 +34,17 @@
 - **Phase 4 — readiness gating + StatusBanner + autoscroll** (commit `a6eb818`). UI no longer polls/races the model load: the `meta.ready` frame (engine commit `f974763`) gates `capture.start` so the Start affordance reflects warm-up, and `ENGINE_WARMING_UP` is handled gracefully. `StatusBanner` atom landed and wired to engine `warning` frames (e.g. `rtf_high`), closing the "renderer swallows warnings with no UI" gap. Transcript view autoscrolls to the live tail.
 - **Phase 4 — menu-bar tray** (commit `5bb24e6`). `TrayMenu.jsx` three states (recording / idle / paused) implemented via Electron's `Tray` + a small popover renderer. **Built, tested on-device, committed.**
 - **Phase 4 — Settings panel + preferences persistence** (commit `6190604`, `feat(ui): settings panel + preferences persistence`, governed by [ADR-0014](docs/decisions/0014-ui-preferences-persistence.md)). Prefs persist to `~/Library/Application Support/Hark/prefs.json` via the atomic temp-write-then-rename pattern. **On-device verified:** prefs persist across launches, the vault dir auto-creates, and Reveal in Finder works. **Privacy-audited clean** (config only, no transcript/PII to app-data — rule #2 holds; prefs are rebuildable config, not user content). The vault directory `~/Documents/vault/hark` is now **auto-created on app boot** (previously it was never created).
+- **Phase 5 — diarization v1 SHIPPED** ([ADR-0016](docs/decisions/0016-phase-5-diarization.md)). Offline, on-device speaker diarization with anonymous "Speaker N" labels, in two slices — both **on-device verified and committed**. The engine now advertises `capabilities: ["diarization"]` in `meta.hello`.
+  - **Slice 1 — offline FluidAudio diarization** (commit `0ee846f`). FluidAudio pinned at **0.14.8**; anonymous "Speaker N" labels assigned to final utterances by **time-overlap at `capture.stop`**; models cached under `~/Library/Application Support/Hark/Models/` (rule #2 holds — models cache, not user content). Verified **RTF ~0.028** on a 5.5-min, 2-speaker clip.
+  - **Slice 2 — engine writes the diarized transcript to the vault** (commit `e48a79d`). The engine (not Electron — the ADR-0015 → engine-writer migration is now executed, see below) writes markdown to `~/Documents/vault/hark/meetings/YYYY-MM-DD-HHMM.md` (front-matter + `> **Speaker N** · HH:MM:SS` blockquotes), **atomic + never-overwrite**. Local **git init + commit per meeting** (`Hark <hark@localhost>` identity, `.gitignore` excludes `.speakers/`, hooks isolated via `core.hooksPath=/dev/null`, **no remote / no push**). Emits the `meeting.saved` frame; the UI shows a **"Meeting saved — N speakers"** toast. **Privacy-audited clean.** Verified on-device (file written + committed).
 
-### ⏳ Next up: Phase 4 surfaces (incremental)
+### ⏳ Next up: remaining Phase 5 + Phase 4 surfaces (incremental)
+
+**Remaining Phase 5 work** (diarization v1 shipped; these turn "Speaker N" into real names + close the open question):
+
+- **Clustering-threshold tuning** — speaker boundaries occasionally mis-attribute on quick back-and-forth. Tune FluidAudio's `clusteringThreshold` on a known multi-speaker recording ([ADR-0016](docs/decisions/0016-phase-5-diarization.md) lists this as an open question).
+- **Phase 5.1 — speaker ENROLLMENT + naming** — `vault/.speakers/*.json` voiceprints, cosine matching, the `speaker.tag` UI→engine round-trip + retroactive rename/re-commit, and the speaker-tagging UI. Turns "Speaker 2" into real names. (Voiceprints stay local — rule #5.)
+- **Deferred polish** — 📌 bookmark pins in the meeting file (the engine keeps no bookmark store yet) + a user-editable meeting title (currently the auto-timestamp "Meeting YYYY-MM-DD HH:MM").
 
 The scaffold from the 2026-05-28 thin slice is in place ([ADR-0010](docs/decisions/0010-phase-4-ui-scaffold.md)). Remaining Phase 4 surfaces, roughly in priority order:
 
@@ -46,15 +55,15 @@ The scaffold from the 2026-05-28 thin slice is in place ([ADR-0010](docs/decisio
 - ✅ ~~Menu-bar tray~~ — `TrayMenu.jsx` three states (recording / idle / paused) via Electron's `Tray` + popover renderer; built, on-device tested, committed (`5bb24e6`).
 - ✅ ~~Settings panel + prefs persistence~~ — done ([ADR-0014](docs/decisions/0014-ui-preferences-persistence.md), commit `6190604`); prefs at `~/Library/Application Support/Hark/prefs.json`, vault dir auto-created on boot. See Done section.
 - **Remaining atoms from the design pass** — `SpeakerTag`, `Eyebrow`, `Toggle`, `CitationChip`. (`StatusBanner` now done.) Use `vault/hark/docs/design/ui/artboards/ComponentSheet.jsx` as the visual reference. Build as each gets a home (SpeakerTag ↔ Phase 5; CitationChip ↔ Phase 6 Q&A; etc.).
-- **Transcript → vault persistence** — **DECIDED, build deferred.** [ADR-0015](docs/decisions/0015-transcript-vault-persistence.md) locks the design: Electron main writes markdown to `vault/hark/meetings/YYYY-MM-DD-{slug}.md`, **auto-save on `capture.stop`** with a user-initiated **Discard**, **local git init + commit per meeting** (no remote, no push), migrating into the Swift engine at **Phase 5** when diarization adds speaker names. The **decision is locked (2026-06-01) and won't be re-litigated**, but the **implementation is deferred to a later/final phase** per the user's call — see ADR-0015 for the spec to follow when it's scheduled.
+- ✅ ~~**Transcript → vault persistence**~~ — **SHIPPED** (was "DECIDED, build deferred" per [ADR-0015](docs/decisions/0015-transcript-vault-persistence.md)). Landed engine-side as Phase 5 slice 2 (commit `e48a79d`): the **engine** writes the diarized markdown + does the local git init/commit per meeting. The ADR-0015 → engine-writer **migration is now executed** (see [ADR-0016](docs/decisions/0016-phase-5-diarization.md)); ADR-0015's Electron-main write-owner was the v1 placeholder. See the Done section.
 - **3-column layout in MainWindow** — `240px (attendees) | 1fr (transcript) | 320px (Q&A preview)`. **Blocked on data:** attendees needs diarization (Phase 5), Q&A needs Claude API (Phase 6). Building empty columns now would be dead UI; keep single-column until there's data.
-- **Manual speaker tagging UI** — the modal + auto-recognition states from `SpeakerTagging.jsx`. **Blocked on Phase 5:** WebSocket wiring for `speaker.tag` needs the engine diarization side (not yet implemented). Dead UI without it.
+- **Manual speaker tagging UI** — the modal + auto-recognition states from `SpeakerTagging.jsx`. Diarization (Phase 5 v1) now emits anonymous "Speaker N" labels, so this is **unblocked**; it's folded into **Phase 5.1** (speaker enrollment + naming) above, which adds the `speaker.tag` round-trip and retroactive rename.
 - **Q&A side panel** — `QAPanel.jsx`. **Blocked on Phase 6:** engine-side Claude API integration is a Phase 6 dep; placeholder-only until then.
 - **Settings → Privacy pane extras** — redaction toggles, voiceprint folder, cloud-calls log placeholder from `SettingsPrivacy.jsx`. The Settings panel + prefs store now exist (ADR-0014); these specific privacy controls slot in as their backing features land (redaction, Phase 5 speakers, Phase 6 cloud calls).
 - **Onboarding flow** — three screens from `Onboarding.jsx`. Defer until packaging.
 - **electron-builder config** — unsigned dev `.app` bundles. Phase 5 packaging-focused ADR.
 
-Estimated effort: the remaining un-blocked surfaces are the leftover atoms and packaging; speaker tagging, Q&A, and the 3-column layout are gated on Phase 5/6 and transcript persistence is decided-but-deferred.
+Estimated effort: Phase 5 diarization v1 and transcript→vault persistence are now shipped. The remaining Phase 5 work is clustering-threshold tuning + Phase 5.1 enrollment/naming (which also unblocks the speaker-tagging UI). Q&A and the 3-column layout's Q&A column remain gated on Phase 6; the leftover atoms and packaging are still open.
 
 ---
 
@@ -135,7 +144,8 @@ The session will then have the same context budget I have right now.
 - ❌ Auto-join Zoom / Teams
 - ❌ Per-speaker redact-name override (drawn in the modal, removed in the post-design fix pass)
 - ✅ Preferences/settings persistence design — locked by [ADR-0014](docs/decisions/0014-ui-preferences-persistence.md) (prefs.json in app-data, atomic write). Don't re-debate the store.
-- ✅ Transcript → vault persistence design — locked by [ADR-0015](docs/decisions/0015-transcript-vault-persistence.md) (format, Electron-main write-owner for v1, auto-save on `capture.stop`, local git). **Decision locked; build deferred** — don't re-litigate the *what*, just schedule the *when*.
+- ✅ Transcript → vault persistence — locked by [ADR-0015](docs/decisions/0015-transcript-vault-persistence.md) (format, auto-save on `capture.stop`, local git). **Now SHIPPED**; the ADR-0015 Electron-main write-owner migrated to the **engine** per [ADR-0016](docs/decisions/0016-phase-5-diarization.md). Don't re-litigate the format or the write path.
+- ✅ Phase 5 diarization — locked by [ADR-0016](docs/decisions/0016-phase-5-diarization.md): **FluidAudio**, **offline / on-device**, **anonymous-v1** "Speaker N" labels, **engine writes** the diarized transcript to the vault. Don't re-debate the diarizer choice, the offline-first stance, or the v1-is-anonymous call. (Open question in the ADR: clustering-threshold tuning — that's tuning, not a re-litigation.)
 
 If a future session suggests revisiting any of these, point at the ADR and move on.
 

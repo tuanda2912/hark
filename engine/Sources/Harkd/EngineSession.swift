@@ -154,10 +154,12 @@ actor EngineSession {
             engineVersion: HARKD_ENGINE_VERSION,
             protocolVersion: WIRE_PROTOCOL_VERSION,
             modelLoaded: modelReady ? modelName : "(loading)",
-            // Phase 3 doesn't actually ship translation or diarization yet,
-            // but the capabilities list is the contract's forward-compat
-            // signal. List only what's truly available — keep this honest.
-            capabilities: []
+            // Static build capability: this build ships offline diarization.
+            // meta.hello describes what the build can do, not per-session
+            // diarizer-load state — the model-load failure path degrades at
+            // runtime rather than removing the capability. Translation is not
+            // built yet, so it stays off the list — keep this honest.
+            capabilities: ["diarization"]
         ))
         sendOnly(client, envelope: hello)
         startHeartbeatIfNeeded()
