@@ -15,6 +15,11 @@
   --s-8: 32px;
   --s-12: 48px;
 
+  /* Layout — the persistent "Hark" titlebar strip (row 1). Shared so any
+     full-height screen can sit BELOW it (top: var(--titlebar-h)) and keep the
+     app header consistent across views, instead of covering it. */
+  --titlebar-h: 40px;
+
   /* Radii — no pillow */
   --r-input: 4px;
   --r-panel: 6px;

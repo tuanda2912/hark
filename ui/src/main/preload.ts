@@ -92,6 +92,16 @@ contextBridge.exposeInMainWorld('hark', {
     ipcRenderer.send('hark:reveal-vault');
   },
 
+  /** Read a persisted meeting-audio file (vault/.audio/<id>.wav) for the
+   *  Post-Meeting Review screen. The path comes from MeetingSavedPayload
+   *  .audio_path. main VALIDATES it (must be a .wav inside the vault root) and
+   *  reads read-only; it rejects anything else, so this can't be used to read
+   *  arbitrary files. Resolves with the raw bytes (Uint8Array) for the
+   *  renderer to wrap in a Blob; rejects on a bad/forbidden path or I/O error. */
+  readMeetingAudio(path: string): Promise<Uint8Array> {
+    return ipcRenderer.invoke('hark:read-meeting-audio', path);
+  },
+
   /** Read the current Microphone TCC authorization status from macOS, via
    *  the main process (`systemPreferences.getMediaAccessStatus`). Returns a
    *  status string ('granted' | 'denied' | 'restricted' | 'not-determined'

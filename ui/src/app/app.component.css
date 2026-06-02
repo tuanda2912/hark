@@ -27,7 +27,7 @@
  */
 .titlebar-strip {
   -webkit-app-region: drag;
-  height: 40px;
+  height: var(--titlebar-h);
   flex-shrink: 0;
 }
 

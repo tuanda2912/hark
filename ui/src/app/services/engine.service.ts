@@ -63,6 +63,10 @@ declare global {
       savePrefs(prefs: Prefs): void;
       /** Reveal the vault folder in Finder. */
       revealVault(): void;
+      /** Read a persisted meeting-audio .wav (validated vault-internal path in
+       *  main) for the Post-Meeting Review screen. Resolves with the raw bytes;
+       *  rejects if the path is outside the vault / not a .wav / unreadable. */
+      readMeetingAudio(path: string): Promise<Uint8Array>;
       /** Current macOS Microphone TCC status ('granted' | 'denied' |
        *  'restricted' | 'not-determined' | 'unknown'). */
       getMicPermission(): Promise<string>;

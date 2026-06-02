@@ -416,8 +416,27 @@
         [saved]="saved"
         (dismiss)="dismissMeetingSaved()"
         (reveal)="revealVault()"
+        (review)="openReview()"
       />
     </div>
+  }
+
+  <!-- Post-Meeting Review — full-window takeover (verify-by-ear speaker
+       tagging). Opened from the saved card's "Review & tag" affordance, which
+       only appears when the meeting kept its audio (audio_path non-null).
+       Mounted only while open AND a saved meeting with a session id exists;
+       the screen plays the recording, seeks per utterance, and renames
+       speakers via the same EngineService path. Closes on Esc / × / Done. -->
+  @if (reviewOpen()) {
+    @if (reviewMeeting(); as m) {
+      @if (reviewSessionId(); as session) {
+        <hark-post-meeting-review
+          [saved]="m"
+          [sessionId]="session"
+          (close)="closeReview()"
+        />
+      }
+    }
   }
 
   <!-- Settings modal. Mounted only while open; closes on Esc, backdrop

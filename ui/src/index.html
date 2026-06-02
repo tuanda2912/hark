@@ -6,7 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <!-- CSP: deny remote content; allow inline styles (Tailwind base) and
          ws://127.0.0.1:* (the harkd loopback bind). No `unsafe-eval`, no
-         remote scripts. Per privacy hard rule #3 + ADR-0001. -->
+         remote scripts. Per privacy hard rule #3 + ADR-0001.
+         `media-src 'self' blob:` lets the Post-Meeting Review screen play the
+         locally-read meeting audio via a URL.createObjectURL(blob) source — the
+         bytes come from main's validated, vault-internal read (NOT the network),
+         so this does NOT widen connect-src/script-src or admit any remote
+         origin. -->
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self';
                    script-src 'self';
@@ -14,6 +19,7 @@
                    font-src 'self' data:;
                    connect-src 'self' ws://127.0.0.1:*;
                    img-src 'self' data:;
+                   media-src 'self' blob:;
                    object-src 'none';
                    base-uri 'self';">
   </head>

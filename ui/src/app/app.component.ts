@@ -41,6 +41,7 @@ import {
 import { AskPanelComponent } from './components/ask-panel.component';
 import { EyebrowComponent } from './components/eyebrow.component';
 import { SpeakerTaggingComponent } from './components/speaker-tagging.component';
+import { PostMeetingReviewComponent } from './components/post-meeting-review.component';
 
 @Component({
   selector: 'hark-root',
@@ -56,6 +57,7 @@ import { SpeakerTaggingComponent } from './components/speaker-tagging.component'
     AskPanelComponent,
     EyebrowComponent,
     SpeakerTaggingComponent,
+    PostMeetingReviewComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
@@ -231,6 +233,56 @@ export class AppComponent implements OnInit, OnDestroy {
   onSpeakerTagged(): void {
     this.taggingTarget.set(null);
   }
+
+  // ─── Post-Meeting Review screen (verify-by-ear speaker tagging) ──────
+  //
+  // A full-window takeover opened from the saved-confirmation card's
+  // "Review & tag" affordance, which the card shows ONLY when the meeting
+  // kept its audio (audio_path non-null, ADR-0027/0028). The screen plays the
+  // recorded audio (read by main from the validated vault path), lets the user
+  // click an utterance to hear that moment, and tag speakers by ear via the
+  // SAME EngineService.renameSpeakers path the modal/card use. When audio
+  // wasn't kept the affordance is absent and the existing inline-roster /
+  // tagging-modal path stays the fallback (unchanged).
+  readonly reviewOpen = signal(false);
+
+  /** The meeting the review screen is reviewing — the live retained payload,
+   *  so an optimistic rename made inside the review flows back here and the
+   *  roster/utterances re-derive. Null once cleared (New meeting / Start). */
+  readonly reviewMeeting = computed<MeetingSavedPayload | null>(
+    () => this.engine.lastMeetingSaved(),
+  );
+
+  /** The review screen's rename target — the reviewed meeting's session id. */
+  readonly reviewSessionId = computed(
+    () => this.engine.lastMeetingSaved()?.session_id ?? null,
+  );
+
+  /** Open the review screen. Guarded: a meeting must be saved AND have kept
+   *  its audio (the card only shows the trigger then, but we re-check so a
+   *  stray call can't mount a screen with nothing to play). */
+  openReview(): void {
+    const saved = this.engine.lastMeetingSaved();
+    if (!saved || !saved.audio_path) return;
+    this.reviewOpen.set(true);
+  }
+
+  /** Esc / × / Done inside the review — return to the main view. Renames
+   *  already persisted via the service; nothing else to clean up here (the
+   *  component revokes its own object URL on destroy). */
+  closeReview(): void {
+    this.reviewOpen.set(false);
+  }
+
+  /** Auto-close the review if its meeting goes away (New meeting / Start clears
+   *  lastMeetingSaved()) so we never leave the takeover mounted with nothing to
+   *  review. The template also guards with `@if (reviewMeeting())`, so this is
+   *  belt-and-braces — it keeps `reviewOpen` honest. */
+  private readonly _reviewGuard = effect(() => {
+    if (this.reviewOpen() && this.reviewMeeting() === null) {
+      this.reviewOpen.set(false);
+    }
+  });
 
   /** Seed the live top-bar selections from the persisted defaults once the
    *  prefs have loaded from disk. Runs once: after `loaded()` flips true we

@@ -208,6 +208,22 @@ interface RosterRow {
         background: var(--accent-soft);
         color: var(--accent);
       }
+
+      /* Review & tag — accent-tinted, icon + label. Distinct from the bare
+         Reveal button so the verify-by-ear path reads as the richer action. */
+      .btn-review {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+        color: var(--accent);
+      }
+      .btn-review:hover {
+        background: var(--accent-soft);
+      }
+      .btn-review svg {
+        flex-shrink: 0;
+      }
     `,
   ],
   template: `
@@ -281,6 +297,26 @@ interface RosterRow {
             Apply names
           </button>
         }
+        <!-- Verify-by-ear path — only when the meeting kept its audio
+             (audio_path non-null). Opens the Post-Meeting Review screen to
+             play the recording and tag speakers by listening. When audio
+             wasn't kept this affordance is absent and the inline roster
+             editor above remains the naming path. -->
+        @if (hasAudio()) {
+          <button
+            type="button"
+            class="btn btn-review"
+            (click)="review.emit()"
+            title="Play the recording and tag speakers by ear"
+          >
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+              stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+              <path d="M8 5.14v13.72a.6.6 0 0 0 .92.5l10.7-6.86a.6.6 0 0 0 0-1l-10.7-6.86a.6.6 0 0 0-.92.5z" />
+            </svg>
+            Review &amp; tag
+          </button>
+        }
         <button type="button" class="btn" (click)="reveal.emit()" title="Open the vault folder in Finder">
           Reveal in Finder
         </button>
@@ -297,6 +333,10 @@ export class MeetingSavedToastComponent {
   readonly dismiss = output<void>();
   /** User asked to reveal the vault in Finder. AppComponent owns the IPC. */
   readonly reveal = output<void>();
+  /** User asked to open the Post-Meeting Review screen (verify-by-ear speaker
+   *  tagging). Emitted ONLY from the affordance shown when audio was kept
+   *  (audio_path non-null); the host mounts the review takeover. */
+  readonly review = output<void>();
 
   /**
    * Editable roster model. Seeded from `saved().speakers`: `name` is the
@@ -350,6 +390,14 @@ export class MeetingSavedToastComponent {
     const n = this.saved().speakers.length;
     return `${n} ${n === 1 ? 'speaker' : 'speakers'}`;
   });
+
+  /** True when this meeting kept its audio (ADR-0027/0028) — i.e. the
+   *  recording is on disk and the verify-by-ear Review screen can play it.
+   *  Gates the "Review & tag speakers" affordance; when false the inline
+   *  roster editor above stays the only naming path. */
+  protected readonly hasAudio = computed(
+    () => typeof this.saved().audio_path === 'string' && this.saved().audio_path !== '',
+  );
 
   /** Show the path relative to the vault tail (last two segments, e.g.
    *  `meetings/2026-06-01-1432.md`) for readability; the full absolute

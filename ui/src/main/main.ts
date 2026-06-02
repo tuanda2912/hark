@@ -378,6 +378,67 @@ ipcMain.on('hark:reveal-vault', () => {
   });
 });
 
+// ─── Meeting-audio read IPC (Post-Meeting Review) ─────────────────────
+// The renderer is sandboxed (contextIsolation + sandbox + no nodeIntegration)
+// and cannot touch the filesystem. The Post-Meeting Review screen needs the
+// recorded meeting audio (vault/.audio/<id>.wav) to play it back for
+// verify-by-ear speaker tagging, so main reads the bytes on its behalf and
+// hands them across the bridge for the renderer to wrap in a Blob.
+//
+// SECURITY (privacy-audited surface — CLAUDE.md hard rules #1/#2/#4):
+// the path arrives as untrusted IPC data, so main is the trust boundary and
+// MUST NOT read whatever the renderer asks for. The renderer could be
+// compromised; this handler is the gate. We therefore:
+//   1. require a non-empty string;
+//   2. `path.resolve` it (collapsing any `..` / symlink-ish traversal that
+//      string-prefix checks alone would miss) BEFORE any check;
+//   3. require it to be a true descendant of the vault root (VAULT_DIR — the
+//      SAME fixed root main already trusts for prefs/reveal). We compare with
+//      `path.relative(root, resolved)` and reject if the relative path escapes
+//      (starts with `..`) or is absolute (different volume) — this is the
+//      canonical "is X inside Y" check and is immune to the `/vault-evil`
+//      sibling-prefix trap a `startsWith(VAULT_DIR)` would fall for;
+//   4. reject anything that isn't a `.wav` (the only thing we ever persist
+//      here is 16 kHz mono WAV per ADR-0028);
+//   5. read-only (`fs.promises.readFile`) — this handler NEVER writes,
+//      renames, or deletes, so it cannot mutate the sacred vault.
+// On any rejection we throw (→ a rejected Promise in the renderer), never
+// returning bytes. The thrown message is deliberately generic so a probe
+// can't use it to map the filesystem.
+ipcMain.handle('hark:read-meeting-audio', async (_ev, raw: unknown): Promise<Uint8Array> => {
+  if (typeof raw !== 'string' || raw.length === 0) {
+    throw new Error('invalid audio path');
+  }
+  // Canonicalize first — resolve() folds `.`/`..` and makes the path
+  // absolute, so the descendant check below operates on the real target.
+  const resolved = path.resolve(raw);
+  const root = path.resolve(VAULT_DIR);
+  const rel = path.relative(root, resolved);
+  // `rel` escaping the root (leading `..`) or being absolute (a different
+  // drive/volume) means `resolved` is NOT inside the vault → reject. An empty
+  // `rel` would mean the path IS the vault dir itself (a directory, not a
+  // .wav) — the extension check below rejects that too.
+  const insideVault =
+    rel.length > 0 && !rel.startsWith('..') && !path.isAbsolute(rel);
+  if (!insideVault) {
+    // eslint-disable-next-line no-console
+    console.error('[hark] refused audio read outside vault:', resolved);
+    throw new Error('audio path is outside the vault');
+  }
+  if (path.extname(resolved).toLowerCase() !== '.wav') {
+    throw new Error('audio path is not a .wav file');
+  }
+  try {
+    // Read-only. Returns a Node Buffer (a Uint8Array subclass); it crosses
+    // the contextBridge as a structured-clone Uint8Array.
+    return await fs.promises.readFile(resolved);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[hark] failed to read meeting audio:', resolved, err);
+    throw new Error('failed to read meeting audio');
+  }
+});
+
 // ─── Microphone permission IPC (onboarding) ───────────────────────────
 // macOS gates Microphone behind TCC. The onboarding Permissions screen
 // reads the live status to show a real "Granted / Not yet" badge, and can

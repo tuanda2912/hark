@@ -116,12 +116,14 @@ is being built **provider-agnostic now**; the integration lands later.
   - *Pick up:* persist bookmarks per session; render as anchors in the file (STATUS "Deferred polish").
 - **User-editable meeting title.** Files are titled by auto-timestamp ("Meeting YYYY-MM-DD HH:MM").
   Let the user set a real title (and reflect it in the frontmatter + filename policy).
-- **Post-Meeting Review screen (slice B2 — NOW UNBLOCKED).** The user's verify-by-ear idea:
-  play the saved audio, each clip maps to an utterance, click to assign the speaker. Audio
-  persistence (ADR-0028) and the `meeting.saved.audio_path` wire field shipped; this is the
-  next slice. *Pick up:* main reads the `.wav` → renderer Blob URL (sandbox-safe, needs
-  `media-src blob:` in CSP) → waveform/scrubber + per-utterance seek + reuse `speaker.rename`
-  for assignment. Gated by *Keep audio* (no audio ⇒ degrade to the existing rename modal).
+- **Post-Meeting Review screen — SHIPPED (slice B2).** The user's verify-by-ear idea: play the
+  saved audio, click an utterance to hear that moment, assign/correct speaker names by ear.
+  Main reads the `.wav` (vault-fenced, `.wav`-only) → renderer Blob URL → player + per-utterance
+  seek + now-playing highlight + reuses `speaker.rename`. Gated by *Keep audio* (no audio ⇒
+  the existing inline roster / Attendees tagging path). *Polish left:* a real waveform (we use a
+  plain scrubber); audio-read **symlink hardening** (`fs.realpathSync` + re-check before read —
+  defense-in-depth; out of the current threat model since the engine is the sole writer of
+  `.audio/`, per the privacy audit).
 - **Audio compression (AAC/Opus).** ADR-0028 ships uncompressed 16 kHz WAV (~1.9 MB/min). An
   `AVAudioConverter` encode to `.m4a`/Opus would shrink a 1-hour meeting from ~115 MB to ~10 MB.
   - *Deferred because:* WAV reuses `HarkCore.WAVWriter` and plays natively in Chromium with no
