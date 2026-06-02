@@ -60,6 +60,15 @@ actor EngineSession {
     /// can be swept on-device without recompiling. See `resolveDedupWindow`.
     private let dedupWindowSeconds: Double
 
+    /// Speaker-enrollment store + matcher (Phase 5.1, ADR-0026). Stores a
+    /// voiceprint when the user names a speaker post-stop and auto-recognizes
+    /// known voices in future meetings. `nil`-tolerant in spirit — a load/match
+    /// failure NEVER blocks the diarization pass or the vault write (speakers
+    /// just stay "Speaker N"). Threshold resolved once at init from
+    /// `HARK_ENROLL_THRESHOLD` (clamped, logged) so it can be swept on-device
+    /// without recompiling. See `SpeakerStore`.
+    private let speakerStore: SpeakerStore
+
     /// Offline speaker diarizer (Phase 5, ADR-0016). Wraps FluidAudio's
     /// `OfflineDiarizerManager` (VBx global clustering, overlapping windows,
     /// exclusive segments). nil until the models finish loading; nil-tolerant
@@ -86,6 +95,19 @@ actor EngineSession {
     /// `nil` means auto-detect per transcribe call. Passed to WhisperKit's
     /// `DecodingOptions.language` at every hop + the flushOnStop drain.
     private var sessionLanguage: String?
+
+    /// Privacy gates for THIS session (ADR-0027). Both default false = privacy-
+    /// safe; set from `capture.start` (absent ⇒ false). Retained for the meeting's
+    /// whole lifetime — `rememberSpeakers` is read by the enroll-on-rename path
+    /// (which can fire AFTER stop, off the session-state wipe) and by the post-stop
+    /// auto-match, so it deliberately survives `dispatchCaptureStop` alongside
+    /// `lastSavedMeeting` rather than being cleared with the session-scoped fields.
+    ///
+    /// `rememberSpeakers` is the LOAD-BEARING gate: when false there is ZERO
+    /// `.speakers/` I/O — enroll is skipped, auto-match is skipped. `keepAudio`
+    /// is plumbing only for now (see the TODO in `flushOnStop`).
+    private var rememberSpeakers: Bool = false
+    private var keepAudio: Bool = false
 
     /// Commit watermark (ADR-0019): the session-relative audio time (seconds
     /// since capture start) up to which we have ALREADY finalized. Monotonic,
@@ -171,6 +193,16 @@ actor EngineSession {
         let segmentCount: Int
         var labeled: [VaultWriter.Utterance]   // each utterance's label+text+tStart
         var attendees: [String]
+        // Phase 5.1 enrollment (ADR-0026): the per-LABEL ("Speaker N") L2-normalized
+        // diarizer centroid + total spoken duration, captured in runDiarizationPass.
+        // The DiarizationResult is discarded by the time dispatchSpeakerRename
+        // fires, so we retain just what enrollment needs — the voiceprint to store
+        // + the duration to gate on (don't enroll a noisy tiny cluster). Keyed by
+        // the label as it appears in `labeled` (an auto-matched speaker's label is
+        // already the enrolled NAME, so it won't appear here — that's intended: we
+        // only enroll on a deliberate user rename of an anonymous "Speaker N").
+        let centroidForLabel: [String: [Float]]
+        let durationForLabel: [String: Double]
     }
     private var lastSavedMeeting: SavedMeetingSnapshot?
 
@@ -178,6 +210,11 @@ actor EngineSession {
         self.server = server
         self.dedupWindowSeconds = EngineSession.resolveDedupWindow(
             ProcessInfo.processInfo.environment["HARK_DEDUP_WINDOW_SEC"])
+        // Resolve + log the enrollment match threshold once at startup, same
+        // shape as the dedup window + the HARK_DIAR_* config line (ADR-0026).
+        let enrollThreshold = SpeakerStore.resolveThreshold(
+            ProcessInfo.processInfo.environment["HARK_ENROLL_THRESHOLD"])
+        self.speakerStore = SpeakerStore(threshold: enrollThreshold)
     }
 
     /// Inject the model once it has finished loading. Until this runs,
@@ -336,6 +373,11 @@ actor EngineSession {
                   !raw.isEmpty, raw != "auto" else { return nil }
             return raw
         }()
+        // Privacy gates (ADR-0027): absent ⇒ false = privacy-safe. The coalesce
+        // here is the single point where "absent" becomes "off" — there is no
+        // other default. Both are threaded into the session via `startCapture`.
+        let keepAudio = cmd.keepAudio ?? false
+        let rememberSpeakers = cmd.rememberSpeakers ?? false
 
         startingCapture = true
         defer { startingCapture = false }
@@ -356,7 +398,9 @@ actor EngineSession {
         do {
             try startCapture(captureMic: captureMic,
                              captureSystem: captureSystem,
-                             language: language)
+                             language: language,
+                             keepAudio: keepAudio,
+                             rememberSpeakers: rememberSpeakers)
         } catch {
             sendError(client, id: id, code: "INTERNAL",
                       message: "could not start capture: \(error)", recoverable: false)
@@ -552,14 +596,83 @@ actor EngineSession {
             result.fileURL.path, result.committed ? "yes" : "no", attendees.count
         ).utf8))
 
+        // Phase 5.1 enrollment (ADR-0026): naming a speaker is the deliberate
+        // enroll trigger. For each "Speaker N" → name in the rename map, store the
+        // retained centroid as a voiceprint so this voice is auto-recognized next
+        // time. Gated on a minimum spoken duration (don't enroll a noisy tiny
+        // cluster) and on having a retained centroid (an auto-matched speaker
+        // carries no ordinal centroid — see runDiarizationPass — so re-tagging a
+        // wrong auto-match is a vault relabel only; correcting the voiceprint is a
+        // follow-up). OFF the live path; never blocks the ack. Privacy: enroll
+        // never logs the name or vector (it logs nothing); we log the count here.
+        enrollFromRename(names: cmd.names, snapshot: snapshot)
+
         sendAck(client, id: id)
+    }
+
+    /// Enroll voiceprints for the speakers named in a `speaker.rename` (ADR-0026).
+    /// Reads the retained per-label centroid + duration from the meeting snapshot
+    /// (captured in `runDiarizationPass`); for each `currentLabel → newName` with a
+    /// centroid and ≥ `enrollMinDurationSec` of speech, calls `speakerStore.enroll`.
+    /// Best-effort: a store write failure is swallowed inside the store (atomic
+    /// write, `try?`), and this never throws or blocks the rename ack. Privacy:
+    /// logs a COUNT only — never a name or vector.
+    private func enrollFromRename(names: [String: String], snapshot: SavedMeetingSnapshot) {
+        // PRIVACY GATE (ADR-0027): no voiceprint is EVER written when the session
+        // opted out of remembering speakers. Returning here before touching
+        // `speakerStore` means zero `.speakers/` writes on this path. Log a
+        // COUNT only — never a name or vector (hard rule #3/#5).
+        guard Self.voiceprintAccessAllowed(rememberSpeakers: rememberSpeakers) else {
+            if !names.isEmpty {
+                FileHandle.standardError.write(Data(String(
+                    format: "harkd: enrollment skipped — remember_speakers off (%d name(s))\n",
+                    names.count).utf8))
+            }
+            return
+        }
+        var enrolled = 0
+        var skippedShort = 0
+        for (currentLabel, newName) in names {
+            guard let centroid = snapshot.centroidForLabel[currentLabel] else { continue }
+            let duration = snapshot.durationForLabel[currentLabel] ?? 0
+            guard duration >= Self.enrollMinDurationSec else {
+                skippedShort += 1
+                continue
+            }
+            if speakerStore.enroll(name: newName, centroid: centroid,
+                                   meetingId: snapshot.sessionId, durationSec: duration) != nil {
+                enrolled += 1
+            }
+        }
+        if enrolled > 0 || skippedShort > 0 {
+            FileHandle.standardError.write(Data(String(
+                format: "harkd: enrollment — stored %d voiceprint(s), skipped %d (under %.0fs)\n",
+                enrolled, skippedShort, Self.enrollMinDurationSec).utf8))
+        }
+    }
+
+    /// Minimum total spoken duration (seconds) before a named speaker is enrolled.
+    /// A 2-second cluster is too noisy for a trustworthy voiceprint (ADR-0026);
+    /// ~4 s is enough for a stable WeSpeaker centroid without being burdensome.
+    static let enrollMinDurationSec: Double = 4.0
+
+    /// PURE privacy gate (ADR-0027): may the engine touch the `.speakers/` voice-
+    /// print store this session? Both enroll-on-rename and post-stop auto-match
+    /// consult this — when it returns false there is ZERO `.speakers/` I/O. Kept
+    /// trivial + pure (no actor state, no I/O) so the test can assert the gate's
+    /// semantics against the SAME definition production runs, the way
+    /// `commitDecision` is shared by the live loop and CommitWatermarkTests.
+    static func voiceprintAccessAllowed(rememberSpeakers: Bool) -> Bool {
+        rememberSpeakers
     }
 
     // ─── Capture wiring ─────────────────────────────────────────────────
 
     private func startCapture(captureMic: Bool,
                               captureSystem: Bool,
-                              language: String?) throws {
+                              language: String?,
+                              keepAudio: Bool,
+                              rememberSpeakers: Bool) throws {
         self.sessionId = UUID().uuidString
         self.sessionStartDate = Date()
         self.captureWallStart = Date()
@@ -568,6 +681,15 @@ actor EngineSession {
         self.ledger = UtteranceLedger()
         self.vad = EnergyVAD()
         self.sessionLanguage = language
+        // Retain the privacy gates for the meeting's lifetime (ADR-0027). These
+        // deliberately persist past `dispatchCaptureStop`'s session-state wipe so
+        // the enroll-on-rename path (which can fire after stop) reads the right
+        // value. Logged value-only (no PII).
+        self.keepAudio = keepAudio
+        self.rememberSpeakers = rememberSpeakers
+        FileHandle.standardError.write(Data(String(
+            format: "harkd: privacy gates — keep_audio=%@  remember_speakers=%@\n",
+            keepAudio ? "on" : "off", rememberSpeakers ? "on" : "off").utf8))
         self.committedUpTo = 0  // ADR-0019: nothing finalized yet this session.
         self.rtfSum = 0
         self.rtfSamples = 0
@@ -846,6 +968,11 @@ actor EngineSession {
         // capture.start wipe the live buffer). The drain itself only appends
         // to `finalizedUtterances`, not to `sessionAudio`, so taking the audio
         // here is safe; we grab the finalized list after the drain.
+        //
+        // TODO(slice B): persist audio when keepAudio — write `capturedAudio`
+        // (16 kHz mono PCM) into the vault for the review screen, gated on the
+        // session's `keepAudio` flag (ADR-0027). For now we always discard it
+        // below (current privacy-safe behavior); the flag is plumbing only.
         let capturedAudio = sessionAudio
         sessionAudio.removeAll(keepingCapacity: false)
 
@@ -914,14 +1041,14 @@ actor EngineSession {
                 rawCount, capturedUtterances.count, supersededCount).utf8))
         }
 
-        let (labeled, attendees) = await runDiarizationPass(
+        let outcome = await runDiarizationPass(
             audio: capturedAudio, utterances: capturedUtterances)
 
         await persistMeeting(
             sessionId: sessionId, sessionStart: sessionStart,
             durationSec: durationSec, rtfAvg: rtfAvg,
             segmentCount: capturedUtterances.count,
-            labeled: labeled, attendees: attendees)
+            outcome: outcome)
     }
 
     /// Collapse the append-only `finalizedUtterances` emission log into the set
@@ -1205,8 +1332,10 @@ actor EngineSession {
     private func persistMeeting(
         sessionId: String, sessionStart: Date,
         durationSec: Double, rtfAvg: Double, segmentCount: Int,
-        labeled: [VaultWriter.Utterance], attendees: [String]
+        outcome: DiarizationOutcome
     ) async {
+        let labeled = outcome.labeled
+        let attendees = outcome.attendees
         let title = VaultWriter.autoTitle(forStart: sessionStart)
         let writer = VaultWriter()
         let result: VaultWriter.Result
@@ -1250,7 +1379,9 @@ actor EngineSession {
             rtfAvg: rtfAvg,
             segmentCount: segmentCount,
             labeled: labeled,
-            attendees: attendees)
+            attendees: attendees,
+            centroidForLabel: outcome.centroidForLabel,
+            durationForLabel: outcome.durationForLabel)
 
         // Emit `meeting.transcript` JUST BEFORE `meeting.saved`, built from the
         // SAME `labeled` set we just wrote to the vault — so the UI can back-
@@ -1263,9 +1394,18 @@ actor EngineSession {
             sessionId: sessionId,
             utterances: Self.transcriptUtterances(from: labeled))))
 
-        // v1 is anonymous: every speaker carries matchedName/confidence == nil.
-        // Phase 5.1 (enrollment/naming) populates them without a contract change.
-        let speakers = attendees.map { MeetingSpeaker(label: $0, matchedName: nil, confidence: nil) }
+        // Phase 5.1 (ADR-0026): a speaker auto-matched to an enrolled voiceprint
+        // carries its enrolled name + confidence; everyone else stays anonymous
+        // (matchedName/confidence == nil). For a matched speaker the attendee
+        // `label` IS the enrolled name (we renamed it during the diarization pass),
+        // so `matchedName == label` — the roster reads the name with a confidence
+        // badge, and the contract is unchanged (nullable fields built for this).
+        let speakers = attendees.map { label -> MeetingSpeaker in
+            if let m = outcome.matchForName[label] {
+                return MeetingSpeaker(label: label, matchedName: m.name, confidence: m.confidence)
+            }
+            return MeetingSpeaker(label: label, matchedName: nil, confidence: nil)
+        }
         let payload = MeetingSavedPayload(
             sessionId: sessionId,
             vaultPath: result.fileURL.path,
@@ -1458,15 +1598,19 @@ actor EngineSession {
     private func runDiarizationPass(
         audio samples: [Float],
         utterances: [FinalizedUtterance]
-    ) async -> (labeled: [VaultWriter.Utterance], attendees: [String]) {
+    ) async -> DiarizationOutcome {
 
         // Fallback used on every non-success path: no labels, no attendees, but
-        // the transcript text is preserved so the vault file is never empty.
-        func unlabeled() -> ([VaultWriter.Utterance], [String]) {
+        // the transcript text is preserved so the vault file is never empty. No
+        // centroids/durations to retain — nothing was diarized, so enrollment
+        // has nothing to capture this session.
+        func unlabeled() -> DiarizationOutcome {
             let labeled = utterances.map {
                 VaultWriter.Utterance(tStart: $0.tStart, label: "Speaker ?", text: $0.text)
             }
-            return (labeled, [])
+            return DiarizationOutcome(labeled: labeled, attendees: [],
+                                      centroidForLabel: [:], durationForLabel: [:],
+                                      matchForName: [:])
         }
 
         guard let diarizer = diarizer else { return unlabeled() }
@@ -1507,6 +1651,73 @@ actor EngineSession {
         }
         let speakerCount = ordinalForSpeakerId.count
 
+        // ── Phase 5.1 auto-match (ADR-0026) ──────────────────────────────────
+        //
+        // For each clustered speakerId, take its (un-normalized) 256-dim centroid
+        // from `result.speakerDatabase`, normalize it, and:
+        //   (1) retain it keyed by the speaker's DISPLAY label so a later
+        //       speaker.rename can enroll the voiceprint (the DiarizationResult is
+        //       discarded by then);
+        //   (2) match it against the enrolled set — a confident hit RENAMES that
+        //       speaker (its display label becomes the enrolled name everywhere:
+        //       vault body, meeting.transcript, roster) and records matchedName/
+        //       confidence for the roster.
+        // Unmatched speakers keep "Speaker N" (the user can rename → enroll).
+        //
+        // `displayLabelForOrdinal` is the indirection that makes the rename work:
+        // the labeling loop below assigns "Speaker N" by overlap, then we remap to
+        // the matched name (if any) via this table — so one definition drives the
+        // body, the transcript, and the roster. The centroid/duration maps are
+        // ALSO keyed by the display label, so an auto-matched speaker (label =
+        // name) is intentionally absent from `centroidForLabel` — we only enroll on
+        // a deliberate user rename of an anonymous "Speaker N", never re-enrolling
+        // a name we just auto-applied.
+        let db = result.speakerDatabase ?? [:]
+        var matchedNameForLabel: [String: SpeakerStore.Match] = [:]  // "Speaker N" → match
+        var normalizedCentroidForOrdinalLabel: [String: [Float]] = [:]
+        for (speakerId, ordinal) in ordinalForSpeakerId {
+            guard let rawCentroid = db[speakerId] else { continue }
+            let normalized = SpeakerStore.l2Normalized(rawCentroid)
+            let ordinalLabel = "Speaker \(ordinal)"
+            normalizedCentroidForOrdinalLabel[ordinalLabel] = normalized
+            // PRIVACY GATE (ADR-0027): the auto-match reads `.speakers/` via
+            // `speakerStore.match`. When the session opted out of remembering
+            // speakers we MUST NOT read the store at all — `rememberSpeakers`
+            // short-circuits the call so no `.speakers/` access happens and the
+            // speaker stays "Speaker N". (We still retain `normalized` above so a
+            // later rename CAN enroll if the user opts in then — but that enroll
+            // path is itself gated in `enrollFromRename`.)
+            if Self.voiceprintAccessAllowed(rememberSpeakers: rememberSpeakers),
+               let m = speakerStore.match(centroid: rawCentroid) {
+                matchedNameForLabel[ordinalLabel] = m
+            }
+        }
+        // Resolve an ordinal "Speaker N" label to its DISPLAY label (the enrolled
+        // name when auto-matched, else unchanged). Pure lookup, used everywhere
+        // the label is emitted below.
+        func display(_ ordinalLabel: String) -> String {
+            matchedNameForLabel[ordinalLabel]?.name ?? ordinalLabel
+        }
+        if !Self.voiceprintAccessAllowed(rememberSpeakers: rememberSpeakers) {
+            // PRIVACY GATE (ADR-0027): auto-match was skipped — no `.speakers/`
+            // read happened. Be honest in the log rather than reporting "no
+            // speaker auto-matched" (which would imply a lookup ran).
+            FileHandle.standardError.write(Data(
+                "harkd: enrollment auto-match skipped — remember_speakers off\n".utf8))
+        } else if !matchedNameForLabel.isEmpty {
+            // Privacy: log the COUNT + distances only — never the enrolled name.
+            let dists = matchedNameForLabel.values
+                .map { String(format: "%.3f", $0.distance) }
+                .joined(separator: ",")
+            FileHandle.standardError.write(Data(String(
+                format: "harkd: enrollment — auto-matched %d/%d speaker(s) (cosine dist=[%@], threshold=%.3f)\n",
+                matchedNameForLabel.count, speakerCount, dists, speakerStore.threshold).utf8))
+        } else if !db.isEmpty {
+            FileHandle.standardError.write(Data(String(
+                format: "harkd: enrollment — no speaker auto-matched (%d centroid(s), threshold=%.3f)\n",
+                db.count, speakerStore.threshold).utf8))
+        }
+
         // Always-on summary line. avg_seg_dur lets a verification run see the
         // offline pipeline's finer/exclusive segmentation at a glance (shorter
         // average vs the old streaming chunked pass = the expected improvement).
@@ -1546,6 +1757,10 @@ actor EngineSession {
         labeled.reserveCapacity(utterances.count)
         var attendees: [String] = []
         var seen = Set<String>()
+        // Per-DISPLAY-label total spoken duration (sum of its utterances' spans),
+        // for the enrollment duration gate. Keyed by the display label (matched
+        // name or "Speaker N"); "Speaker ?" never enrolls so it's harmless here.
+        var durationForLabel: [String: Double] = [:]
         // Ambiguity accounting (debug summary only — no behavior change).
         var ambiguousCount = 0
         var zeroOverlapCount = 0
@@ -1553,10 +1768,14 @@ actor EngineSession {
             let m = matchSpeaker(
                 forUtteranceStart: u.tStart, end: u.tEnd,
                 diarSegments: result.segments, ordinals: ordinalForSpeakerId)
-            let label = m.label
+            // Remap the overlap-assigned "Speaker N" to its display label — the
+            // enrolled NAME when auto-matched (ADR-0026), else unchanged. "Speaker ?"
+            // has no centroid/match, so `display` leaves it as-is.
+            let label = display(m.label)
             if label != "Speaker ?", seen.insert(label).inserted {
                 attendees.append(label)
             }
+            durationForLabel[label, default: 0] += max(0, u.tEnd - u.tStart)
             labeled.append(VaultWriter.Utterance(tStart: u.tStart, label: label, text: u.text))
             if debug {
                 // "Ambiguous" = the chosen and runner-up overlaps are within
@@ -1590,10 +1809,55 @@ actor EngineSession {
             ).utf8))
         }
 
-        // Sort attendees by their ordinal so the roster reads Speaker 1,
-        // Speaker 2… regardless of who happened to speak first.
-        attendees.sort { ($0.ordinalSuffix ?? .max) < ($1.ordinalSuffix ?? .max) }
-        return (labeled, attendees)
+        // Sort attendees by their ordinal so the anonymous roster reads Speaker 1,
+        // Speaker 2… regardless of who happened to speak first. Auto-matched names
+        // have no ordinal suffix — keep them in first-appearance order (a stable
+        // sort on the ordinal key: `enumerated` index breaks ties so named labels,
+        // all `.max`, preserve their order).
+        let order = Dictionary(uniqueKeysWithValues: attendees.enumerated().map { ($1, $0) })
+        attendees.sort {
+            let a = $0.ordinalSuffix ?? .max, b = $1.ordinalSuffix ?? .max
+            return a != b ? a < b : (order[$0] ?? 0) < (order[$1] ?? 0)
+        }
+
+        // Retain the per-LABEL normalized centroid for enrollment on a later
+        // rename (ADR-0026). Only labels that survived to the body get a centroid;
+        // an auto-matched speaker's label is its NAME (absent from the ordinal-
+        // keyed map) so we never re-enroll a name we just auto-applied.
+        var centroidForLabel: [String: [Float]] = [:]
+        for (ordinalLabel, centroid) in normalizedCentroidForOrdinalLabel
+        where matchedNameForLabel[ordinalLabel] == nil {
+            centroidForLabel[ordinalLabel] = centroid
+        }
+
+        // Re-key the auto-matches by their DISPLAY name (the attendee label), so
+        // persistMeeting can light up the roster's matchedName/confidence. A
+        // collision (two clusters matched to one name) keeps the closer match.
+        var matchForName: [String: SpeakerStore.Match] = [:]
+        for m in matchedNameForLabel.values {
+            if let existing = matchForName[m.name], existing.distance <= m.distance { continue }
+            matchForName[m.name] = m
+        }
+
+        return DiarizationOutcome(
+            labeled: labeled, attendees: attendees,
+            centroidForLabel: centroidForLabel, durationForLabel: durationForLabel,
+            matchForName: matchForName)
+    }
+
+    /// Result of `runDiarizationPass`: the labeled body + roster PLUS the
+    /// enrollment data captured from the (now-discarded) `DiarizationResult`. The
+    /// centroid + duration maps are keyed by DISPLAY label and only carry the
+    /// still-anonymous "Speaker N" speakers — exactly the ones a later
+    /// `speaker.rename` can enroll (ADR-0026). `matchForName` carries the
+    /// auto-matched roster annotation, keyed by the enrolled name (which IS that
+    /// speaker's attendee label).
+    private struct DiarizationOutcome {
+        let labeled: [VaultWriter.Utterance]
+        let attendees: [String]
+        let centroidForLabel: [String: [Float]]
+        let durationForLabel: [String: Double]
+        let matchForName: [String: SpeakerStore.Match]
     }
 
     /// Diagnostic-rich result of matching one utterance to a diar segment.

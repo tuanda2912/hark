@@ -4,19 +4,20 @@
   <div class="ob-eyebrow">
     <span class="ob-eyebrow-label">
       @switch (step()) {
-        @case (1) { Step 1 of 3 · Trust }
-        @case (2) { Step 2 of 3 · Permissions }
-        @case (3) { Step 3 of 3 · Setup }
+        @case (1) { Step 1 of 4 · Trust }
+        @case (2) { Step 2 of 4 · Permissions }
+        @case (3) { Step 3 of 4 · Privacy }
+        @case (4) { Step 4 of 4 · Setup }
       }
     </span>
     <span
       class="ob-progress-track"
       role="progressbar"
       aria-valuemin="1"
-      aria-valuemax="3"
+      aria-valuemax="4"
       [attr.aria-valuenow]="step()"
     >
-      <span class="ob-progress-fill" [style.width.%]="step() * 33.333"></span>
+      <span class="ob-progress-fill" [style.width.%]="step() * 25"></span>
     </span>
   </div>
 
@@ -207,8 +208,121 @@
       </div>
     }
 
-    <!-- ─────────────────────────── Screen 3 · Setup ─────────────────── -->
+    <!-- ───────────────────────── Screen 3 · Privacy ─────────────────── -->
+    <!-- Informed-consent moment (ADR-0027). Two opt-in sensitive features,
+         each defaulting OFF, bound to PreferencesService.setPrivacy() — the
+         same persisted state Settings → Privacy reads/writes. The legal note
+         spells out the user's responsibility without giving legal advice. -->
     @case (3) {
+      <h1 class="ob-display ob-display-md" style="margin: 32px 0 4px">
+        Two things, off by default.
+      </h1>
+      <p class="ob-subhead">
+        Both store sensitive data on this Mac. We keep them off until you turn
+        them on — and you can change either anytime in Settings → Privacy.
+      </p>
+
+      <div class="flex flex-col gap-2.5" style="margin-top: 24px">
+        <!-- Keep audio -->
+        <div class="ob-perm-card">
+          <div class="ob-perm-icon" [class.is-granted]="keepAudio()" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+              stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+              <path d="M19 11a7 7 0 0 1-14 0M12 18v3" />
+            </svg>
+          </div>
+          <div>
+            <div class="text-text font-medium" style="font-size: 13.5px">
+              Keep audio
+            </div>
+            <div class="text-text-2" style="font-size: 12px; margin-top: 2px; line-height: 1.5; max-width: 460px">
+              Store each meeting's audio locally so you can replay and
+              verify-by-ear later. Off, audio is discarded after transcription.
+            </div>
+          </div>
+          <button
+            type="button"
+            class="ob-switch"
+            [class.is-on]="keepAudio()"
+            role="switch"
+            [attr.aria-checked]="keepAudio()"
+            (click)="toggleKeepAudio()"
+            aria-label="Keep audio recordings locally"
+          >
+            <span class="ob-switch-knob" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <!-- Remember speakers -->
+        <div class="ob-perm-card">
+          <div class="ob-perm-icon" [class.is-granted]="rememberSpeakers()" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+              stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+          </div>
+          <div>
+            <div class="text-text font-medium" style="font-size: 13.5px">
+              Remember speakers
+            </div>
+            <div class="text-text-2" style="font-size: 12px; margin-top: 2px; line-height: 1.5; max-width: 460px">
+              Store voiceprints locally so future meetings auto-recognize
+              people you've named. Off, no voiceprints are stored or matched.
+            </div>
+          </div>
+          <button
+            type="button"
+            class="ob-switch"
+            [class.is-on]="rememberSpeakers()"
+            role="switch"
+            [attr.aria-checked]="rememberSpeakers()"
+            (click)="toggleRememberSpeakers()"
+            aria-label="Remember speakers across meetings"
+          >
+            <span class="ob-switch-knob" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Legal note (ADR-0027). Verbatim-ish, plain-language, not legal
+           advice — the user is responsible for obtaining any required consent;
+           Hark keeping everything local is what makes that possible. -->
+      <div class="ob-legal" style="margin-top: 18px">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+          stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+          stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6l-8-4z" />
+        </svg>
+        <span>
+          Recording and storing voiceprints may require consent under your
+          local laws — you're responsible for obtaining it. Hark keeps
+          everything on your Mac to support that. This isn't legal advice.
+        </span>
+      </div>
+
+      <div class="flex-1"></div>
+      <div class="flex items-center justify-between" style="margin-top: 20px">
+        <button type="button" class="btn btn-ghost" style="font-size: 12.5px" (click)="back()">
+          ← Back
+        </button>
+        <button type="button" class="btn btn-primary" style="padding: 8px 18px" (click)="next()">
+          Continue
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </button>
+      </div>
+    }
+
+    <!-- ─────────────────────────── Screen 4 · Setup ─────────────────── -->
+    @case (4) {
       <h1 class="ob-display ob-display-md" style="margin: 32px 0 4px">
         Where your notes live.
       </h1>

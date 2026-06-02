@@ -135,6 +135,153 @@
         </div>
       </section>
 
+      <!-- ─── Privacy (ADR-0027) ─── -->
+      <section class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+            Privacy
+          </h3>
+          <p class="text-xs text-text-3">
+            Two sensitive features, off by default. Everything stays on this
+            Mac — nothing here is ever sent to a server.
+          </p>
+        </div>
+
+        <!-- Keep audio — gates engine audio persistence (capture.start). -->
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex flex-col">
+            <span class="text-sm text-text">Keep audio</span>
+            <span class="text-xs text-text-3">
+              Store each meeting's audio locally to replay later. Off, audio is
+              discarded after transcription.
+            </span>
+          </div>
+          <button
+            type="button"
+            class="setting-toggle"
+            [class.is-on]="keepAudio()"
+            role="switch"
+            [attr.aria-checked]="keepAudio()"
+            (click)="toggleKeepAudio()"
+            aria-label="Keep audio recordings locally"
+          >
+            <span class="setting-knob" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <!-- Remember speakers — gates voiceprint storage/match (ADR-0026). -->
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex flex-col">
+            <span class="text-sm text-text">Remember speakers</span>
+            <span class="text-xs text-text-3">
+              Store voiceprints so future meetings auto-recognize people you've
+              named. Off, no voiceprints are stored or matched.
+            </span>
+          </div>
+          <button
+            type="button"
+            class="setting-toggle"
+            [class.is-on]="rememberSpeakers()"
+            role="switch"
+            [attr.aria-checked]="rememberSpeakers()"
+            (click)="toggleRememberSpeakers()"
+            aria-label="Remember speakers across meetings"
+          >
+            <span class="setting-knob" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <!-- Sync audio — forward-looking; audio is already gitignored. -->
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex flex-col">
+            <span class="text-sm text-text">Sync audio</span>
+            <span class="text-xs text-text-3">
+              Allow a future Hark sync to carry stored audio to your other Macs.
+              Today audio never leaves this device.
+            </span>
+          </div>
+          <button
+            type="button"
+            class="setting-toggle"
+            [class.is-on]="syncAudio()"
+            role="switch"
+            [attr.aria-checked]="syncAudio()"
+            (click)="toggleSyncAudio()"
+            aria-label="Sync stored audio to other devices"
+          >
+            <span class="setting-knob" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <!-- Sync speakers — forward-looking; voiceprints are gitignored. -->
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex flex-col">
+            <span class="text-sm text-text">Sync speakers</span>
+            <span class="text-xs text-text-3">
+              Allow a future Hark sync to carry voiceprints to your other Macs.
+              Today voiceprints never leave this device.
+            </span>
+          </div>
+          <button
+            type="button"
+            class="setting-toggle"
+            [class.is-on]="syncSpeakers()"
+            role="switch"
+            [attr.aria-checked]="syncSpeakers()"
+            (click)="toggleSyncSpeakers()"
+            aria-label="Sync voiceprints to other devices"
+          >
+            <span class="setting-knob" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <!-- What Hark stores, and where -->
+        <div class="flex flex-col gap-2 px-3 py-3 rounded-panel bg-bg-2 border border-border">
+          <h4 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+            What Hark stores, and where
+          </h4>
+          <ul class="flex flex-col gap-1.5 text-xs text-text-2">
+            <li class="flex gap-2">
+              <span class="text-text-3 select-none" aria-hidden="true">·</span>
+              <span>
+                <span class="text-text">Transcripts</span> → your vault, as plain
+                markdown. Always (it's the product).
+              </span>
+            </li>
+            <li class="flex gap-2">
+              <span class="text-text-3 select-none" aria-hidden="true">·</span>
+              <span>
+                <span class="text-text">Audio</span> → only if Keep audio is on,
+                in your vault.
+              </span>
+            </li>
+            <li class="flex gap-2">
+              <span class="text-text-3 select-none" aria-hidden="true">·</span>
+              <span>
+                <span class="text-text">Voiceprints</span> → only if Remember
+                speakers is on, in
+                <span class="font-mono text-text-3">vault/.speakers/</span> —
+                local, gitignored, never networked.
+              </span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Legal note (ADR-0027). Plain-language, not legal advice. -->
+        <p class="flex items-start gap-2 text-[11.5px] leading-relaxed text-text-3">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+            stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+            stroke-linejoin="round" class="shrink-0 mt-0.5" aria-hidden="true">
+            <path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6l-8-4z" />
+          </svg>
+          <span>
+            Recording and storing voiceprints may require consent under your
+            local laws — you're responsible for obtaining it. Hark keeps
+            everything on your Mac to support that. This isn't legal advice.
+          </span>
+        </p>
+      </section>
+
       <!-- ─── Vault ─── -->
       <section class="flex flex-col gap-2">
         <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">

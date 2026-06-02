@@ -8,8 +8,11 @@
 //     in the top bar). Changing one writes through PreferencesService.
 //   - Vault: the vault path (read-only) + "Reveal in Finder".
 //
-// Deliberately scoped: NO theme/redaction/speaker/Q&A controls — those are
-// Phase 5/6 and would be dead UI today (per the build brief).
+// Deliberately scoped: NO theme/redaction/Q&A controls — those are Phase 6
+// and would be dead UI today (per the build brief). The Privacy section IS
+// wired (ADR-0027): the two storage gates (Keep audio, Remember speakers) are
+// read by the engine on capture.start; the two sync flags are forward-looking
+// intent (audio + voiceprints are already gitignored).
 //
 // Dismissal: Esc (host keydown), backdrop click, and the close button all
 // fire `close`. Clicks inside the card stop-propagate so they don't bubble
@@ -91,6 +94,28 @@ export class SettingsPanelComponent {
   /** Empty string from the <select> becomes null (auto-detect). */
   onLanguageChange(value: string): void {
     this.prefs.setAudioDefaults({ language: value === '' ? null : value });
+  }
+
+  // ─── Privacy (ADR-0027) ─────────────────────────────────────────────
+  // The four data-control flags, bound to PreferencesService. Keep audio +
+  // Remember speakers gate what the engine stores (sent in capture.start);
+  // Sync audio + Sync speakers are forward-looking intent. All default OFF.
+  readonly keepAudio = this.prefs.keepAudio;
+  readonly rememberSpeakers = this.prefs.rememberSpeakers;
+  readonly syncAudio = this.prefs.syncAudio;
+  readonly syncSpeakers = this.prefs.syncSpeakers;
+
+  toggleKeepAudio(): void {
+    this.prefs.setPrivacy({ keepAudio: !this.keepAudio() });
+  }
+  toggleRememberSpeakers(): void {
+    this.prefs.setPrivacy({ rememberSpeakers: !this.rememberSpeakers() });
+  }
+  toggleSyncAudio(): void {
+    this.prefs.setPrivacy({ syncAudio: !this.syncAudio() });
+  }
+  toggleSyncSpeakers(): void {
+    this.prefs.setPrivacy({ syncSpeakers: !this.syncSpeakers() });
   }
 
   // ─── Vault ──────────────────────────────────────────────────────────

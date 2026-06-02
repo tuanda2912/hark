@@ -492,6 +492,10 @@ export class AppComponent implements OnInit, OnDestroy {
       mic: this.micEnabled(),
       system: this.systemEnabled(),
       language: this.language(),
+      // Privacy gates (ADR-0027) from the user's persisted, opt-in-only
+      // choices. Off by default ⇒ the engine stores no audio / voiceprints.
+      keepAudio: this.prefs.keepAudio(),
+      rememberSpeakers: this.prefs.rememberSpeakers(),
     });
   }
 

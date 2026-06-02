@@ -339,6 +339,20 @@ struct CaptureStartCommand: Decodable {
     /// implicitly the decoder's prompt language, so this affects more
     /// than just language detection.
     let language: String?
+    /// Privacy gates (ADR-0027). BOTH default to the privacy-safe behavior
+    /// when ABSENT (`nil` ⇒ treated as `false` by the session) — the user must
+    /// explicitly opt in to persist sensitive data. `keep_audio`/
+    /// `remember_speakers` arrive snake_case and fold to these property names via
+    /// `decodeInbound`'s `.convertFromSnakeCase`.
+    ///
+    /// `keepAudio` — persist the meeting audio for the future review screen.
+    /// Plumbing only for now; audio is still discarded when off (current behavior).
+    let keepAudio: Bool?
+    /// `rememberSpeakers` — store + match voiceprints (enrollment, ADR-0026).
+    /// When false, the engine performs ZERO `.speakers/` reads or writes:
+    /// enroll-on-rename is skipped and the post-stop auto-match is skipped, so
+    /// speakers stay "Speaker N".
+    let rememberSpeakers: Bool?
 }
 
 struct BookmarkCreateCommand: Decodable {

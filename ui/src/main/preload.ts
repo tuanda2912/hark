@@ -76,6 +76,14 @@ contextBridge.exposeInMainWorld('hark', {
           typeof prefs.audio.language === 'string' ? prefs.audio.language : null,
       },
       hasCompletedOnboarding: !!prefs.hasCompletedOnboarding,
+      // ADR-0027 privacy flags — re-shaped to strict booleans so nothing
+      // extra crosses the bridge; main re-validates again before writing.
+      privacy: {
+        keepAudio: !!prefs.privacy?.keepAudio,
+        rememberSpeakers: !!prefs.privacy?.rememberSpeakers,
+        syncAudio: !!prefs.privacy?.syncAudio,
+        syncSpeakers: !!prefs.privacy?.syncSpeakers,
+      },
     });
   },
 

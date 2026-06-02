@@ -25,6 +25,13 @@ export interface Prefs {
   };
   /** Whether the first-run onboarding flow has been completed. */
   readonly hasCompletedOnboarding: boolean;
+  /** Privacy & data-control flags (ADR-0027). All default false. */
+  readonly privacy: {
+    readonly keepAudio: boolean;
+    readonly rememberSpeakers: boolean;
+    readonly syncAudio: boolean;
+    readonly syncSpeakers: boolean;
+  };
 }
 
 /** Mirrors the `hark:load-prefs` response shape in main/preload.ts. */
@@ -37,6 +44,12 @@ const DEFAULT_PREFS: Prefs = {
   version: 1,
   audio: { mic: true, system: true, language: null },
   hasCompletedOnboarding: false,
+  privacy: {
+    keepAudio: false,
+    rememberSpeakers: false,
+    syncAudio: false,
+    syncSpeakers: false,
+  },
 };
 
 @Injectable({ providedIn: 'root' })
@@ -64,6 +77,21 @@ export class PreferencesService {
   readonly hasCompletedOnboarding: Signal<boolean> =
     this._hasCompletedOnboarding.asReadonly();
 
+  // ─── Privacy & data-control flags (ADR-0027) ────────────────────────
+  // All default OFF (privacy-first). The engine gates audio/voiceprint
+  // storage on keepAudio/rememberSpeakers (sent in capture.start); the two
+  // sync flags are forward-looking intent. Each setter persists immediately.
+  private readonly _keepAudio = signal(DEFAULT_PREFS.privacy.keepAudio);
+  private readonly _rememberSpeakers = signal(
+    DEFAULT_PREFS.privacy.rememberSpeakers,
+  );
+  private readonly _syncAudio = signal(DEFAULT_PREFS.privacy.syncAudio);
+  private readonly _syncSpeakers = signal(DEFAULT_PREFS.privacy.syncSpeakers);
+  readonly keepAudio: Signal<boolean> = this._keepAudio.asReadonly();
+  readonly rememberSpeakers: Signal<boolean> = this._rememberSpeakers.asReadonly();
+  readonly syncAudio: Signal<boolean> = this._syncAudio.asReadonly();
+  readonly syncSpeakers: Signal<boolean> = this._syncSpeakers.asReadonly();
+
   /** True once the initial load() has resolved (or fallen back). Lets the
    *  UI avoid persisting placeholder defaults before disk is read. */
   private readonly _loaded = signal(false);
@@ -88,6 +116,13 @@ export class PreferencesService {
       // Tolerate an older main that doesn't yet send the field (reads as
       // first run) — the renderer must never throw on a partial response.
       this._hasCompletedOnboarding.set(!!res.prefs.hasCompletedOnboarding);
+      // Privacy flags — a missing block (old main) reads as all-false, the
+      // privacy-first state. `??`/`!!` keep us safe against a partial payload.
+      const pv = res.prefs.privacy;
+      this._keepAudio.set(!!pv?.keepAudio);
+      this._rememberSpeakers.set(!!pv?.rememberSpeakers);
+      this._syncAudio.set(!!pv?.syncAudio);
+      this._syncSpeakers.set(!!pv?.syncSpeakers);
       this._vaultPath.set(res.vaultPath);
     } catch {
       // Leave defaults in place — load failures must not break the app.
@@ -107,6 +142,24 @@ export class PreferencesService {
     if (opts.mic !== undefined) this._mic.set(opts.mic);
     if (opts.system !== undefined) this._system.set(opts.system);
     if (opts.language !== undefined) this._language.set(opts.language);
+    this.save();
+  }
+
+  /** Update one or more privacy flags and persist (ADR-0027). Components pass
+   *  only the flag(s) the user changed; the rest stay put. The onboarding
+   *  privacy step and Settings → Privacy both write through here. */
+  setPrivacy(opts: {
+    keepAudio?: boolean;
+    rememberSpeakers?: boolean;
+    syncAudio?: boolean;
+    syncSpeakers?: boolean;
+  }): void {
+    if (opts.keepAudio !== undefined) this._keepAudio.set(opts.keepAudio);
+    if (opts.rememberSpeakers !== undefined)
+      this._rememberSpeakers.set(opts.rememberSpeakers);
+    if (opts.syncAudio !== undefined) this._syncAudio.set(opts.syncAudio);
+    if (opts.syncSpeakers !== undefined)
+      this._syncSpeakers.set(opts.syncSpeakers);
     this.save();
   }
 
@@ -142,6 +195,12 @@ export class PreferencesService {
         language: this._language(),
       },
       hasCompletedOnboarding: this._hasCompletedOnboarding(),
+      privacy: {
+        keepAudio: this._keepAudio(),
+        rememberSpeakers: this._rememberSpeakers(),
+        syncAudio: this._syncAudio(),
+        syncSpeakers: this._syncSpeakers(),
+      },
     };
   }
 }

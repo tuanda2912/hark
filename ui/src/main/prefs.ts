@@ -48,6 +48,30 @@ export interface Prefs {
    */
   readonly hasCompletedOnboarding: boolean;
   /**
+   * Privacy & data-control flags (ADR-0027). ALL default false — privacy-first.
+   * Two govern what the engine stores locally; two govern future sync intent.
+   * The engine gates behavior on `keep_audio` / `remember_speakers` in the
+   * `capture.start` payload (absent ⇒ false ⇒ nothing sensitive stored). A
+   * *missing* `privacy` block — an old prefs.json or fresh install — sanitizes
+   * to all-false, so the safe state is the implicit one.
+   *
+   *  - keepAudio:        store the meeting's audio locally (enables a future
+   *                      verify-by-ear review). Off ⇒ audio discarded after
+   *                      transcription.
+   *  - rememberSpeakers: store voiceprints in vault/.speakers/ so future
+   *                      meetings auto-recognize people (ADR-0026). Off ⇒ no
+   *                      voiceprints stored or matched.
+   *  - syncAudio:        forward-looking — whether a future native sync may
+   *                      carry stored audio off this Mac (already gitignored).
+   *  - syncSpeakers:     forward-looking — same, for voiceprints.
+   */
+  readonly privacy: {
+    readonly keepAudio: boolean;
+    readonly rememberSpeakers: boolean;
+    readonly syncAudio: boolean;
+    readonly syncSpeakers: boolean;
+  };
+  /**
    * Last normal (non-maximized/non-fullscreen) window bounds, persisted by
    * the main process so the window reopens where the user left it. Optional
    * and back-compat: a *missing* `window` means "use the default size,
@@ -70,6 +94,14 @@ export const DEFAULT_PREFS: Prefs = {
   version: 1,
   audio: { mic: true, system: true, language: null },
   hasCompletedOnboarding: false,
+  // Privacy-first: every sensitive/sync flag is OFF until the user opts in
+  // (at onboarding or in Settings → Privacy). ADR-0027.
+  privacy: {
+    keepAudio: false,
+    rememberSpeakers: false,
+    syncAudio: false,
+    syncSpeakers: false,
+  },
 };
 
 /** Resolve the on-disk prefs path. Pinned to ~/Library/Application Support/Hark/. */
@@ -135,6 +167,13 @@ export function savePrefs(input: unknown): void {
     ? { ...existing.audio, ...patch['audio'] }
     : existing.audio;
 
+  // Same per-field merge for the privacy block: a partial `privacy` object
+  // can't drop sibling flags (e.g. saving only `keepAudio` keeps the other
+  // three at their persisted values).
+  const mergedPrivacy = isRecord(patch['privacy'])
+    ? { ...existing.privacy, ...patch['privacy'] }
+    : existing.privacy;
+
   const merged: Record<string, unknown> = {
     version: 1,
     audio: mergedAudio,
@@ -142,6 +181,7 @@ export function savePrefs(input: unknown): void {
       'hasCompletedOnboarding' in patch
         ? patch['hasCompletedOnboarding']
         : existing.hasCompletedOnboarding,
+    privacy: mergedPrivacy,
     window: 'window' in patch ? patch['window'] : existing.window,
   };
 
@@ -196,6 +236,11 @@ function sanitize(input: unknown): Prefs {
       ? o['hasCompletedOnboarding']
       : DEFAULT_PREFS.hasCompletedOnboarding;
 
+  // Privacy block (ADR-0027). Rebuilt flag-by-flag from DEFAULT_PREFS so a
+  // missing block, a partial one, or any non-boolean value collapses to the
+  // safe state: false. Only an explicit `true` on disk turns a flag on.
+  const privacy = sanitizePrivacy(o['privacy']);
+
   // Optional window bounds. Only carried through when the whole rect is
   // sane — width/height must be finite positive numbers; x/y are optional
   // but, if present, must be finite numbers (negative is legal: a window on
@@ -206,8 +251,28 @@ function sanitize(input: unknown): Prefs {
   // restore time (main.ts), since displays can change between save and load.
   const window = sanitizeWindow(o['window']);
 
-  const base: Prefs = { version: 1, audio: { mic, system, language }, hasCompletedOnboarding };
+  const base: Prefs = {
+    version: 1,
+    audio: { mic, system, language },
+    hasCompletedOnboarding,
+    privacy,
+  };
   return window ? { ...base, window } : base;
+}
+
+/** Validate the privacy block. Each flag is a strict boolean; anything else
+ *  (missing, wrong type) falls back to the DEFAULT_PREFS value (all false), so
+ *  the privacy-first state is the one a malformed/absent payload yields. */
+function sanitizePrivacy(input: unknown): Prefs['privacy'] {
+  const p = isRecord(input) ? input : {};
+  const flag = (k: keyof Prefs['privacy']): boolean =>
+    typeof p[k] === 'boolean' ? (p[k] as boolean) : DEFAULT_PREFS.privacy[k];
+  return {
+    keepAudio: flag('keepAudio'),
+    rememberSpeakers: flag('rememberSpeakers'),
+    syncAudio: flag('syncAudio'),
+    syncSpeakers: flag('syncSpeakers'),
+  };
 }
 
 /** Validate the optional window-bounds slice; returns undefined if absent

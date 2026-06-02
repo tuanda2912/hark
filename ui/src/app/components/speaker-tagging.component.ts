@@ -11,17 +11,34 @@
 // chosen name; the engine rewrites the vault file for `session_id` and acks
 // (failures land on the shared error channel, rendered by AppComponent).
 //
-// ── What is deliberately NOT here (deferred, not faked) ──────────────
-// The artboard also shows audio snippets, sub-threshold "Hark thinks it
-// might be…" suggestions, and a "Save & remember voice" voiceprint receipt.
-// Those depend on Phase 5.1 ENROLLMENT (cross-meeting voiceprint matching),
-// which does not exist yet — there are no embeddings, no known-people list,
-// no audio-snippet wire frames. Rendering them would be a lie (fake matches,
-// a dead play button, a "git committed" toast for nothing). So instead we
-// show ONE clearly-disabled "coming soon" affordance describing what voice
-// recognition WILL do, and the button reads "Save name" (not "Save &
-// remember voice"). When enrollment lands, this section becomes live and the
-// inputs/outputs grow accordingly.
+// ── Enrollment is opt-in now (ADR-0026 + ADR-0027) ───────────────────
+// Naming a speaker stores a LOCAL voiceprint keyed to that name (the offline
+// diarizer's per-speaker centroid, under vault/.speakers/) so FUTURE meetings
+// auto-recognize the same voice — but ONLY when the user has enabled "Remember
+// speakers" in Settings → Privacy (default OFF, ADR-0027). The engine gates
+// every `.speakers/` read/write on that flag, sent in capture.start.
+//
+// So the informational copy is now CONDITIONAL on the actual setting (read
+// from PreferencesService.rememberSpeakers), never a stale "coming soon":
+//   - ON  → naming remembers this voice locally; future meetings recognize
+//           them (leading with the privacy guarantee — voiceprints never
+//           leave the Mac, CLAUDE.md #5).
+//   - OFF → naming applies to THIS meeting only; we point the user at
+//           Settings → Privacy to enable remembering.
+// No extra toggle/control/wire frame lives here — enrollment is a side effect
+// of the SAME `speaker.rename` we already send, gated engine-side.
+//
+// When this modal is opened on a speaker the engine ALREADY auto-recognized
+// from a prior meeting (matched_name + a non-null confidence, threaded in via
+// the `recognized` input), we surface a subtle "Recognized from a past
+// meeting" affordance so the user understands the name was filled in by the
+// voiceprint match, not typed by them. The artboard's audio-snippet preview
+// and sub-threshold "might be…" suggestion list remain out of scope (no
+// snippet/suggestion wire frames yet) — those stay deferred, not faked.
+//
+// The artboard's "Save & remember voice" wording is folded into the single
+// "Save name" button + the informational copy: every save remembers the
+// voice, so a second button would be redundant.
 //
 // ── Modal chrome ─────────────────────────────────────────────────────
 // Matches the SettingsPanel atom: a fixed backdrop scrim (z-50) + a centered
@@ -48,6 +65,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { EngineService } from '../services/engine.service';
+import { PreferencesService } from '../services/preferences.service';
 import { EyebrowComponent } from './eyebrow.component';
 
 /** Payload emitted on a successful save, so the host can dismiss + (if it
@@ -209,39 +227,62 @@ export interface SpeakerTagSaved {
         color: var(--text-3);
       }
 
-      /* Deferred "coming soon" enrollment section — clearly disabled. */
-      .soon {
+      /* "Recognized from a past meeting" affordance — shown only when the
+         engine auto-matched this voice (matched_name + confidence). Subtle,
+         success-tinted: this name was filled in for you by the voiceprint. */
+      .recognized {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        align-self: flex-start;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: color-mix(in oklab, var(--status-success) 14%, transparent);
+        border: 1px solid color-mix(in oklab, var(--status-success) 35%, transparent);
+        color: var(--status-success);
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.02em;
+      }
+      .recognized svg {
+        flex-shrink: 0;
+      }
+
+      /* Informational "how enrollment works" section — active, not disabled.
+         Naming this speaker now remembers their voice locally; this explains
+         that and leads with the on-this-Mac privacy guarantee. */
+      .note {
         display: flex;
         align-items: flex-start;
         gap: var(--s-2);
         padding: 10px 12px;
         border-radius: var(--r-panel);
         background: var(--bg-2);
-        border: 1px dashed var(--border-2);
-        opacity: 0.7;
+        border: 1px solid var(--border);
       }
-      .soon svg {
+      .note svg {
         flex-shrink: 0;
         margin-top: 1px;
-        color: var(--text-3);
+        color: var(--accent);
       }
-      .soon-text {
+      .note-text {
         font-size: 12px;
         color: var(--text-2);
         line-height: 1.5;
       }
-      .soon-badge {
-        display: inline-block;
-        margin-left: 6px;
-        padding: 1px 6px;
-        border-radius: 999px;
-        background: var(--surface-2);
+      .note-text strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .note-local {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 6px;
         color: var(--text-3);
         font-family: var(--font-mono);
-        font-size: 9.5px;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        vertical-align: middle;
+        font-size: 10px;
+        letter-spacing: 0.02em;
       }
 
       /* Footer actions. */
@@ -358,25 +399,71 @@ export interface SpeakerTagSaved {
               }
             </div>
             <span class="hint">
-              renames this speaker in the saved transcript · stays on this Mac
+              @if (rememberSpeakers()) {
+                renames this speaker + remembers their voice · stays on this Mac
+              } @else {
+                renames this speaker in the saved transcript · stays on this Mac
+              }
             </span>
           </div>
 
-          <!-- Deferred enrollment / auto-recognition (Phase 5.1) -->
-          <div class="soon" aria-disabled="true">
+          <!-- Auto-recognized from a prior meeting: this name was filled in by
+               the local voiceprint match, not typed. Shown only when the engine
+               supplied a matched_name + confidence. -->
+          @if (recognized(); as r) {
+            <span
+              class="recognized"
+              [title]="'Matched a voiceprint from a past meeting (' + r + ' confidence)'"
+            >
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="none"
+                stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              Recognized from a past meeting · {{ r }}
+            </span>
+          }
+
+          <!-- How naming behaves — CONDITIONAL on "Remember speakers"
+               (Settings → Privacy, ADR-0027). On: enrollment is real and
+               local. Off: this rename is meeting-scoped, and we point at the
+               setting. Honest either way; no "coming soon" placeholder. -->
+          <div class="note">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
               stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
               stroke-linejoin="round" aria-hidden="true">
               <path d="M12 2a4 4 0 0 0-4 4v5a4 4 0 0 0 8 0V6a4 4 0 0 0-4-4z" />
               <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
             </svg>
-            <span class="soon-text">
-              Recognize this voice across meetings
-              <span class="soon-badge">coming soon</span>
-              <br />
-              A future update will save a local voiceprint so Hark can
-              auto-suggest this person next time. Nothing leaves this Mac.
-            </span>
+            @if (rememberSpeakers()) {
+              <span class="note-text">
+                Naming this speaker <strong>remembers their voice on this Mac</strong>,
+                so Hark recognizes them automatically in future meetings.
+                <span class="note-local">
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none"
+                    stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                    stroke-linejoin="round" aria-hidden="true">
+                    <rect x="5" y="11" width="14" height="9" rx="2" />
+                    <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+                  </svg>
+                  The voiceprint stays on this Mac — it never leaves your device.
+                </span>
+              </span>
+            } @else {
+              <span class="note-text">
+                This name applies to <strong>this meeting only</strong>. Hark
+                won't recognize this voice in future meetings.
+                <span class="note-local">
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none"
+                    stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                    stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6l-8-4z" />
+                  </svg>
+                  Enable “Remember speakers” in Settings → Privacy to recognize
+                  people across meetings.
+                </span>
+              </span>
+            }
           </div>
         </div>
 
@@ -401,6 +488,11 @@ export interface SpeakerTagSaved {
 })
 export class SpeakerTaggingComponent {
   private readonly engine = inject(EngineService);
+  private readonly prefs = inject(PreferencesService);
+
+  /** Whether "Remember speakers" is enabled (Settings → Privacy, ADR-0027).
+   *  Drives the informational copy: enrollment only happens when this is on. */
+  protected readonly rememberSpeakers = this.prefs.rememberSpeakers;
 
   /** The speaker's CURRENT engine label — the rename map KEY. */
   readonly label = input.required<string>();
@@ -411,6 +503,12 @@ export class SpeakerTaggingComponent {
   readonly sessionId = input.required<string>();
   /** A token var like `var(--sp-4)` so the chip matches the roster color. */
   readonly chipColor = input<string>('var(--text-3)');
+  /** The engine's voiceprint-match confidence (0..1) when THIS speaker was
+   *  auto-recognized from a prior meeting, or `null` when the name was typed
+   *  this session / the speaker is still unlabeled. Drives the subtle
+   *  "Recognized from a past meeting" affordance. Mirrors
+   *  MeetingSpeaker.confidence (ADR-0026). */
+  readonly confidence = input<number | null>(null);
 
   /** Esc / backdrop / Cancel / × — host unmounts the modal. */
   readonly close = output<void>();
@@ -438,6 +536,16 @@ export class SpeakerTaggingComponent {
       ? 'Update this speaker’s name across the saved transcript'
       : 'Clustered by voice only · give this speaker a name',
   );
+
+  /** Formatted confidence label for the "Recognized from a past meeting"
+   *  affordance, or null when this speaker wasn't auto-matched (no
+   *  confidence). Derived from the `confidence` input (0..1 → "NN%"). The
+   *  template renders it as `@if (recognized(); as r)`. */
+  protected readonly recognized = computed<string | null>(() => {
+    const c = this.confidence();
+    if (c === null || !Number.isFinite(c)) return null;
+    return `${Math.round(Math.max(0, Math.min(1, c)) * 100)}%`;
+  });
 
   /** Save is allowed when the trimmed name is non-empty and actually differs
    *  from the current label (so we never send a no-op rename). */

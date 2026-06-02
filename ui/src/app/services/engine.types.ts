@@ -203,6 +203,18 @@ export interface CaptureStartCommand {
       readonly target_lang?: string;
     };
     readonly language?: string;
+    /**
+     * Privacy gates (ADR-0027). Mirror `CaptureStartCommand.keepAudio` /
+     * `.rememberSpeakers` in WireProtocol.swift — snake_case on the wire,
+     * folded via `.convertFromSnakeCase`. BOTH default to the privacy-safe
+     * behavior when ABSENT (the engine treats `nil`/absent as false), so we
+     * only ever send `true`/`false` from the user's persisted choice.
+     *
+     *  - keep_audio:        persist the meeting audio (future review screen).
+     *  - remember_speakers: store + match voiceprints (enrollment, ADR-0026).
+     */
+    readonly keep_audio?: boolean;
+    readonly remember_speakers?: boolean;
   };
 }
 

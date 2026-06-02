@@ -220,12 +220,31 @@ export class EngineService {
     system?: boolean;
     /** ISO-639-1 code or null/undefined for auto-detect. */
     language?: string | null;
+    /** Persist the meeting audio locally (ADR-0027). Default false ⇒ the
+     *  engine discards audio after transcription (current behavior). */
+    keepAudio?: boolean;
+    /** Store + match voiceprints (ADR-0026/0027). Default false ⇒ the engine
+     *  performs zero `.speakers/` reads/writes. */
+    rememberSpeakers?: boolean;
   }): void {
     // Payload is required by the engine's decoder even when empty —
     // see CaptureStartCommand type. Default to both sources unless the
     // caller explicitly opts out.
     const sources = { mic: opts?.mic ?? true, system: opts?.system ?? true };
-    const payload: { sources: typeof sources; language?: string } = { sources };
+    const payload: {
+      sources: typeof sources;
+      language?: string;
+      keep_audio: boolean;
+      remember_speakers: boolean;
+    } = {
+      sources,
+      // Privacy gates (ADR-0027). Always sent explicitly from the user's
+      // persisted choice; absent would read as false engine-side anyway, but
+      // sending the boolean keeps the contract unambiguous. Privacy-first:
+      // anything not explicitly enabled is false.
+      keep_audio: opts?.keepAudio ?? false,
+      remember_speakers: opts?.rememberSpeakers ?? false,
+    };
     if (opts?.language) payload.language = opts.language;
     const cmd: EngineCommand = { type: 'capture.start', payload };
     // A fresh capture is a fresh meeting: reset the on-screen view so the

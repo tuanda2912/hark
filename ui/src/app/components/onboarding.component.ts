@@ -1,10 +1,15 @@
 // Onboarding — first-run, full-window wizard (Slice 2 of the first-run UX).
 //
-// Three screens (Trust → Permissions → Setup) gated above everything on a
-// fresh install (PreferencesService.hasCompletedOnboarding === false). The
+// Four screens (Trust → Permissions → Privacy → Setup) gated above everything
+// on a fresh install (PreferencesService.hasCompletedOnboarding === false). The
 // last screen's "Start using Hark" persists the flag and emits `complete`,
 // dismissing the overlay for good. The engine warms up in the background
 // while the user reads, so the model download is masked behind onboarding.
+//
+// The Privacy step (ADR-0027) is the informed-consent moment for the two
+// sensitive features — Keep audio + Remember speakers — each defaulting OFF.
+// The user knowingly opts in here (and can change it later in Settings →
+// Privacy). It writes straight through PreferencesService.setPrivacy().
 //
 // Content is adapted from the design artboard to stay HONEST about what we
 // actually ship (see the build brief + ADRs):
@@ -52,11 +57,29 @@ type MicStatus =
 export class OnboardingComponent implements OnInit {
   private readonly prefs = inject(PreferencesService);
 
-  /** Current screen, 1..3. */
-  readonly step = signal<1 | 2 | 3>(1);
+  /** Total number of wizard screens (Trust → Permissions → Privacy → Setup). */
+  readonly lastStep = 4 as const;
+
+  /** Current screen, 1..4. */
+  readonly step = signal<1 | 2 | 3 | 4>(1);
 
   /** Vault path for the Setup screen (fixed, from main). */
   readonly vaultPath = this.prefs.vaultPath;
+
+  // ─── Privacy step (ADR-0027) ────────────────────────────────────────
+  // The two opt-in sensitive features, bound to PreferencesService so a
+  // choice made here is the SAME persisted state Settings → Privacy reads.
+  // Both default OFF; the user knowingly turns them on.
+  readonly keepAudio = this.prefs.keepAudio;
+  readonly rememberSpeakers = this.prefs.rememberSpeakers;
+
+  toggleKeepAudio(): void {
+    this.prefs.setPrivacy({ keepAudio: !this.keepAudio() });
+  }
+
+  toggleRememberSpeakers(): void {
+    this.prefs.setPrivacy({ rememberSpeakers: !this.rememberSpeakers() });
+  }
 
   /** Live Microphone permission status for the real badge on screen 2.
    *  'unknown' until the first read resolves (or outside Electron). */
@@ -147,11 +170,11 @@ export class OnboardingComponent implements OnInit {
 
   // ─── Navigation ─────────────────────────────────────────────────────
   next(): void {
-    this.step.update((s) => (s < 3 ? ((s + 1) as 1 | 2 | 3) : s));
+    this.step.update((s) => (s < 4 ? ((s + 1) as 1 | 2 | 3 | 4) : s));
   }
 
   back(): void {
-    this.step.update((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3) : s));
+    this.step.update((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3 | 4) : s));
   }
 
   /** Finish: persist the flag (PreferencesService.completeOnboarding) and
@@ -165,7 +188,7 @@ export class OnboardingComponent implements OnInit {
    *  user must make a deliberate choice (there's no "skip onboarding"). */
   @HostListener('document:keydown.enter')
   onEnter(): void {
-    if (this.step() === 3) {
+    if (this.step() === this.lastStep) {
       this.finish();
     } else {
       this.next();

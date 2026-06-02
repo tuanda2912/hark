@@ -294,11 +294,25 @@ struct VaultWriter: Sendable {
         return true
     }
 
-    /// Create `<vault>/.gitignore` with a `.speakers/` rule if it doesn't
-    /// exist; if it exists but lacks the rule, append it. Never rewrites
-    /// unrelated lines. Rule #5 forward-safety: embeddings must never enter
-    /// a repo the user might later push.
+    /// Instance shim onto the shared static helper — `gitCommit` knows only the
+    /// vault path string, while `ensureSpeakersGitignored` works in URLs (so the
+    /// store, which injects its own vault root, can call the same code).
     private func ensureGitignore(vault: String) {
+        Self.ensureSpeakersGitignored(vaultRoot: vaultRoot)
+    }
+
+    /// Ensure `<vaultRoot>/.gitignore` excludes `.speakers/`: create the file
+    /// with the rule if it's missing, append the rule if the file exists but
+    /// lacks it, and do nothing if it's already there. Never rewrites unrelated
+    /// lines. Rule #5 forward-safety: voice embeddings must never enter a repo
+    /// the user might later push.
+    ///
+    /// `static` + `vaultRoot:`-parameterized (not bound to `VaultWriter`'s
+    /// hardcoded root) so `SpeakerStore` — which writes `.speakers/` under its
+    /// own injectable root — can assert the ignore rule the moment it creates
+    /// that directory, regardless of whether a meeting was ever saved first.
+    /// Idempotent, so calling it from both sites can't duplicate the rule.
+    static func ensureSpeakersGitignored(vaultRoot: URL) {
         let url = vaultRoot.appendingPathComponent(".gitignore")
         let rule = ".speakers/"
         let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? nil
