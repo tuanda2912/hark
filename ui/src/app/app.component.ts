@@ -457,6 +457,15 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.formatClock(seconds);
   }
 
+  /** Speaker → palette CSS-var, delegated to the EngineService single source of
+   *  truth so the transcript line's chip/name color matches the Attendees panel
+   *  for the same speaker. Reads the roster + segments signals internally, so a
+   *  rename (which advances the roster label + relabels segments) re-colors both
+   *  surfaces together under OnPush. */
+  speakerColorFor(label: string | null): string {
+    return this.engine.speakerColorFor(label);
+  }
+
   /** True if any bookmark's moment falls within this segment's range,
    *  so the line shows a pin. This is how a time-only bookmark becomes
    *  visually anchored to the content the user was hearing. */

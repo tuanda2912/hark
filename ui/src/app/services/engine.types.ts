@@ -154,6 +154,33 @@ export interface MeetingSavedPayload {
   readonly stats: MeetingStats;
 }
 
+/** One labeled utterance in `meeting.transcript` — the deduped, "Speaker N"-
+ *  labeled line as written to the vault. `id` is a stable per-utterance key for
+ *  the UI's `@for` track (e.g. "u0", "u1"…). Mirrors the Swift
+ *  `TranscriptUtterance`; all fields non-optional. `tStart` ↔ `t_start`. */
+export interface MeetingTranscriptUtterance {
+  readonly id: string;
+  readonly t_start: number;
+  readonly text: string;
+  /** "Speaker N" — the SAME label as the saved file / `meeting.saved` roster. */
+  readonly speaker: string;
+}
+
+/**
+ * Emitted once per meeting at `capture.stop`, JUST BEFORE `meeting.saved`.
+ * Carries the deduped, diarization-labeled final transcript exactly as written
+ * to the vault markdown body. Live `segment.final` frames ship `speaker: null`
+ * (diarization is a post-stop batch pass), so the UI swaps its messy live
+ * partials/dupes for these clean labeled utterances on arrival, giving every
+ * on-screen line its speaker. `session_id` matches `meeting.saved` /
+ * `speaker.rename`, scoping the replacement to the right meeting. Mirrors the
+ * Swift `MeetingTranscriptPayload` (snake_case on the wire).
+ */
+export interface MeetingTranscriptPayload {
+  readonly session_id: string;
+  readonly utterances: readonly MeetingTranscriptUtterance[];
+}
+
 // ─── UI → Engine command shapes ──────────────────────────────────────
 
 export interface CaptureStartCommand {

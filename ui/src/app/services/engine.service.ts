@@ -30,6 +30,7 @@ import {
   WarningPayload,
   BookmarkCreatedPayload,
   MeetingSavedPayload,
+  MeetingTranscriptPayload,
   DisplayedSegment,
   ConnectionState,
   CaptureState,
@@ -284,17 +285,37 @@ export class EngineService {
     sessionId: string,
     names: Record<string, string>,
   ): void {
-    this._lastMeetingSaved.update((saved) => {
-      if (!saved || saved.session_id !== sessionId) return saved;
+    // Session-id guard: only the most-recently-saved meeting is renameable
+    // (ADR-0020 MVP), and the displayed transcript is that same meeting's, so a
+    // mismatched id leaves BOTH the roster and the transcript untouched.
+    const saved = this._lastMeetingSaved();
+    if (!saved || saved.session_id !== sessionId) return;
+
+    // 1) Roster (Attendees panel + saved card read this signal).
+    this._lastMeetingSaved.update((s) => {
+      if (!s || s.session_id !== sessionId) return s;
       let changed = false;
-      const speakers = saved.speakers.map((sp) => {
+      const speakers = s.speakers.map((sp) => {
         const next = names[sp.label];
         if (next === undefined || next === sp.label) return sp;
         changed = true;
         return { ...sp, label: next, matched_name: next };
       });
-      return changed ? { ...saved, speakers } : saved;
+      return changed ? { ...s, speakers } : s;
     });
+
+    // 2) Displayed transcript: relabel every line spoken by a renamed speaker so
+    // the on-screen lines (and their colors, which key off the now-advanced
+    // roster label) update with the roster. The label keys match because the
+    // labeled transcript rows carry the SAME "Speaker N" labels as the roster.
+    let touched = false;
+    for (const [key, seg] of this.segmentsMap) {
+      const next = seg.speaker ? names[seg.speaker] : undefined;
+      if (next === undefined || next === seg.speaker) continue;
+      this.segmentsMap.set(key, { ...seg, speaker: next });
+      touched = true;
+    }
+    if (touched) this._segmentsTick.update((v) => v + 1);
   }
 
   /**
@@ -315,6 +336,44 @@ export class EngineService {
     this._bookmarks.set([]);
     this._lastMeetingSaved.set(null);
     this._lastError.set(null);
+  }
+
+  // ─── Speaker → color (single source of truth) ───────────────────────
+  //
+  // ONE mapping used by BOTH the Attendees panel and the transcript so a
+  // speaker's color matches everywhere within a meeting. We cycle the six muted
+  // palette tokens (--sp-1..--sp-6) keyed by ROSTER ORDER — the index of the
+  // label in lastMeetingSaved().speakers. After a rename the roster's `label`
+  // advances to the new name (applyOptimisticRename), and the relabeled
+  // transcript rows carry that same new label, so both still resolve to the
+  // same palette slot. Fallback (no roster yet, or a label not in it): order of
+  // first appearance among the displayed segments — so the transcript still
+  // colors consistently before/without a meeting.saved roster.
+
+  /** Stable index 0..5 for a speaker label within the current meeting. Roster
+   *  order wins; otherwise first-appearance order in the displayed segments. */
+  private speakerIndexFor(label: string): number {
+    const saved = this._lastMeetingSaved();
+    if (saved) {
+      const i = saved.speakers.findIndex((sp) => sp.label === label);
+      if (i >= 0) return i;
+    }
+    // Fallback: first-appearance order among labeled segments (sorted by tStart,
+    // matching the rendered order), de-duped to a stable per-label slot.
+    const seen: string[] = [];
+    for (const s of this.segments()) {
+      if (s.speaker && !seen.includes(s.speaker)) seen.push(s.speaker);
+    }
+    const j = seen.indexOf(label);
+    return j >= 0 ? j : 0;
+  }
+
+  /** Palette CSS-var token (`var(--sp-N)`) for a speaker label, stable within a
+   *  meeting and SHARED with the Attendees panel so colors agree across
+   *  surfaces. Cycles --sp-1..--sp-6 by the speaker's roster index. */
+  speakerColorFor(label: string | null): string {
+    if (!label) return 'var(--text-3)';
+    return `var(--sp-${(this.speakerIndexFor(label) % 6) + 1})`;
   }
 
   // ─── Internals ──────────────────────────────────────────────────────
@@ -417,6 +476,14 @@ export class EngineService {
         this.bookmarkCreated$.next(bm);
         break;
       }
+      case 'meeting.transcript': {
+        // Post-stop swap (ADR-0021): replace the messy live partials/dupes with
+        // the deduped, diarization-LABELED final transcript exactly as written
+        // to the vault. Arrives just before meeting.saved. View-only — does not
+        // touch connection or capture state.
+        this.applyMeetingTranscript(env.payload as MeetingTranscriptPayload);
+        break;
+      }
       case 'meeting.saved': {
         const saved = env.payload as MeetingSavedPayload;
         this._lastMeetingSaved.set(saved);
@@ -445,6 +512,37 @@ export class EngineService {
         // Unknown type — ignore for forward compatibility.
         break;
     }
+  }
+
+  /**
+   * Swap the displayed transcript for the labeled, deduped final from
+   * `meeting.transcript`. Clears the live segments map and repopulates it from
+   * `utterances`, each as a FINALIZED segment (isFinal: true, speaker set,
+   * keyed by its stable utterance id). This replaces the live partials/dupes
+   * with the clean labeled version that matches the saved vault file, so every
+   * line shows its speaker. View-only — capture/connection state untouched.
+   *
+   * No t_end / language / translation on the wire here, so we synthesize: tEnd
+   * = tStart (the line is point-anchored for sorting/bookmark range; the labeled
+   * final has no per-line end), language/translation null. utteranceId = u.id so
+   * a later speaker.rename can relabel these rows by matching speaker.
+   */
+  private applyMeetingTranscript(p: MeetingTranscriptPayload): void {
+    this.segmentsMap.clear();
+    for (const u of p.utterances) {
+      this.segmentsMap.set(u.id, {
+        utteranceId: u.id,
+        segmentId: null,
+        tStart: u.t_start,
+        tEnd: u.t_start,
+        text: u.text,
+        language: null,
+        speaker: u.speaker,
+        translation: null,
+        isFinal: true,
+      });
+    }
+    this._segmentsTick.update((v) => v + 1);
   }
 
   private applySegment(p: SegmentPayload, isFinal: boolean): void {

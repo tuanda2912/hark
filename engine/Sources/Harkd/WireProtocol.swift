@@ -273,6 +273,35 @@ struct MeetingStats: Encodable {
     let rtfAvg: Double
 }
 
+/// Emitted once per meeting at capture.stop, JUST BEFORE `meeting.saved`, so the
+/// UI can back-annotate the on-screen transcript with speakers. Live `segment.final`
+/// frames ship `speaker: nil` — diarization is a post-stop batch pass — so until
+/// this frame the labels existed ONLY in the written vault file + the `meeting.saved`
+/// roster, never back on the live transcript. This carries EXACTLY the deduped,
+/// "Speaker N"-labeled utterances that were written to the markdown body, so the
+/// on-screen transcript can be replaced to match the saved file verbatim.
+///
+/// `sessionId` matches `meeting.saved` (and `speaker.rename`), scoping the
+/// replacement to the right meeting. Privacy: names/labels stay local — same set
+/// the vault write produced, no network (hard rule #1/#2).
+struct MeetingTranscriptPayload: Encodable {
+    let sessionId: String                 // ← session_id
+    let utterances: [TranscriptUtterance]
+}
+
+/// One labeled utterance for `meeting.transcript`. `id` is a stable per-utterance
+/// key for the UI's `@for` track (index-based, e.g. "u0", "u1"…). `speaker` is the
+/// "Speaker N" label from diarization — the SAME value written to the vault.
+/// All fields non-optional, so the synthesized `encode(to:)` suffices (no explicit
+/// nil handling like `SegmentPayload`). `tStart` snake_cases to `t_start`; the
+/// single-word fields pass through unchanged via `.convertToSnakeCase`.
+struct TranscriptUtterance: Encodable {
+    let id: String
+    let tStart: Double
+    let text: String
+    let speaker: String
+}
+
 struct WarningPayload: Encodable {
     let code: String
     let message: String

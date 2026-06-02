@@ -245,7 +245,7 @@ export interface TagSpeakerRequest {
             >
               <span
                 class="chip"
-                [style.--chip-color]="speakerColor(row.i)"
+                [style.--chip-color]="speakerColor(row.label)"
                 aria-hidden="true"
               ></span>
               <div class="body">
@@ -257,7 +257,7 @@ export interface TagSpeakerRequest {
             <div class="row untagged" role="listitem">
               <span
                 class="chip"
-                [style.--chip-color]="speakerColor(row.i)"
+                [style.--chip-color]="speakerColor(row.label)"
                 aria-hidden="true"
               ></span>
               <div class="body">
@@ -352,11 +352,12 @@ export class AttendeesPanelComponent {
     return { label: sp.label, name, tagged, meta, i };
   }
 
-  /** Cycle the six muted speaker palette tokens (sp-1..sp-6) — the same
-   *  cycling the transcript + meeting-saved card use, keyed by roster order
-   *  so a speaker's color is stable across surfaces within a meeting. */
-  protected speakerColor(index: number): string {
-    return `var(--sp-${(index % 6) + 1})`;
+  /** Speaker chip color, delegated to EngineService.speakerColorFor — the
+   *  SINGLE source of truth shared with the transcript (and keyed by roster
+   *  order internally) so a speaker's color matches across both surfaces, and
+   *  stays matched after a rename advances the roster label. */
+  protected speakerColor(label: string): string {
+    return this.engine.speakerColorFor(label);
   }
 }
 

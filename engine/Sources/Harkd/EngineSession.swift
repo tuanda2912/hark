@@ -1178,6 +1178,23 @@ actor EngineSession {
         return (relabeled, attendees)
     }
 
+    // ─── meeting.transcript mapping (labeled vault set → wire) ──────────────
+
+    /// Map the labeled, deduped vault utterances to `meeting.transcript`'s wire
+    /// rows. PURE — no actor state, no I/O — so the emit path and its test share
+    /// one definition. Input is the EXACT `[VaultWriter.Utterance]` written to the
+    /// markdown body (`tStart` + `label` + `text`); we mint an index-based stable
+    /// `id` ("u0", "u1"…) for the UI's `@for` track and carry the "Speaker N"
+    /// `label` through as `speaker`. Order is preserved (the input is already
+    /// t_start-ordered), so the ids index that same chronological order.
+    static func transcriptUtterances(
+        from labeled: [VaultWriter.Utterance]
+    ) -> [TranscriptUtterance] {
+        labeled.enumerated().map { idx, u in
+            TranscriptUtterance(id: "u\(idx)", tStart: u.tStart, text: u.text, speaker: u.label)
+        }
+    }
+
     // ─── Vault persistence + meeting.saved (Phase 5 Slice 2, ADR-0015/0016) ──
     //
     // Runs only at stop, after diarization — OFF the live hot path. Writes the
@@ -1234,6 +1251,17 @@ actor EngineSession {
             segmentCount: segmentCount,
             labeled: labeled,
             attendees: attendees)
+
+        // Emit `meeting.transcript` JUST BEFORE `meeting.saved`, built from the
+        // SAME `labeled` set we just wrote to the vault — so the UI can back-
+        // annotate the on-screen transcript (live `segment.final` shipped
+        // `speaker: nil`) with the identical "Speaker N" labels the markdown body
+        // carries, BEFORE the roster/card arrive. Same `sessionId` scopes the
+        // replacement. Reuses the deduped/labeled vault utterances verbatim — it
+        // does NOT re-derive a different set, so on-screen == saved file.
+        broadcast(WireEnvelope(type: "meeting.transcript", payload: MeetingTranscriptPayload(
+            sessionId: sessionId,
+            utterances: Self.transcriptUtterances(from: labeled))))
 
         // v1 is anonymous: every speaker carries matchedName/confidence == nil.
         // Phase 5.1 (enrollment/naming) populates them without a contract change.
