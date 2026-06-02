@@ -54,10 +54,11 @@ const DEV_URL = 'http://localhost:4200';
 // ─── Window sizing ────────────────────────────────────────────────────
 // Default size comfortably fits the 3-column MainWindow design
 // (Attendees 240 ∣ Transcript 1fr ∣ Ask 320), so the transcript isn't
-// cramped at first launch. The min stays well below the responsive
-// breakpoints (right panel drops ≤960, left ≤760) so the window still
-// shrinks gracefully — we never pin a min so high the user can't make it
-// small. Persisted user bounds (prefs.window) override the default size
+// cramped at first launch. The 900px min is chosen so all three columns
+// still fit at their shrunk minimums (left 176 + right 248 + transcript
+// 476 = 900; see app.component.css .hark-grid) — the side columns shrink
+// rather than auto-hiding, so no panel ever vanishes within the resizable
+// range. Persisted user bounds (prefs.window) override the default size
 // once the window has been resized/moved; see resolveInitialBounds().
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 820;

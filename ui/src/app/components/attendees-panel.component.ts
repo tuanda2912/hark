@@ -80,7 +80,9 @@ interface AttendeeRow {
       .row {
         display: flex;
         align-items: flex-start;
-        gap: 10px;
+        /* Chip→body gap kept tight (8px) so the name/meta body keeps as much
+         * of the ~176px-min column as possible. */
+        gap: 8px;
         padding: 10px 8px;
         border-radius: var(--r-panel);
         border: 1px solid transparent;
@@ -107,6 +109,13 @@ interface AttendeeRow {
         font-size: 13px;
         font-weight: 500;
         color: var(--text);
+        /* At the column's clamped minimum (~176px) the body track is narrow;
+         * a long matched name must ellipsize rather than clip mid-glyph
+         * against the column's overflow:hidden. .body already has min-width:0
+         * so this can actually take effect. */
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .name.untagged {
         color: var(--text-2);

@@ -1,54 +1,162 @@
 /* Component-scoped styles. Most layout lives in Tailwind utility
  * classes in app.component.html; this file holds the macOS chrome
- * integration that the utility model doesn't cover. */
+ * integration that the utility model doesn't cover, plus the 3-column
+ * grid (clamped, shrinking side columns) and the two-row header's
+ * responsive degradation. */
 :host {
   display: block;
   height: 100vh;
 }
 
-/* macOS titlebar integration. The BrowserWindow uses
- * `titleBarStyle: 'hiddenInset'`, which floats the native traffic
- * lights over the top-left of the web content. We:
- *   - make the whole top bar a window-drag region, and
- *   - pad it left by 78px so our REC indicator clears the lights.
- * Interactive children (buttons, the language <select>) opt back out
- * with `.no-drag`, otherwise the OS swallows their clicks for dragging. */
-.titlebar-drag {
+/* ─── macOS two-row header ───────────────────────────────────────────
+ *
+ * The BrowserWindow uses `titleBarStyle: 'hiddenInset'`, which floats the
+ * native traffic lights (close/minimize/zoom) over the top-left of the web
+ * content. The design (artboards/MainWindow.jsx + 01-mw-dark.png) puts a
+ * thin TITLE STRIP on top (lights · centered title · panel toggles) and a
+ * full-width CONTROLS BAR below it. We mirror that:
+ *
+ *   Row 1 `.titlebar-strip` — the window-drag region. ~40px tall. We
+ *   reserve the left ~78px (the lights' float zone) with a spacer so the
+ *   centered title never collides with them. Interactive children (the
+ *   panel-toggle buttons) opt back out of dragging with `.no-drag`.
+ *
+ *   Row 2 `.controls-bar` — NOT a drag region: it's a dense row of buttons,
+ *   and a drag region would swallow their clicks. It sits BELOW the lights,
+ *   so it needs no left-pad hack.
+ */
+.titlebar-strip {
   -webkit-app-region: drag;
-  padding-left: 78px;
+  height: 40px;
+  flex-shrink: 0;
 }
 
+/* Reserve the traffic-light zone. The lights float over the top-left of the
+ * web content at roughly 70px wide; 78px gives a small breathing margin so
+ * the centered title's left edge clears them. aria-hidden, zero content. */
+.titlebar-lights-spacer {
+  width: 78px;
+  flex-shrink: 0;
+}
+
+/* Interactive children of the drag region must opt out, or the OS swallows
+ * their clicks for window dragging. */
 .no-drag {
   -webkit-app-region: no-drag;
 }
 
-/* ─── 3-column MainWindow grid (Attendees | Transcript | Ask) ───────────
+/* ─── Controls bar responsive degradation ────────────────────────────
  *
- * The center column is the flexible track; the side columns are fixed
- * width (240 / 320) matching the design. Column visibility is driven by
- * two layers, in order of precedence (most-specific wins):
+ * The controls bar must never clip from the 900px window minimum upward.
+ * At full labels the row needs well over 1200px, so we shed weight as the
+ * window narrows, in priority order (least-essential first):
  *
- *   1. Responsive breakpoints — at narrow widths the side columns are
- *      force-hidden so the transcript stays usable (03-mw-compact.png).
- *      This wins regardless of the user's toggle state.
- *   2. User toggles — data-left / data-right="false" hides a column on a
- *      wide window (the top-bar panel-toggle buttons).
+ *   1. ≤1180px — drop the dev-only conn/RTF readout (`.ctl-dev`). It's a
+ *      build-time aid, not in the final design; first to go.
+ *   2. ≤1040px — collapse labelled controls to icon-only: New meeting and
+ *      Bookmark lose their text (`.ctl-label`), the trust lozenge becomes
+ *      its cloud-off glyph alone. title/aria-label keep them identifiable.
+ *   3. ≤900px (the floor) — last-resort safety net: allow the row to wrap
+ *      so a stubborn overflow flows onto a second line instead of clipping
+ *      a control off the right edge. Never reached in practice once labels
+ *      collapse, but guarantees no control is ever unreachable.
  *
- * Hiding a column is two coordinated changes: drop its grid track AND set
- * the element to display:none, so it neither reserves space nor renders.
- * We enumerate the four track combinations rather than use auto-fit so the
- * fixed widths stay exact. */
-.hark-grid {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 320px;
+ * These key off WINDOW width (media queries), consistent with the grid
+ * breakpoints below — the bar spans the whole window regardless of which
+ * side panels are open. */
+.controls-bar {
+  flex-shrink: 0;
+  /* Don't let the bar wrap until the explicit narrow safety net kicks in;
+   * above that, degradation keeps everything on one line. */
+  flex-wrap: nowrap;
 }
 
-/* User toggles (wide window). */
+@media (max-width: 1180px) {
+  .ctl-dev {
+    display: none;
+  }
+}
+
+@media (max-width: 1040px) {
+  .ctl-label {
+    display: none;
+  }
+  /* Icon-only buttons no longer need the label gap; tighten so the icon
+   * sits centered in a compact square-ish hit target. */
+  .ctl-btn {
+    gap: 0;
+  }
+  .ctl-lozenge {
+    gap: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .controls-bar {
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
+  }
+}
+
+/* ─── Transcript measure ─────────────────────────────────────────────
+ * A comfortable reading line length, centered in the transcript column so
+ * very wide windows don't leave the text hugging the left with a large
+ * empty gap (the design centers a fixed measure). `mx-auto` in the template
+ * does the centering; this caps the width. ~46rem ≈ the design's measure. */
+.transcript-measure {
+  max-width: 46rem;
+}
+
+/* ─── 3-column MainWindow grid (Attendees | Transcript | Ask) ───────────
+ *
+ * The center column is the flexible track; the side columns SHRINK between
+ * clamp bounds rather than ever auto-vanishing. This matches the design's
+ * compact artboard (03-mw-compact.png, ~924px): at narrow widths all three
+ * columns stay visible and just get narrower — a panel never disappears on
+ * its own.
+ *
+ * Column visibility is therefore driven by ONE layer only: the user's
+ * top-bar toggle buttons (data-left / data-right="false"). There are NO
+ * width-based media queries that hide a column — auto-hide was the source of
+ * the "right panel vanished with no way back" bug, since it also overrode
+ * the toggle the user would reach for to bring it back. Toggling is now the
+ * only thing that hides a panel, and the same button restores it, at every
+ * width.
+ *
+ * ── Track sizing & the 900px floor ──────────────────────────────────────
+ * The window minWidth is 900px (main.ts), so three shrunk columns must
+ * always fit there. The grid has NO column gap; inter-column separation is
+ * each side panel's own 1px border (border-box, so it lives inside the
+ * track, not between tracks). At the 900px floor the side tracks hit their
+ * clamp minimums:
+ *
+ *   left  clamp(176px, 19vw, 240px) → 19vw = 171 < 176 → pinned to 176px
+ *   right clamp(248px, 26vw, 320px) → 26vw = 234 < 248 → pinned to 248px
+ *   center = 900 − 176 − 248 = 476px  (≥ 440px target — transcript usable)
+ *
+ * At the 1280px default: 19vw = 243 → capped 240; 26vw = 333 → capped 320;
+ * center = 720px — i.e. the design's intended 240 | 1fr | 320 at full size.
+ * The mid (vw) segment is live between ~926–1263px (left) and ~954–1231px
+ * (right), giving a smooth shrink across the resizable range.
+ *
+ * Hiding a column (user toggle) is two coordinated changes: drop its grid
+ * track AND set the element to display:none, so it neither reserves space
+ * nor renders. We enumerate the four track combinations rather than use
+ * auto-fit so the clamp bounds stay exact per combination. */
+.hark-grid {
+  display: grid;
+  grid-template-columns:
+    clamp(176px, 19vw, 240px) minmax(0, 1fr) clamp(248px, 26vw, 320px);
+}
+
+/* User toggles — the ONLY way a column is hidden, at any width. When a side
+ * column is gone its track is dropped so the remaining tracks reflow; the
+ * surviving side column keeps its clamp so it doesn't balloon. */
 .hark-grid[data-left='false'] {
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) clamp(248px, 26vw, 320px);
 }
 .hark-grid[data-right='false'] {
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: clamp(176px, 19vw, 240px) minmax(0, 1fr);
 }
 .hark-grid[data-left='false'][data-right='false'] {
   grid-template-columns: minmax(0, 1fr);
@@ -68,29 +176,4 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-
-/* ── Responsive: collapse side columns at narrow widths ──
- * Below 960px drop the right (Ask) column; below 760px drop the left
- * (Attendees) column too, leaving a full-width transcript. These override
- * the user-toggle rules above (the media query plus !important on the track
- * collapse) so a small window is never broken even if the user had both
- * panels "open". */
-@media (max-width: 960px) {
-  .hark-grid {
-    grid-template-columns: 240px minmax(0, 1fr) !important;
-  }
-  .hark-col-right {
-    display: none !important;
-  }
-}
-
-@media (max-width: 760px) {
-  .hark-grid {
-    grid-template-columns: minmax(0, 1fr) !important;
-  }
-  .hark-col-left,
-  .hark-col-right {
-    display: none !important;
-  }
 }

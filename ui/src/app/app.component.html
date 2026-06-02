@@ -1,35 +1,110 @@
 <div class="flex flex-col h-screen bg-bg text-text font-ui">
-  <!-- Top bar. `titlebar-drag` makes the bar a macOS window-drag region
-       and pads left to clear the native hiddenInset traffic lights;
-       every interactive child opts back out with `no-drag`.
-       Mirrors the design's MainWindow top bar (artboards/MainWindow.jsx). -->
+  <!-- ─── Row 1 — title strip ─────────────────────────────────────────
+       A thin drag region matching the design's mac-titlebar. The whole
+       strip is a macOS window-drag region; the panel-toggle buttons opt
+       back out with `.no-drag`. We reserve ~78px on the left so nothing
+       sits under the native hiddenInset traffic lights. Layout:
+       [78px lights spacer] · [centered title] · [panel toggles]. -->
+  <div
+    class="titlebar-strip flex items-center gap-2 px-3 bg-bg-2 border-b border-border"
+  >
+    <!-- Spacer reserving the traffic-light zone (lights float over it). -->
+    <div class="titlebar-lights-spacer" aria-hidden="true"></div>
+
+    <!-- Centered title. We don't have user/derived meeting titles yet
+         (a BACKLOG item), so this is the honest app name, not a fake
+         meeting name. Truncates if it ever gets long. -->
+    <div class="flex-1 min-w-0 text-center">
+      <span
+        class="inline-block max-w-full truncate align-middle text-[13px] font-medium text-text-2"
+        title="Hark"
+      >Hark</span>
+    </div>
+
+    <!-- Panel toggles — collapse/show the Attendees (left) and Ask (right)
+         columns, matching the design's window accessory buttons (they live
+         in the title strip, MainWindow.jsx accessory). The CSS breakpoints
+         in app.component.css auto-hide these columns at narrow widths; these
+         buttons are the manual override on wide windows. -->
+    <div class="no-drag flex items-center gap-1">
+      <button
+        type="button"
+        class="inline-flex items-center justify-center w-7 h-7 rounded-input cursor-pointer"
+        [class.text-accent]="leftPanelOpen()"
+        [class.text-text-2]="!leftPanelOpen()"
+        [class.bg-accent-soft]="leftPanelOpen()"
+        [class.hover:text-text]="!leftPanelOpen()"
+        [class.hover:bg-surface-2]="!leftPanelOpen()"
+        (click)="toggleLeftPanel()"
+        title="Toggle attendees panel"
+        aria-label="Toggle attendees panel"
+        [attr.aria-pressed]="leftPanelOpen()"
+      >
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+          stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+          stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M9 4v16" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="inline-flex items-center justify-center w-7 h-7 rounded-input cursor-pointer"
+        [class.text-accent]="rightPanelOpen()"
+        [class.text-text-2]="!rightPanelOpen()"
+        [class.bg-accent-soft]="rightPanelOpen()"
+        [class.hover:text-text]="!rightPanelOpen()"
+        [class.hover:bg-surface-2]="!rightPanelOpen()"
+        (click)="toggleRightPanel()"
+        title="Toggle Ask panel"
+        aria-label="Toggle Ask panel"
+        [attr.aria-pressed]="rightPanelOpen()"
+      >
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+          stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+          stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M15 4v16" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ─── Row 2 — controls bar ────────────────────────────────────────
+       Full-width, below the traffic lights now (no left-pad hack). NOT a
+       drag region — it's a dense row of interactive controls. Two groups:
+       left = capture state + transport (REC/meter/Start/Stop/Bookmark/New),
+       right = language + trust lozenge + dev readout + settings. The
+       `controls-bar` class drives the responsive degradation (see CSS):
+       the dev readout drops first, then labelled buttons collapse to icons,
+       and the row may wrap before anything clips. -->
   <header
-    class="titlebar-drag flex items-center gap-4 pr-4 py-2 bg-bg border-b border-border text-sm"
+    class="controls-bar flex items-center gap-3 px-4 py-2 bg-bg border-b border-border text-sm"
   >
     <!-- REC / idle indicator -->
     @if (isCapturing()) {
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 shrink-0">
         <span class="rec-dot" aria-hidden="true"></span>
         <span class="font-mono text-xs font-semibold tracking-wide text-recording">
           REC {{ recCounter() }}
         </span>
       </div>
       <!-- Animated audio meter — hints live capture without leaking audio. -->
-      <span class="audio-meter text-accent" aria-hidden="true">
+      <span class="audio-meter text-accent shrink-0" aria-hidden="true">
         <span></span><span></span><span></span><span></span><span></span><span></span>
       </span>
     } @else {
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 shrink-0">
         <span class="w-2 h-2 rounded-full bg-text-3" aria-hidden="true"></span>
         <span class="font-mono text-xs text-text-3">idle</span>
       </div>
     }
 
-    <div class="h-4 w-px bg-border" aria-hidden="true"></div>
+    <div class="h-4 w-px bg-border shrink-0" aria-hidden="true"></div>
 
     <!-- Source toggles. Locked while capturing. Turn Mic OFF to keep a
          Bluetooth headset in A2DP so system audio can be captured. -->
-    <div class="no-drag inline-flex items-center gap-1">
+    <div class="inline-flex items-center gap-1 shrink-0">
       <button
         type="button"
         class="px-2 py-1 rounded-input border text-xs font-mono cursor-pointer disabled:cursor-not-allowed"
@@ -64,7 +139,7 @@
 
     <button
       type="button"
-      class="no-drag px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      class="shrink-0 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       [disabled]="!canStart()"
       [title]="warmingUp() ? 'Engine is loading the model — please wait' : 'Start capture'"
       (click)="onStart()"
@@ -73,7 +148,7 @@
     </button>
     <button
       type="button"
-      class="no-drag px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      class="shrink-0 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       [disabled]="!isCapturing()"
       (click)="onStop()"
     >
@@ -83,10 +158,13 @@
     <!-- New meeting — clears the on-screen transcript between meetings so a
          fresh session starts clean (the live view otherwise accumulates).
          Enabled only when idle AND there's something to clear; a new capture
-         also auto-clears. View-only — saved vault files are untouched. -->
+         also auto-clears. View-only — saved vault files are untouched.
+         The text label collapses to an icon-only button at narrow widths
+         (.ctl-label hidden via the controls-bar breakpoint); the title +
+         aria-label keep it identifiable when collapsed. -->
     <button
       type="button"
-      class="no-drag inline-flex items-center gap-1.5 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      class="ctl-btn shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       [disabled]="!canClear()"
       (click)="onNewMeeting()"
       title="Clear the transcript and start fresh"
@@ -97,14 +175,14 @@
         stroke-linejoin="round" aria-hidden="true">
         <path d="M12 5v14M5 12h14" />
       </svg>
-      New meeting
+      <span class="ctl-label">New meeting</span>
     </button>
 
     <!-- Bookmark — marks the current moment (engine bookmark.create →
          bookmark.created). ⌘⇧B works globally; see onKeydown. -->
     <button
       type="button"
-      class="no-drag inline-flex items-center gap-1.5 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      class="ctl-btn shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       [disabled]="!isCapturing()"
       (click)="onBookmark()"
       title="Mark this moment (⌘⇧B)"
@@ -112,15 +190,19 @@
       <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
         <path d="M7 4h10a1 1 0 0 1 1 1v15.2a.8.8 0 0 1-1.25.66L12 17.4 7.25 20.86A.8.8 0 0 1 6 20.2V5a1 1 0 0 1 1-1z" />
       </svg>
-      Bookmark
+      <span class="ctl-label">Bookmark</span>
       @if (bookmarks().length > 0) {
         <span class="font-mono text-[10px] text-text-3">{{ bookmarks().length }}</span>
       }
     </button>
 
+    <!-- Elastic spacer separating the left (transport) and right (config)
+         groups. min-w-0 so it can fully collapse before any control clips. -->
+    <div class="flex-1 min-w-0"></div>
+
     <!-- Language picker. Locked once capture starts (engine resolves the
          lock at capture.start time and doesn't re-read it). -->
-    <label class="no-drag flex items-center gap-1 text-text-3 text-xs">
+    <label class="flex items-center gap-1 text-text-3 text-xs shrink-0">
       <span class="font-mono">lang</span>
       <select
         class="px-2 py-1 rounded-input border border-border-2 bg-surface text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
@@ -134,12 +216,12 @@
       </select>
     </label>
 
-    <div class="flex-1"></div>
-
     <!-- Trust lozenge — the product's defining affordance. Audio stays
-         on this Mac; this is always-visible reassurance. -->
+         on this Mac; this is always-visible reassurance. The label text
+         collapses (icon-only) at narrow widths via .ctl-label; the title
+         keeps the full reassurance available on hover. -->
     <span
-      class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-border bg-bg-2 text-text-3 text-[11px] font-mono whitespace-nowrap"
+      class="ctl-lozenge inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-border bg-bg-2 text-text-3 text-[11px] font-mono whitespace-nowrap shrink-0"
       title="Audio is captured and transcribed entirely on this Mac. Nothing is sent to any server."
     >
       <!-- cloud-off glyph -->
@@ -148,64 +230,20 @@
         stroke-linejoin="round" aria-hidden="true">
         <path d="M3 3l18 18M7 17.5A4.5 4.5 0 0 1 7.5 8.5M9.5 5.5A6 6 0 0 1 19 10a3.5 3.5 0 0 1 1.7 6.6" />
       </svg>
-      audio · local-only
+      <span class="ctl-label">audio · local-only</span>
     </span>
 
     <!-- Dev readout — kept compact; not in the final design but useful
-         while building. conn state + live RTF. -->
-    <span class="text-text-3 text-[11px] font-mono" [title]="hello() ? ('engine v' + hello()!.engine_version + ' · ' + hello()!.model_loaded) : ''">
+         while building. conn state + live RTF. First to drop on narrow
+         windows (.ctl-dev hidden via the controls-bar breakpoint). -->
+    <span class="ctl-dev text-text-3 text-[11px] font-mono shrink-0" [title]="hello() ? ('engine v' + hello()!.engine_version + ' · ' + hello()!.model_loaded) : ''">
       {{ connectionLabel() }} · RTF {{ rtfDisplay() }}
     </span>
-
-    <!-- Panel toggles — collapse/show the Attendees (left) and Ask (right)
-         columns, mirroring the design's window accessory buttons. The CSS
-         breakpoints in app.component.css auto-hide these columns at narrow
-         widths; these buttons are the manual override on wide windows. -->
-    <button
-      type="button"
-      class="no-drag inline-flex items-center justify-center w-7 h-7 rounded-input cursor-pointer"
-      [class.text-accent]="leftPanelOpen()"
-      [class.text-text-2]="!leftPanelOpen()"
-      [class.bg-accent-soft]="leftPanelOpen()"
-      [class.hover:text-text]="!leftPanelOpen()"
-      [class.hover:bg-surface-2]="!leftPanelOpen()"
-      (click)="toggleLeftPanel()"
-      title="Toggle attendees panel"
-      aria-label="Toggle attendees panel"
-      [attr.aria-pressed]="leftPanelOpen()"
-    >
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-        stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
-        stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="4" width="18" height="16" rx="2" />
-        <path d="M9 4v16" />
-      </svg>
-    </button>
-    <button
-      type="button"
-      class="no-drag inline-flex items-center justify-center w-7 h-7 rounded-input cursor-pointer"
-      [class.text-accent]="rightPanelOpen()"
-      [class.text-text-2]="!rightPanelOpen()"
-      [class.bg-accent-soft]="rightPanelOpen()"
-      [class.hover:text-text]="!rightPanelOpen()"
-      [class.hover:bg-surface-2]="!rightPanelOpen()"
-      (click)="toggleRightPanel()"
-      title="Toggle Ask panel"
-      aria-label="Toggle Ask panel"
-      [attr.aria-pressed]="rightPanelOpen()"
-    >
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-        stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
-        stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="4" width="18" height="16" rx="2" />
-        <path d="M15 4v16" />
-      </svg>
-    </button>
 
     <!-- Settings — opens the preferences modal. Also bound to ⌘, . -->
     <button
       type="button"
-      class="no-drag inline-flex items-center justify-center w-7 h-7 rounded-input text-text-2 hover:text-text hover:bg-surface-2 cursor-pointer"
+      class="shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-input text-text-2 hover:text-text hover:bg-surface-2 cursor-pointer"
       (click)="openSettings()"
       title="Settings (⌘,)"
       aria-label="Open settings"
@@ -254,10 +292,11 @@
        and the saved/onboarding overlays sit ABOVE it as positioned
        siblings, so they coexist exactly as before. -->
   <div class="relative flex-1 flex flex-col min-h-0">
-    <!-- 3-column body. Column visibility is toggled by data attributes the
-         CSS reads (app.component.css): the user toggles + responsive
-         breakpoints both resolve to hiding the side columns, keeping the
-         transcript usable at any width (03-mw-compact.png). -->
+    <!-- 3-column body. The side columns SHRINK between clamp bounds as the
+         window narrows (matching 03-mw-compact.png) and never auto-vanish;
+         the only thing that hides a column is the user's top-bar toggle,
+         read here as data-left / data-right and resolved in
+         app.component.css. -->
     <div
       class="hark-grid flex-1 min-h-0"
       [attr.data-left]="leftPanelOpen()"
@@ -305,7 +344,7 @@
               }
             </div>
           } @else {
-            <div class="max-w-3xl mx-auto">
+            <div class="transcript-measure mx-auto">
               @for (s of finalizedSegments(); track s.utteranceId) {
                 <hark-transcript-line
                   [time]="formatTime(s.tStart)"

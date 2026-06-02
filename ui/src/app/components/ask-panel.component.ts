@@ -117,7 +117,10 @@ import { EyebrowComponent } from './eyebrow.component';
       }
       .empty .empty-title {
         display: flex;
-        align-items: center;
+        /* At the column's clamped minimum (~248px) the title can wrap to two
+         * lines; top-align the glyph so it stays beside the first line
+         * instead of centering against the taller wrapped block. */
+        align-items: flex-start;
         gap: 8px;
         margin-bottom: 8px;
         color: var(--text);
