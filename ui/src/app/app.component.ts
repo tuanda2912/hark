@@ -23,6 +23,7 @@ import {
 import { Subscription } from 'rxjs';
 import { EngineService } from './services/engine.service';
 import { PreferencesService } from './services/preferences.service';
+import { LlmService } from './services/llm.service';
 import {
   LANGUAGE_CHOICES,
   DisplayedSegment,
@@ -66,6 +67,12 @@ import { PostMeetingReviewComponent } from './components/post-meeting-review.com
 export class AppComponent implements OnInit, OnDestroy {
   private readonly engine = inject(EngineService);
   private readonly prefs = inject(PreferencesService);
+  private readonly llm = inject(LlmService);
+
+  /** True once an LLM provider is configured (ADR-0029). Gates the Ask panel:
+   *  with no model it shows its honest "set up a model" empty state and the
+   *  input stays disabled. */
+  readonly modelConfigured = this.llm.configured;
 
   readonly connection = this.engine.connection;
   readonly capture = this.engine.capture;

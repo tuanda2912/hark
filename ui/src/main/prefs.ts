@@ -22,6 +22,8 @@
 import { app } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import type { LlmProviderId } from './llm/types';
+import { LLM_PROVIDER_IDS } from './llm/types';
 
 /**
  * Versioned prefs schema. Keep this minimal and only add fields that have
@@ -87,6 +89,25 @@ export interface Prefs {
     readonly height: number;
     readonly x?: number;
     readonly y?: number;
+  };
+  /**
+   * LLM provider configuration (ADR-0029/0030, Phase 6). CONFIG ONLY — the
+   * API KEY is NEVER stored here; it lives encrypted in the separate
+   * llm-keys.json keystore (ADR-0030). Optional + back-compat: a *missing*
+   * `llm` block (old prefs.json, fresh install, or a user who hasn't set up an
+   * LLM) reads as "unconfigured", which is the safe default — no provider, no
+   * egress. The renderer sets this via window.hark.llm.setConfig.
+   *
+   *  - provider: which provider family ('anthropic' | 'openai-compatible').
+   *  - model:    the model id string for that provider.
+   *  - baseUrl:  endpoint base for 'openai-compatible' (OpenAI / OpenRouter /
+   *              Gemini-compat / Ollama / LM Studio / llama.cpp). Ignored by
+   *              'anthropic' (fixed endpoint). Optional.
+   */
+  readonly llm?: {
+    readonly provider: LlmProviderId;
+    readonly model: string;
+    readonly baseUrl?: string;
   };
 }
 
@@ -183,6 +204,12 @@ export function savePrefs(input: unknown): void {
         : existing.hasCompletedOnboarding,
     privacy: mergedPrivacy,
     window: 'window' in patch ? patch['window'] : existing.window,
+    // The `llm` block is treated as a whole-value overlay (like `window`):
+    // a partial save that OMITS `llm` keeps the persisted config, and a save
+    // that INCLUDES `llm` replaces it wholesale. Per-field merging isn't
+    // needed — setConfig always sends the complete {provider, model, baseUrl?}
+    // triple, never a fragment. sanitizeLlm below is the final trust boundary.
+    llm: 'llm' in patch ? patch['llm'] : existing.llm,
   };
 
   const clean = sanitize(merged);
@@ -251,13 +278,47 @@ function sanitize(input: unknown): Prefs {
   // restore time (main.ts), since displays can change between save and load.
   const window = sanitizeWindow(o['window']);
 
+  // Optional LLM config (ADR-0029/0030). Only carried through when the
+  // provider is a known enum AND model is a string; otherwise dropped so the
+  // field stays absent (= unconfigured = safe, no egress). CONFIG ONLY — there
+  // is no key field here to validate.
+  const llm = sanitizeLlm(o['llm']);
+
   const base: Prefs = {
     version: 1,
     audio: { mic, system, language },
     hasCompletedOnboarding,
     privacy,
   };
-  return window ? { ...base, window } : base;
+  const withWindow = window ? { ...base, window } : base;
+  return llm ? { ...withWindow, llm } : withWindow;
+}
+
+/**
+ * Validate the optional LLM config slice (ADR-0029/0030). Returns undefined —
+ * dropping the field entirely — unless `provider` is a recognized enum value
+ * AND `model` is a non-empty string. `baseUrl`, when present, must be a string
+ * (and is only kept then). Anything else collapses to undefined, i.e. the safe
+ * "unconfigured" state. This NEVER carries a key: there is no key field in the
+ * Prefs schema — secrets live in the encrypted keystore (ADR-0030).
+ */
+function sanitizeLlm(input: unknown): Prefs['llm'] | undefined {
+  if (!isRecord(input)) return undefined;
+  const provider = input['provider'];
+  const model = input['model'];
+  if (typeof provider !== 'string') return undefined;
+  if (!(LLM_PROVIDER_IDS as readonly string[]).includes(provider)) return undefined;
+  if (typeof model !== 'string' || model.length === 0) return undefined;
+
+  const baseUrl = input['baseUrl'];
+  const out: { provider: LlmProviderId; model: string; baseUrl?: string } = {
+    provider: provider as LlmProviderId,
+    model,
+  };
+  if (typeof baseUrl === 'string' && baseUrl.length > 0) {
+    out.baseUrl = baseUrl;
+  }
+  return out;
 }
 
 /** Validate the privacy block. Each flag is a strict boolean; anything else

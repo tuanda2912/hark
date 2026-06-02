@@ -23,12 +23,16 @@ import {
   Component,
   HostListener,
   computed,
+  effect,
   inject,
+  signal,
   output,
 } from '@angular/core';
 import { EngineService } from '../services/engine.service';
 import { PreferencesService } from '../services/preferences.service';
+import { LlmService } from '../services/llm.service';
 import { LANGUAGE_CHOICES } from '../services/engine.types';
+import type { LlmProviderId } from '../services/llm.types';
 
 @Component({
   selector: 'hark-settings-panel',
@@ -43,6 +47,7 @@ export class SettingsPanelComponent {
 
   private readonly engine = inject(EngineService);
   private readonly prefs = inject(PreferencesService);
+  private readonly llm = inject(LlmService);
 
   // ─── General (read-only) ────────────────────────────────────────────
   private readonly hello = this.engine.hello;
@@ -116,6 +121,116 @@ export class SettingsPanelComponent {
   }
   toggleSyncSpeakers(): void {
     this.prefs.setPrivacy({ syncSpeakers: !this.syncSpeakers() });
+  }
+
+  // ─── Models (LLM provider) — ADR-0029 ───────────────────────────────
+  //
+  // Configures the cloud/local model used by Ask + summaries. All provider
+  // HTTP lives in Electron MAIN; this pane only talks to `window.hark.llm`
+  // over IPC via LlmService. The API key is sent down to main (encrypted via
+  // safeStorage) and NEVER read back — the input is a write-only field cleared
+  // after Save, and we surface only the `hasKey` indicator.
+  //
+  // The provider/model/baseUrl are edited in local draft signals so the user
+  // can type freely, then committed with Save (setConfig). The draft seeds
+  // from the current config and follows it as the persisted status changes.
+  readonly llmConfigured = this.llm.configured;
+  readonly llmHasKey = this.llm.hasKey;
+  readonly llmConfig = this.llm.config;
+  readonly llmTesting = this.llm.testing;
+  readonly llmTestResult = this.llm.testResult;
+
+  /** Local draft of the provider, seeded from the saved config (default
+   *  anthropic). Drives which fields show + what Save persists. */
+  readonly draftProvider = signal<LlmProviderId>(
+    this.llm.config()?.provider ?? 'anthropic',
+  );
+  readonly draftModel = signal<string>(this.llm.config()?.model ?? '');
+  readonly draftBaseUrl = signal<string>(this.llm.config()?.baseUrl ?? '');
+
+  /** Write-only API-key field. Held locally only long enough to send to main,
+   *  then cleared on Save — we can't read the stored key back and never want
+   *  to display it. */
+  readonly draftApiKey = signal<string>('');
+
+  /** The status loads over async IPC, so the saved config may be null at field
+   *  init. Seed the drafts ONCE the first config arrives, without clobbering a
+   *  user who has already started editing. After that, the drafts are the
+   *  user's working copy and Save is the only writer back to main. */
+  private seededDraft = false;
+  private readonly _seedDraft = effect(() => {
+    const cfg = this.llm.config();
+    if (this.seededDraft || !cfg) return;
+    this.draftProvider.set(cfg.provider);
+    this.draftModel.set(cfg.model);
+    this.draftBaseUrl.set(cfg.baseUrl ?? '');
+    this.seededDraft = true;
+  });
+
+  /** Whether the base-URL row is shown (OpenAI-compatible / local only). */
+  readonly showBaseUrl = computed(
+    () => this.draftProvider() === 'openai-compatible',
+  );
+
+  /** Placeholder model name, provider-appropriate. */
+  readonly modelPlaceholder = computed(() =>
+    this.draftProvider() === 'anthropic'
+      ? 'claude-3-5-sonnet-latest'
+      : 'gpt-4o (cloud) or llama3.1 (local)',
+  );
+
+  onProviderChange(value: string): void {
+    // Only the two known ids; anything else falls back to anthropic.
+    this.draftProvider.set(
+      value === 'openai-compatible' ? 'openai-compatible' : 'anthropic',
+    );
+    // Switching providers invalidates a prior probe result.
+    this.llm.testResult.set(null);
+  }
+
+  onModelChange(value: string): void {
+    this.draftModel.set(value);
+  }
+
+  onBaseUrlChange(value: string): void {
+    this.draftBaseUrl.set(value);
+  }
+
+  onApiKeyChange(value: string): void {
+    this.draftApiKey.set(value);
+  }
+
+  /** Persist the non-secret provider/model/baseUrl. baseUrl is only sent for
+   *  the openai-compatible provider (trimmed; omitted when blank). */
+  async saveModelConfig(): Promise<void> {
+    const provider = this.draftProvider();
+    const model = this.draftModel().trim();
+    const baseUrl = this.draftBaseUrl().trim();
+    await this.llm.setConfig({
+      provider,
+      model,
+      ...(provider === 'openai-compatible' && baseUrl ? { baseUrl } : {}),
+    });
+  }
+
+  /** Send the typed key to main, then clear the field — we never keep or
+   *  re-display it. No-op on an empty field. */
+  async saveApiKey(): Promise<void> {
+    const key = this.draftApiKey();
+    if (!key) return;
+    await this.llm.setApiKey(key);
+    this.draftApiKey.set('');
+  }
+
+  /** Forget the saved key for the current provider; also clears any draft. */
+  async clearApiKey(): Promise<void> {
+    await this.llm.clearApiKey();
+    this.draftApiKey.set('');
+  }
+
+  /** Probe the configured provider; result surfaces inline. */
+  async testConnection(): Promise<void> {
+    await this.llm.test();
   }
 
   // ─── Vault ──────────────────────────────────────────────────────────

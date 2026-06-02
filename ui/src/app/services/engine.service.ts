@@ -37,6 +37,11 @@ import {
   EngineCommand,
 } from './engine.types';
 import type { Prefs, PrefsResult } from './preferences.service';
+import type {
+  LlmConfig,
+  LlmStatus,
+  LlmTestResult,
+} from './llm.types';
 
 /** Capture/connection snapshot pushed to the menu-bar tray. Mirrors
  *  TrayState in main/tray.ts and preload.ts. */
@@ -72,6 +77,26 @@ declare global {
       getMicPermission(): Promise<string>;
       /** Fire the macOS Microphone prompt; resolves true if granted. */
       askMicPermission(): Promise<boolean>;
+      /**
+       * LLM provider bridge (ADR-0029). All provider HTTP lives in MAIN; the
+       * renderer only talks over this IPC surface — no direct network, no CSP
+       * relaxation, and the API key is set/cleared but NEVER read back (main
+       * encrypts it via safeStorage). The renderer consumes `LlmStatus`
+       * (booleans + non-secret config) and `LlmTestResult` only.
+       */
+      llm: {
+        /** Current provider readiness snapshot. */
+        getStatus(): Promise<LlmStatus>;
+        /** Persist the non-secret provider/model/baseUrl; returns the new status. */
+        setConfig(cfg: LlmConfig): Promise<LlmStatus>;
+        /** Save the API key for the CURRENT provider (main encrypts it). The
+         *  key never round-trips back; the renderer learns only `hasKey`. */
+        setApiKey(key: string): Promise<LlmStatus>;
+        /** Forget the saved key for the current provider. */
+        clearApiKey(): Promise<LlmStatus>;
+        /** Probe the configured provider; returns a one-line verdict. */
+        testConnection(): Promise<LlmTestResult>;
+      };
     };
   }
 }

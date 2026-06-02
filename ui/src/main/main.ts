@@ -13,6 +13,8 @@ import * as fs from 'node:fs';
 import { spawnHarkd, HarkdHandle } from './harkd-spawn';
 import { HarkTray, TrayState } from './tray';
 import { loadPrefs, savePrefs, getPrefsPath, Prefs } from './prefs';
+import * as llm from './llm';
+import type { LlmStatus, LlmTestResult } from './llm/types';
 
 // The user's vault lives OUTSIDE the repo and the app-support dir. Per
 // CLAUDE.md it is the only place transcripts/notes are written, so the
@@ -466,8 +468,49 @@ ipcMain.handle('hark:ask-mic-permission', async (): Promise<boolean> => {
   }
 });
 
+// ─── LLM IPC (Phase 6 — ADR-0029 / ADR-0030) ──────────────────────────
+// The FIRST outbound network surface in the app. All LLM calls originate
+// HERE in main (never the engine, never the renderer) and only on explicit
+// user invocation (testConnection). The llm module owns config (prefs.llm) +
+// the encrypted keystore + the provider layer; main only mediates the IPC.
+//
+// SECURITY (privacy-audited surface — ADR-0029/0030):
+//   - The API key NEVER crosses the contextBridge. The renderer can set/clear
+//     it and learn `hasKey: boolean`, but get-status/set-config/set-key/
+//     clear-key all return only an LlmStatus (no key field). Decryption
+//     happens solely inside `llm.testConnection` to build an auth header.
+//   - Payloads arrive as untrusted IPC data; the llm module re-validates
+//     (provider enum, string model, string key) before persisting/using.
+//   - Handlers are async/throwing where the llm module throws (e.g. keychain
+//     unavailable, invalid payload) so the renderer gets a rejected Promise
+//     with a content-free message — never a key or response body.
+ipcMain.handle('hark:llm:get-status', (): LlmStatus => {
+  return llm.getStatus();
+});
+
+ipcMain.handle('hark:llm:set-config', (_ev, raw: unknown): LlmStatus => {
+  return llm.setConfig(raw);
+});
+
+ipcMain.handle('hark:llm:set-key', (_ev, raw: unknown): LlmStatus => {
+  // raw is the plaintext key crossing the bridge ONE WAY (renderer → main).
+  // llm.setApiKey encrypts it for the current provider via safeStorage; it is
+  // never logged here and never read back across the bridge.
+  return llm.setApiKey(raw);
+});
+
+ipcMain.handle('hark:llm:clear-key', (): LlmStatus => {
+  return llm.clearApiKey();
+});
+
+ipcMain.handle('hark:llm:test', (): Promise<LlmTestResult> => {
+  return llm.testConnection();
+});
+
 // eslint-disable-next-line no-console
 console.log(`[hark] prefs file: ${getPrefsPath()}`);
+// eslint-disable-next-line no-console
+console.log(`[hark] llm keystore: ${llm.getKeyStorePath()}`);
 
 app.whenReady().then(bootstrap).catch((err) => {
   // eslint-disable-next-line no-console

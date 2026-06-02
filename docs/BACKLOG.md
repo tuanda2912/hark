@@ -46,16 +46,32 @@ The product supports **multiple model providers — cloud AND local** — not ju
 with **zero data leaving the machine**, making cloud one *option*, not the only path. The UI
 is being built **provider-agnostic now**; the integration lands later.
 
-- **Provider abstraction + integration.** A pluggable LLM layer: cloud (Anthropic native +
-  an OpenAI-compatible client covers OpenAI / Gemini / OpenRouter / …) and local (Ollama /
-  LM Studio / llama.cpp — mostly OpenAI-compatible on `localhost`). Cloud keys in Keychain;
-  local needs none. Each **cloud** call is explicit, itemized egress (rules #1/#6 — **ADR
-  required before any network egress lands**).
-  - *Pick up:* design the provider interface + decide where it runs (engine vs Electron main);
-    powers summaries, Q&A, and translation-high-quality. UI hooks (model picker, "answered by
-    X") are being built now.
+- **Provider abstraction + foundation — SHIPPED (Slice 1).** Pluggable LLM layer in **Electron
+  main** (ADR-0029): Anthropic-native + OpenAI-compatible (covers OpenAI / Gemini / OpenRouter
+  cloud AND local Ollama / LM Studio / llama.cpp on `localhost`), raw `fetch` (no SDK). Cloud
+  key in macOS Keychain via `safeStorage` (ADR-0030); local needs none. Settings → Models pane
+  (provider / model / baseUrl / key / Test connection); `modelConfigured()` gate live. Engine
+  stays network-free; CSP unchanged. Privacy-audited PASS.
+- **Meeting summary (Slice 2 — next).** "Summarize" → main reads the meeting `.md` → redact →
+  stream TL;DR/chapters/actions → append to the vault file. First content egress; redaction +
+  cloud-call log land here.
+- **This-meeting Q&A (Slice 3).** Wire the Ask panel for the *current* meeting — feeds the
+  current transcript as context (no vector index needed). Streaming answer + citations.
+- **Vault-wide / 2nd-brain Q&A — RAG (Slice 4, deferred).** Cross-meeting questions over the
+  whole vault. Cloud model NEVER sees the vault: **local** embed → **local** vector search
+  (top-K) → only the redacted top-K chunks + question go to the model → answer + citations.
+  Local model ⇒ zero egress. Design's `07-data-flows.md` = BGE-small CoreML + SQLite-vec.
+  - **Obsidian 2nd-brain (user direction, 2026-06-02):** Obsidian is the 2nd brain; Hark's vault
+    is already Obsidian-native Markdown (`[[wikilinks]]` parsing is a separate backlog item), so
+    Obsidian can point at it directly. **Chosen shape — HYBRID (directional, ADR at build time):**
+    the user's **external tool fetches/syncs Obsidian into the vault folder** (Markdown); **Hark
+    builds + owns the LOCAL vector index** over that folder and does retrieval. Keeps retrieval
+    local/private + integrated, while ingestion stays the external tool's job. *Pick up:* Hark
+    needs a local indexer (chunk + embed via on-device model) + vector store (SQLite-vec) + a
+    file-watcher to keep the index fresh as the tool drops/updates notes; ADR the indexer +
+    embedding-model choice + chunking when we build Slice 4.
 - **Cloud-call log + PII redaction** (the design's "PII redacted · View log"). Itemize every
-  cloud call and redact PII before sending; local calls need neither. Part of the integration.
+  cloud call and redact PII before sending; local calls need neither. Lands with Slice 2.
 
 ## Speaker / diarization (Phase 5.1)
 

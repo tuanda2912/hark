@@ -282,6 +282,198 @@
         </p>
       </section>
 
+      <!-- ─── Models (LLM provider) — ADR-0029 ─── -->
+      <section class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+              Models
+            </h3>
+            <!-- Configured indicator, driven by main's `configured` flag. -->
+            <span
+              class="inline-flex items-center gap-1.5 font-mono text-[11px]"
+              [style.color]="
+                llmConfigured() ? 'var(--status-success)' : 'var(--text-3)'
+              "
+            >
+              <span
+                class="inline-block w-2 h-2 rounded-full"
+                [style.background]="
+                  llmConfigured() ? 'var(--status-success)' : 'var(--border-2)'
+                "
+                aria-hidden="true"
+              ></span>
+              {{ llmConfigured() ? 'configured' : 'not configured' }}
+            </span>
+          </div>
+          <p class="text-xs text-text-3">
+            The model that powers Ask and summaries. Point it at a cloud
+            provider or a local model running on this Mac.
+          </p>
+        </div>
+
+        <!-- Provider -->
+        <div class="flex items-center justify-between gap-4">
+          <label class="flex flex-col" for="llm-provider">
+            <span class="text-sm text-text">Provider</span>
+            <span class="text-xs text-text-3">
+              Anthropic, or any OpenAI-compatible endpoint.
+            </span>
+          </label>
+          <select
+            id="llm-provider"
+            class="px-2 py-1 rounded-input border border-border-2 bg-surface text-text text-sm cursor-pointer"
+            [value]="draftProvider()"
+            (change)="onProviderChange($any($event.target).value)"
+          >
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="openai-compatible">OpenAI-compatible / local</option>
+          </select>
+        </div>
+
+        <!-- Model -->
+        <div class="flex flex-col gap-1">
+          <label class="text-sm text-text" for="llm-model">Model</label>
+          <input
+            id="llm-model"
+            type="text"
+            class="px-2 py-1.5 rounded-input border border-border-2 bg-surface text-text text-sm font-mono"
+            [value]="draftModel()"
+            [placeholder]="modelPlaceholder()"
+            (input)="onModelChange($any($event.target).value)"
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </div>
+
+        <!-- Base URL — OpenAI-compatible / local only -->
+        @if (showBaseUrl()) {
+          <div class="flex flex-col gap-1">
+            <label class="text-sm text-text" for="llm-base-url">Base URL</label>
+            <input
+              id="llm-base-url"
+              type="text"
+              class="px-2 py-1.5 rounded-input border border-border-2 bg-surface text-text text-sm font-mono"
+              [value]="draftBaseUrl()"
+              placeholder="https://api.openai.com/v1 or http://localhost:11434/v1"
+              (input)="onBaseUrlChange($any($event.target).value)"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <span class="text-xs text-text-3">
+              Point this at a cloud endpoint or a local model (Ollama / LM
+              Studio / llama.cpp). A localhost endpoint needs no key and sends
+              nothing off your Mac.
+            </span>
+          </div>
+        }
+
+        <!-- Save provider/model/baseUrl -->
+        <div class="flex items-center justify-end">
+          <button
+            type="button"
+            class="px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text text-xs cursor-pointer"
+            (click)="saveModelConfig()"
+          >
+            Save model
+          </button>
+        </div>
+
+        <!-- API key — write-only; we never display the stored key. -->
+        <div class="flex flex-col gap-1.5">
+          <div class="flex items-center justify-between gap-3">
+            <label class="text-sm text-text" for="llm-api-key">
+              API key
+              @if (showBaseUrl()) {
+                <span class="text-text-3 font-normal">(optional for local)</span>
+              }
+            </label>
+            @if (llmHasKey()) {
+              <span
+                class="inline-flex items-center gap-1 font-mono text-[11px]"
+                [style.color]="'var(--status-success)'"
+              >
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+                  stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                  stroke-linejoin="round" aria-hidden="true">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+                key saved
+              </span>
+            }
+          </div>
+          <div class="flex items-center gap-2">
+            <input
+              id="llm-api-key"
+              type="password"
+              class="flex-1 px-2 py-1.5 rounded-input border border-border-2 bg-surface text-text text-sm font-mono"
+              [value]="draftApiKey()"
+              [placeholder]="llmHasKey() ? '•••••••••• (saved)' : 'Paste a key to save it'"
+              (input)="onApiKeyChange($any($event.target).value)"
+              spellcheck="false"
+              autocomplete="off"
+              aria-label="API key (write-only; the saved key is never shown)"
+            />
+            <button
+              type="button"
+              class="shrink-0 px-3 py-1.5 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              [disabled]="draftApiKey().length === 0"
+              (click)="saveApiKey()"
+            >
+              Save key
+            </button>
+            <button
+              type="button"
+              class="shrink-0 px-3 py-1.5 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              [disabled]="!llmHasKey()"
+              (click)="clearApiKey()"
+            >
+              Clear key
+            </button>
+          </div>
+          <span class="text-xs text-text-3">
+            Stored encrypted on this Mac (macOS Keychain via safeStorage). Hark
+            sends it only to your chosen provider, and never shows it again.
+          </span>
+        </div>
+
+        <!-- Test connection -->
+        <div class="flex items-center gap-3">
+          <button
+            type="button"
+            class="shrink-0 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            [disabled]="llmTesting()"
+            (click)="testConnection()"
+          >
+            {{ llmTesting() ? 'Testing…' : 'Test connection' }}
+          </button>
+          @if (llmTestResult(); as result) {
+            <span
+              class="inline-flex items-center gap-1.5 text-xs"
+              [style.color]="
+                result.ok ? 'var(--status-success)' : 'var(--status-recording)'
+              "
+            >
+              <span aria-hidden="true">{{ result.ok ? '✓' : '✗' }}</span>
+              {{ result.detail }}
+            </span>
+          }
+        </div>
+
+        <!-- Egress disclosure (ADR-0029). Honest + short. -->
+        <div class="flex flex-col gap-2 px-3 py-3 rounded-panel bg-bg-2 border border-border">
+          <h4 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+            What leaves your Mac
+          </h4>
+          <p class="text-xs text-text-2 leading-relaxed">
+            A cloud model receives transcript <span class="text-text">text</span>
+            only — never your audio or voiceprints — and only when you invoke an
+            action (Ask, summarize). What's sent is redacted and logged locally
+            so you can see it. A local model sends nothing off this Mac.
+          </p>
+        </div>
+      </section>
+
       <!-- ─── Vault ─── -->
       <section class="flex flex-col gap-2">
         <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">

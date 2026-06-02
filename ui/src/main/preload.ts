@@ -8,6 +8,7 @@
 
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 import type { Prefs } from './prefs';
+import type { LlmConfig, LlmStatus, LlmTestResult } from './llm/types';
 
 /** State snapshot the renderer pushes to the tray. Mirrors TrayState in
  *  main/tray.ts and the Window.hark interface in engine.service.ts. */
@@ -115,5 +116,53 @@ contextBridge.exposeInMainWorld('hark', {
    *  otherwise. Optional nicety on the onboarding Permissions screen. */
   askMicPermission(): Promise<boolean> {
     return ipcRenderer.invoke('hark:ask-mic-permission');
+  },
+
+  // ─── LLM (Phase 6 — ADR-0029 / ADR-0030) ────────────────────────────
+  // The provider config + key live in MAIN. This bridge exposes ONLY the
+  // five contract methods; crucially there is NO `getKey`/`getApiKey` — the
+  // API key can be SET (renderer → main, one-way) but can NEVER be read back
+  // across the bridge. get-status/set-config/set-key/clear-key all resolve to
+  // an LlmStatus that carries `hasKey: boolean` but no key value. The renderer
+  // declares the matching window.hark.llm TS type separately.
+  llm: {
+    /** Current LLM status (configured / hasKey / config). Never the key. */
+    getStatus(): Promise<LlmStatus> {
+      return ipcRenderer.invoke('hark:llm:get-status');
+    },
+
+    /** Persist provider/model/baseUrl to prefs.llm (CONFIG only — no key) and
+     *  resolve a fresh status. We re-shape to ONLY the whitelisted fields here
+     *  so nothing extra crosses the bridge; main re-validates again. Rejects
+     *  on an invalid config. */
+    setConfig(cfg: LlmConfig): Promise<LlmStatus> {
+      return ipcRenderer.invoke('hark:llm:set-config', {
+        provider: cfg.provider,
+        model: typeof cfg.model === 'string' ? cfg.model : '',
+        // Pass baseUrl through only when it's actually a string; undefined is
+        // dropped by structured-clone so the key stays absent for 'anthropic'.
+        baseUrl: typeof cfg.baseUrl === 'string' ? cfg.baseUrl : undefined,
+      });
+    },
+
+    /** Encrypt + store the API key for the CURRENT provider via safeStorage
+     *  in main, then resolve a fresh status. The key crosses the bridge ONE
+     *  WAY (renderer → main) and is never returned. Rejects if key storage is
+     *  unavailable (no plaintext fallback) or the key is empty. */
+    setApiKey(key: string): Promise<LlmStatus> {
+      return ipcRenderer.invoke('hark:llm:set-key', key);
+    },
+
+    /** Remove the CURRENT provider's stored key; resolve a fresh status. */
+    clearApiKey(): Promise<LlmStatus> {
+      return ipcRenderer.invoke('hark:llm:clear-key');
+    },
+
+    /** Run a cheap live validation call against the current provider
+     *  (key + endpoint + model). Resolves { ok, detail } where `detail` is a
+     *  short, content-free message — never a response body or the key. */
+    testConnection(): Promise<LlmTestResult> {
+      return ipcRenderer.invoke('hark:llm:test');
+    },
   },
 });
