@@ -47,6 +47,23 @@ export interface Prefs {
    * persists it; the onboarding overlay never returns after that.
    */
   readonly hasCompletedOnboarding: boolean;
+  /**
+   * Last normal (non-maximized/non-fullscreen) window bounds, persisted by
+   * the main process so the window reopens where the user left it. Optional
+   * and back-compat: a *missing* `window` means "use the default size,
+   * centered" (old prefs.json, fresh install, or a session that never
+   * resized). `x`/`y` are optional too — present together once the window
+   * has moved; absent → open at the default size but let the OS center it.
+   * Bounds are validated against the live display layout at restore time
+   * (main.ts), so an unplugged external monitor can't strand the window
+   * off-screen.
+   */
+  readonly window?: {
+    readonly width: number;
+    readonly height: number;
+    readonly x?: number;
+    readonly y?: number;
+  };
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -88,14 +105,47 @@ export function loadPrefs(): Prefs {
 }
 
 /**
- * Validate + persist prefs. Unknown keys are dropped (whitelist via
- * sanitize); the write is atomic-ish: a temp file is fully written and
- * fsync'd-by-rename over the real target, so readers never see a partial
- * file. Errors are logged, not thrown — a failed save must not take down
- * the main process.
+ * Validate + persist prefs with MERGE semantics. This is the key
+ * correctness contract: there are now multiple independent writers —
+ *   - the renderer saves `audio` + `hasCompletedOnboarding`, and
+ *   - the main process saves `window` bounds (resize/move/close),
+ * each sending only *its* slice of the prefs. A naive
+ * `sanitize(input) → write` would rebuild the whole object from the
+ * partial payload and silently reset every key the caller didn't include
+ * (e.g. a window-bounds save would wipe the user's audio toggles and
+ * onboarding flag, and vice-versa).
+ *
+ * So we always: load the current on-disk prefs → overlay only the
+ * whitelisted keys that are actually present in `input` → write the merged
+ * result. `sanitize` still runs over the merged object as the final trust
+ * boundary (drops unknown keys, fixes types), and the write stays
+ * atomic-ish (temp file + rename) so readers never see a partial file.
+ * Errors are logged, not thrown — a failed save must not take down main.
  */
 export function savePrefs(input: unknown): void {
-  const clean = sanitize(input);
+  // Start from what's already persisted so untouched slices survive.
+  const existing = loadPrefs();
+  const patch = isRecord(input) ? input : {};
+
+  // Overlay only keys the caller actually supplied. `'k' in patch` (not a
+  // truthiness check) so an explicit `false` / `null` / `0` still applies;
+  // a missing key keeps the existing value. `audio` merges per-field too,
+  // so a partial `audio` object can't drop sibling fields.
+  const mergedAudio = isRecord(patch['audio'])
+    ? { ...existing.audio, ...patch['audio'] }
+    : existing.audio;
+
+  const merged: Record<string, unknown> = {
+    version: 1,
+    audio: mergedAudio,
+    hasCompletedOnboarding:
+      'hasCompletedOnboarding' in patch
+        ? patch['hasCompletedOnboarding']
+        : existing.hasCompletedOnboarding,
+    window: 'window' in patch ? patch['window'] : existing.window,
+  };
+
+  const clean = sanitize(merged);
   const file = prefsPath();
   const dir = path.dirname(file);
   try {
@@ -146,7 +196,41 @@ function sanitize(input: unknown): Prefs {
       ? o['hasCompletedOnboarding']
       : DEFAULT_PREFS.hasCompletedOnboarding;
 
-  return { version: 1, audio: { mic, system, language }, hasCompletedOnboarding };
+  // Optional window bounds. Only carried through when the whole rect is
+  // sane — width/height must be finite positive numbers; x/y are optional
+  // but, if present, must be finite numbers (negative is legal: a window on
+  // a display to the left of the primary has a negative x). A missing or
+  // malformed `window` is simply dropped, so the field stays absent and the
+  // caller falls back to the default size. We do NOT clamp to display
+  // geometry here — that's resolved against the *live* screen layout at
+  // restore time (main.ts), since displays can change between save and load.
+  const window = sanitizeWindow(o['window']);
+
+  const base: Prefs = { version: 1, audio: { mic, system, language }, hasCompletedOnboarding };
+  return window ? { ...base, window } : base;
+}
+
+/** Validate the optional window-bounds slice; returns undefined if absent
+ *  or unusable so the field stays off the persisted object entirely. */
+function sanitizeWindow(input: unknown): Prefs['window'] | undefined {
+  if (!isRecord(input)) return undefined;
+  const width = input['width'];
+  const height = input['height'];
+  // Width/height are required and must be positive finite numbers.
+  if (!isFinitePositive(width) || !isFinitePositive(height)) return undefined;
+
+  const x = input['x'];
+  const y = input['y'];
+  // x/y are optional and only kept as a pair (a half-set position is
+  // ambiguous — drop both and let the OS center). Negative is valid.
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    return { width, height, x: x as number, y: y as number };
+  }
+  return { width, height };
+}
+
+function isFinitePositive(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

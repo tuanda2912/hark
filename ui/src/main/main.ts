@@ -6,7 +6,7 @@
 //   window → loads ng serve URL (dev) or dist/renderer/index.html (prod)
 //   quit   → SIGTERM harkd, wait up to 5 s, SIGKILL if necessary
 
-import { app, BrowserWindow, ipcMain, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, systemPreferences, screen, Rectangle } from 'electron';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
@@ -51,6 +51,123 @@ let isQuitting = false;
 
 const DEV_URL = 'http://localhost:4200';
 
+// ─── Window sizing ────────────────────────────────────────────────────
+// Default size comfortably fits the 3-column MainWindow design
+// (Attendees 240 ∣ Transcript 1fr ∣ Ask 320), so the transcript isn't
+// cramped at first launch. The min stays well below the responsive
+// breakpoints (right panel drops ≤960, left ≤760) so the window still
+// shrinks gracefully — we never pin a min so high the user can't make it
+// small. Persisted user bounds (prefs.window) override the default size
+// once the window has been resized/moved; see resolveInitialBounds().
+const DEFAULT_WIDTH = 1280;
+const DEFAULT_HEIGHT = 820;
+const MIN_WIDTH = 900;
+const MIN_HEIGHT = 600;
+
+// How long to wait after the last resize/move event before persisting the
+// new bounds. Coalesces the burst of events a drag-resize fires into a
+// single disk write.
+const BOUNDS_SAVE_DEBOUNCE_MS = 400;
+
+/**
+ * Decide where to open the window. If prefs hold a saved rect AND it is
+ * still usable on the *current* display layout, reuse it; otherwise fall
+ * back to the default size, centered (left undefined → Electron centers).
+ *
+ * Display validation matters: bounds are saved against whatever monitors
+ * were attached at the time. If an external display is later unplugged, a
+ * literal restore could open the window entirely off-screen (no titlebar to
+ * grab, effectively lost). So we require the saved rect to *intersect* some
+ * connected display's work area before trusting it.
+ */
+function resolveInitialBounds(): {
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+} {
+  const fallback = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
+  const saved = loadPrefs().window;
+  if (!saved) return fallback;
+
+  // Clamp size to the min so a corrupt/tiny saved size can't open a window
+  // smaller than the floor (Electron would enforce minWidth/Height anyway,
+  // but clamping here keeps what we report consistent).
+  const width = Math.max(saved.width, MIN_WIDTH);
+  const height = Math.max(saved.height, MIN_HEIGHT);
+
+  // No saved position → use saved size but let the OS center it.
+  if (typeof saved.x !== 'number' || typeof saved.y !== 'number') {
+    return { width, height };
+  }
+
+  const rect: Rectangle = { x: saved.x, y: saved.y, width, height };
+  if (isRectOnSomeDisplay(rect)) {
+    return rect;
+  }
+  // Saved position is off every connected display (monitor unplugged /
+  // resolution change) → drop the position, keep the size, recenter.
+  return { width, height };
+}
+
+/** True if `rect` overlaps any connected display's work area by a usable
+ *  margin — enough of the window (and crucially its draggable titlebar) is
+ *  reachable. We require a real intersection, not just a touching edge. */
+function isRectOnSomeDisplay(rect: Rectangle): boolean {
+  // Minimum visible overlap (px) on each axis for the window to count as
+  // reachable — a sliver peeking onto a display isn't good enough.
+  const MIN_VISIBLE = 64;
+  return screen.getAllDisplays().some((display) => {
+    const wa = display.workArea;
+    const overlapX =
+      Math.min(rect.x + rect.width, wa.x + wa.width) - Math.max(rect.x, wa.x);
+    const overlapY =
+      Math.min(rect.y + rect.height, wa.y + wa.height) - Math.max(rect.y, wa.y);
+    return overlapX >= MIN_VISIBLE && overlapY >= MIN_VISIBLE;
+  });
+}
+
+// Pending debounce timer for bounds persistence. Cleared/reset on each
+// resize/move; flushed immediately on close so the final position sticks.
+let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Persist the window's current NORMAL bounds. Skipped while maximized or
+ * fullscreen so we never trap the user by reopening into a maximized rect
+ * that the OS treats as the new "normal" size — `getBounds()` in those
+ * states returns the whole-screen rect, which would then become the literal
+ * restore size. By only saving when the window is in its normal state we
+ * always remember the last *floating* size/position; entering maximize
+ * simply leaves the previously-saved normal bounds in place.
+ *
+ * Goes through savePrefs (merge semantics) so writing `window` never
+ * clobbers `audio` / `hasCompletedOnboarding`.
+ */
+function persistWindowBounds(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
+  if (win.isMaximized() || win.isFullScreen() || win.isMinimized()) return;
+  const b = win.getBounds();
+  savePrefs({ window: { width: b.width, height: b.height, x: b.x, y: b.y } });
+}
+
+/** Debounced bounds save — coalesces the event burst from a drag-resize. */
+function scheduleBoundsSave(win: BrowserWindow): void {
+  if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
+  boundsSaveTimer = setTimeout(() => {
+    boundsSaveTimer = null;
+    persistWindowBounds(win);
+  }, BOUNDS_SAVE_DEBOUNCE_MS);
+}
+
+/** Flush any pending debounced save immediately (window closing / quitting). */
+function flushBoundsSave(win: BrowserWindow): void {
+  if (boundsSaveTimer) {
+    clearTimeout(boundsSaveTimer);
+    boundsSaveTimer = null;
+  }
+  persistWindowBounds(win);
+}
+
 /** Show the window if hidden, hide it if visible — the tray click + the
  *  tray menu "Show/Hide" both route here. */
 function toggleWindow(): void {
@@ -73,11 +190,18 @@ function quitApp(): void {
 }
 
 async function createWindow(): Promise<void> {
+  // Reopen at the user's last bounds if they're still valid on the current
+  // display layout; otherwise the roomier default size, centered.
+  const initial = resolveInitialBounds();
   const win = new BrowserWindow({
-    width: 1100,
-    height: 700,
-    minWidth: 880,
-    minHeight: 560,
+    width: initial.width,
+    height: initial.height,
+    // x/y omitted (undefined) → Electron centers the window on the primary
+    // display, which is what we want when there's no saved position.
+    x: initial.x,
+    y: initial.y,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     backgroundColor: '#0e1116',
     show: false,
     titleBarStyle: 'hiddenInset',
@@ -126,11 +250,22 @@ async function createWindow(): Promise<void> {
     win.webContents.openDevTools({ mode: 'detach' });
   }
 
+  // Remember the window's size + position. Resize/move fire in bursts during
+  // a drag, so the save is debounced; the final state is flushed on close /
+  // quit. persistWindowBounds() skips maximized/fullscreen so we only ever
+  // store the normal floating bounds.
+  win.on('resize', () => scheduleBoundsSave(win));
+  win.on('move', () => scheduleBoundsSave(win));
+
   // Hide-on-close, don't destroy: the tray is the app's persistent home, so
   // the red traffic-light / ⌘W must just tuck the window away. We only let
   // the window actually close during a real quit (isQuitting), at which
   // point the renderer + WebSocket tear down with it.
   win.on('close', (ev) => {
+    // Capture the final bounds before the window goes away (real quit) or is
+    // hidden (normal close) — either way this is our last chance to persist
+    // the position the user left it at.
+    flushBoundsSave(win);
     if (!isQuitting) {
       ev.preventDefault();
       win.hide();
@@ -297,6 +432,12 @@ app.on('before-quit', async (ev) => {
   // A real quit is underway — make sure the window's close handler stops
   // intercepting (it checks isQuitting) and tear down harkd + the tray.
   isQuitting = true;
+  // Persist the final bounds now: the window may be hidden (so its `close`
+  // event won't fire on quit) or about to be destroyed. Safe to call with a
+  // live window; no-ops once destroyed.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    flushBoundsSave(mainWindow);
+  }
   if (harkd) {
     ev.preventDefault();
     const h = harkd;
