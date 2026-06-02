@@ -34,6 +34,9 @@ import { SettingsPanelComponent } from './components/settings-panel.component';
 import { MeetingSavedToastComponent } from './components/meeting-saved-toast.component';
 import { ModelLoadingComponent } from './components/model-loading.component';
 import { OnboardingComponent } from './components/onboarding.component';
+import { AttendeesPanelComponent } from './components/attendees-panel.component';
+import { AskPanelComponent } from './components/ask-panel.component';
+import { EyebrowComponent } from './components/eyebrow.component';
 
 @Component({
   selector: 'hark-root',
@@ -45,6 +48,9 @@ import { OnboardingComponent } from './components/onboarding.component';
     MeetingSavedToastComponent,
     ModelLoadingComponent,
     OnboardingComponent,
+    AttendeesPanelComponent,
+    AskPanelComponent,
+    EyebrowComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
@@ -161,6 +167,38 @@ export class AppComponent implements OnInit, OnDestroy {
 
   /** Settings modal visibility. Toggled by the gear button + ⌘, . */
   readonly settingsOpen = signal(false);
+
+  // ─── Side-panel collapse (3-column layout) ──────────────────────────
+  //
+  // The MainWindow is a 3-column grid: Attendees (left) | Transcript
+  // (center) | Ask (right). These flags let the user collapse either side
+  // column via the top-bar toggles, keeping the transcript usable. They are
+  // ALSO the manual escape hatch on top of the CSS breakpoints in
+  // app.component.css, which auto-hide the side columns at narrow widths so
+  // the layout never breaks (see 03-mw-compact.png).
+  readonly leftPanelOpen = signal(true);
+  readonly rightPanelOpen = signal(true);
+
+  toggleLeftPanel(): void {
+    this.leftPanelOpen.update((v) => !v);
+  }
+
+  toggleRightPanel(): void {
+    this.rightPanelOpen.update((v) => !v);
+  }
+
+  /**
+   * "Who is this?" on an unlabeled attendee — SHELL for Slice 1. The full
+   * speaker-tagging modal + auto-recognition is a later slice
+   * (SpeakerTagging.jsx; docs/BACKLOG.md). Inline renaming already exists in
+   * the meeting-saved card (ADR-0020), so for now we point the user there
+   * via a transient hint rather than faking a modal.
+   */
+  onTagSpeaker(_label: string): void {
+    this.showBookmarkToast(
+      'Name speakers from the "Meeting saved" card after recording.',
+    );
+  }
 
   /** Seed the live top-bar selections from the persisted defaults once the
    *  prefs have loaded from disk. Runs once: after `loaded()` flips true we

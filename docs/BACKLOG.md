@@ -39,6 +39,24 @@ _Last updated: 2026-06-02_
   default Electron icon. Fine for the unsigned dry-run, not for a release.
   - *Pick up:* drop a 1024px `icon.icns` (or `.png`, electron-builder converts) at `ui/build/`.
 
+## LLM / model providers (Phase 6 — integration deferred, UI-first)
+
+The product supports **multiple model providers — cloud AND local** — not just Claude
+(user directive, 2026-06-02). Local models are a privacy win: summaries / Q&A / translation
+with **zero data leaving the machine**, making cloud one *option*, not the only path. The UI
+is being built **provider-agnostic now**; the integration lands later.
+
+- **Provider abstraction + integration.** A pluggable LLM layer: cloud (Anthropic native +
+  an OpenAI-compatible client covers OpenAI / Gemini / OpenRouter / …) and local (Ollama /
+  LM Studio / llama.cpp — mostly OpenAI-compatible on `localhost`). Cloud keys in Keychain;
+  local needs none. Each **cloud** call is explicit, itemized egress (rules #1/#6 — **ADR
+  required before any network egress lands**).
+  - *Pick up:* design the provider interface + decide where it runs (engine vs Electron main);
+    powers summaries, Q&A, and translation-high-quality. UI hooks (model picker, "answered by
+    X") are being built now.
+- **Cloud-call log + PII redaction** (the design's "PII redacted · View log"). Itemize every
+  cloud call and redact PII before sending; local calls need neither. Part of the integration.
+
 ## Speaker / diarization (Phase 5.1)
 
 - **Rename arbitrary PAST meetings.** `speaker.rename` (ADR-0020) MVP only renames the

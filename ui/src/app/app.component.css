@@ -21,3 +21,76 @@
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* ─── 3-column MainWindow grid (Attendees | Transcript | Ask) ───────────
+ *
+ * The center column is the flexible track; the side columns are fixed
+ * width (240 / 320) matching the design. Column visibility is driven by
+ * two layers, in order of precedence (most-specific wins):
+ *
+ *   1. Responsive breakpoints — at narrow widths the side columns are
+ *      force-hidden so the transcript stays usable (03-mw-compact.png).
+ *      This wins regardless of the user's toggle state.
+ *   2. User toggles — data-left / data-right="false" hides a column on a
+ *      wide window (the top-bar panel-toggle buttons).
+ *
+ * Hiding a column is two coordinated changes: drop its grid track AND set
+ * the element to display:none, so it neither reserves space nor renders.
+ * We enumerate the four track combinations rather than use auto-fit so the
+ * fixed widths stay exact. */
+.hark-grid {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
+}
+
+/* User toggles (wide window). */
+.hark-grid[data-left='false'] {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+.hark-grid[data-right='false'] {
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+.hark-grid[data-left='false'][data-right='false'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.hark-grid[data-left='false'] .hark-col-left {
+  display: none;
+}
+.hark-grid[data-right='false'] .hark-col-right {
+  display: none;
+}
+
+/* The columns are grid children that must be allowed to shrink and scroll
+ * internally rather than blow out the grid row. */
+.hark-col-left,
+.hark-col-center,
+.hark-col-right {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Responsive: collapse side columns at narrow widths ──
+ * Below 960px drop the right (Ask) column; below 760px drop the left
+ * (Attendees) column too, leaving a full-width transcript. These override
+ * the user-toggle rules above (the media query plus !important on the track
+ * collapse) so a small window is never broken even if the user had both
+ * panels "open". */
+@media (max-width: 960px) {
+  .hark-grid {
+    grid-template-columns: 240px minmax(0, 1fr) !important;
+  }
+  .hark-col-right {
+    display: none !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .hark-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .hark-col-left,
+  .hark-col-right {
+    display: none !important;
+  }
+}
