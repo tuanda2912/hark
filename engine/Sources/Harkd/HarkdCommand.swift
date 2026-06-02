@@ -129,6 +129,21 @@ struct HarkdCommand: AsyncParsableCommand {
             eprint("harkd: diarizer load failed (\(error)); continuing WITHOUT speaker labels")
         }
 
+        // Load the STREAMING diarizer models for OPTIONAL live provisional
+        // labels (a SEPARATE model pair from the offline pass — they can't share
+        // loaded MLModels). NON-FATAL: a failure here only disables the live
+        // `live_diarization` flag; capture, transcription, and the offline stop
+        // pass are unaffected. Loaded last so neither it nor its download blocks
+        // the live path coming up. The session creates a fresh per-session
+        // LiveDiarizer from this shared manager only when capture.start opts in.
+        do {
+            let live = try await loadLiveDiarizerModels(progressOutput: .standardError, onProgress: onModelProgress)
+            await session.attachLiveDiarizer(manager: live.manager)
+            eprint("Live diarizer ready — optional provisional labels available (models: \(live.modelsDir.path))")
+        } catch {
+            eprint("harkd: live diarizer load failed (\(error)); live_diarization flag will be a no-op")
+        }
+
         if verbose {
             eprint("harkd: pid=\(ProcessInfo.processInfo.processIdentifier) ready, waiting for client")
         }

@@ -206,3 +206,183 @@ func loadDiarizerModels(
 
     return LoadedDiarizer(manager: manager, modelsDir: diarizerCacheDir, loadSeconds: loadSeconds)
 }
+
+// ─── STREAMING (live) diarizer load — OPTIONAL, separate models ──────────────
+//
+// The LIVE provisional path uses FluidAudio's streaming `DiarizerManager`,
+// which needs the streaming model pair (`pyannote_segmentation.mlmodelc` +
+// `wespeaker_v2.mlmodelc`) — DIFFERENT files from the offline pipeline's
+// `Segmentation/Embedding/FBank/PldaRho.mlmodelc`. The two pipelines therefore
+// CANNOT share loaded MLModels; this is a separate one-time download + ANE
+// compile. Both sets cache in the SAME HF repo folder
+// (`speaker-diarization-coreml/`) under Hark's dir, so rule #2 still holds.
+//
+// Cost: a second, modest model pair resident on the ANE for the daemon's life
+// (segmentation ~6 MB + WeSpeaker ~28 MB). Loaded ONLY at startup when the live
+// path may be used; the live diarizer is then attached per-session only when a
+// `capture.start` sets `live_diarization: true`. Failure here is NON-FATAL —
+// capture, live transcription, and the offline pass all still work; only the
+// PROVISIONAL live labels are skipped.
+
+struct LoadedLiveDiarizer {
+    let manager: DiarizerManager
+    let modelsDir: URL
+    let loadSeconds: Double
+}
+
+/// Resolved live-diar clustering tuning — a tiny PURE value so the env→config
+/// mapping is unit-testable WITHOUT loading a `DiarizerManager` (which needs the
+/// CoreML bundles on disk). `clusteringThreshold` is what we hand to
+/// `DiarizerConfig`; `fromEnv` records whether the env var was actually set
+/// (vs the default) just for the startup log's "(src)" tag.
+struct LiveDiarizerTuning: Equatable {
+    let clusteringThreshold: Float
+    let fromEnv: Bool
+}
+
+/// Default live `clusteringThreshold`. CHOSEN, not FluidAudio's `.default` (0.7).
+///
+/// The operative knob on the STREAMING path is NOT `clusteringThreshold`
+/// directly — it's `SpeakerManager.speakerThreshold`, a MAX COSINE *DISTANCE*
+/// (range 0=identical … 2=opposite; see `SpeakerUtilities.cosineDistance`).
+/// `SpeakerManager.assignSpeaker` creates a NEW speaker only when the closest
+/// existing speaker's distance is `>= speakerThreshold` — so a LOWER threshold
+/// makes a new cluster EASIER to spawn (MORE speakers); a HIGHER one merges
+/// everyone into one. `DiarizerManager.init` derives that distance from this
+/// config field as `speakerThreshold = clusteringThreshold * 1.2`.
+///
+/// FluidAudio's `.default` 0.7 → speakerThreshold 0.84: a cosine distance of
+/// 0.84 means a similarity of only 0.16 is enough to be "the same person", so
+/// every voice collapses into Speaker A (the bug we're fixing). FluidAudio's
+/// own macOS `AssignmentConfig.maxDistanceForAssignment` is 0.65; to land the
+/// DERIVED `speakerThreshold` there we want clusteringThreshold ≈ 0.65/1.2 ≈
+/// 0.54. We use 0.55 → speakerThreshold 0.66 (≈ FluidAudio's recommended 0.65)
+/// and embeddingThreshold 0.44 (≈ its recommended 0.45). The env knob handles
+/// the rest per-conversation.
+let defaultLiveDiarThreshold: Float = 0.55
+
+/// Build live-diar clustering tuning from `HARK_LIVE_DIAR_THRESHOLD`. PURE
+/// (env dict in, value out) so it's testable without the model bundles.
+///
+/// Knob (env → field → default → clamp):
+///   HARK_LIVE_DIAR_THRESHOLD → clusteringThreshold → 0.55 → [0.1, 0.9]
+///       Speaker-SEPARATION lever for the LIVE path. Cosine-DISTANCE-derived
+///       (LOWER = MORE speakers; see `defaultLiveDiarThreshold`). Clamp upper
+///       bound 0.9 matches FluidAudio's documented 0.5–0.9 range; lower 0.1
+///       keeps a sweep from collapsing to ~every-segment-its-own-speaker.
+///
+/// NOTE: a num-speakers HINT is deliberately NOT exposed for live. The config's
+/// `numClusters` field is NEVER read by the streaming `DiarizerManager` (the
+/// online `SpeakerManager.assignSpeaker` path has no speaker-count constraint —
+/// it's purely threshold-driven), so a `HARK_LIVE_DIAR_NUM_SPEAKERS` knob would
+/// be a dead lever. The offline pass (which DOES honor numSpeakers via VBx) is
+/// the count authority; live is best-effort separation only.
+func makeLiveDiarizerTuning(
+    env: [String: String] = ProcessInfo.processInfo.environment,
+    progressOutput: FileHandle = .standardError
+) -> LiveDiarizerTuning {
+    let key = "HARK_LIVE_DIAR_THRESHOLD"
+    guard let raw = env[key]?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else {
+        return LiveDiarizerTuning(clusteringThreshold: defaultLiveDiarThreshold, fromEnv: false)
+    }
+    guard let parsed = Float(raw) else {
+        progressOutput.write(Data(
+            "harkd: \(key)=\"\(raw)\" not a number — using default \(defaultLiveDiarThreshold)\n".utf8))
+        return LiveDiarizerTuning(clusteringThreshold: defaultLiveDiarThreshold, fromEnv: false)
+    }
+    let (lo, hi): (Float, Float) = (0.1, 0.9)
+    let clamped = min(max(parsed, lo), hi)
+    if clamped != parsed {
+        progressOutput.write(Data(
+            "harkd: \(key)=\(parsed) out of [\(lo), \(hi)] — clamped to \(clamped)\n".utf8))
+    }
+    return LiveDiarizerTuning(clusteringThreshold: clamped, fromEnv: true)
+}
+
+/// Download (one-time) + load the STREAMING diarizer models, then build a ready
+/// streaming `DiarizerManager`. Mirrors `loadDiarizerModels` but for the online
+/// pipeline. Throws on download/compile failure — the caller treats live-
+/// diarizer-unavailable as non-fatal.
+///
+/// `config` defaults to `nil`, in which case it's built from
+/// `HARK_LIVE_DIAR_THRESHOLD` via `makeLiveDiarizerTuning` (default
+/// clusteringThreshold 0.55 — see `defaultLiveDiarThreshold` for why NOT
+/// FluidAudio's 0.7). The live caller drives chunking itself by feeding
+/// `performCompleteDiarization` per ingested chunk, so chunkDuration only
+/// governs the manager's internal sub-chunking of each fed buffer — left at the
+/// library default.
+func loadLiveDiarizerModels(
+    config: DiarizerConfig? = nil,
+    progressOutput: FileHandle = .standardError,
+    onProgress: (@Sendable (_ phase: String, _ fraction: Double?, _ detail: String) -> Void)? = nil
+) async throws -> LoadedLiveDiarizer {
+    let start = Date()
+
+    // Resolve clustering tuning from env (or the chosen 0.55 default) BEFORE the
+    // download so the startup log records exactly what this run will use — same
+    // as the offline pass. When the caller passes an explicit `config` (tests),
+    // honor it verbatim and skip the env.
+    let liveConfig: DiarizerConfig
+    if let config {
+        liveConfig = config
+    } else {
+        let tuning = makeLiveDiarizerTuning(progressOutput: progressOutput)
+        var c = DiarizerConfig.default
+        c.clusteringThreshold = tuning.clusteringThreshold
+        liveConfig = c
+
+        // `DiarizerManager.init` derives the OPERATIVE knobs from
+        // clusteringThreshold: speakerThreshold = ×1.2 (max cosine DISTANCE to
+        // match an existing speaker — lower ⇒ more speakers) and
+        // embeddingThreshold = ×0.8. Log all three (derived values shown so the
+        // user can correlate the per-session `provisional speakers=N` line with
+        // the actual assign/create distance) plus the source tag, mirroring the
+        // offline `offline-diarizer config —` line.
+        let src = tuning.fromEnv ? "env" : "default"
+        progressOutput.write(Data(String(
+            format: "harkd: live-diarizer config — threshold=%.3f(%@) numSpeakers=auto(n/a)  [speakerThreshold=%.3f embeddingThreshold=%.3f derived; lower threshold ⇒ more speakers]\n",
+            liveConfig.clusteringThreshold, src,
+            liveConfig.clusteringThreshold * 1.2,
+            liveConfig.clusteringThreshold * 0.8
+        ).utf8))
+    }
+
+    // The streaming `DiarizerModels.download(to:)` treats the passed URL as the
+    // models-repo subdir and internally calls `directory.deletingLastPathComponent()`
+    // before re-appending the repo folder name ("speaker-diarization-coreml").
+    // So we pass Hark's `…/Models/speaker-diarization-coreml` — the loader pops
+    // the last component back to `…/Models`, then re-appends the repo folder —
+    // landing the streaming model files at
+    //   ~/Library/Application Support/Hark/Models/speaker-diarization-coreml/
+    // i.e. the SAME repo folder the offline files live in (distinct file names).
+    let harkModels = try HarkPaths.modelsDir()
+    let repoDir = harkModels.appendingPathComponent("speaker-diarization-coreml", isDirectory: true)
+
+    progressOutput.write(Data(
+        "Loading STREAMING diarizer models for LIVE provisional labels (first run downloads pyannote-3.1 segmentation + wespeaker CoreML)…\n".utf8))
+
+    let models = try await DiarizerModels.download(
+        to: repoDir,
+        progressHandler: onProgress.map { sink in
+            { @Sendable (progress: DownloadUtils.DownloadProgress) in
+                switch progress.phase {
+                case .listing, .downloading:
+                    sink("downloading_diarizer", progress.fractionCompleted, "Preparing live speaker recognition")
+                case .compiling:
+                    sink("optimizing_diarizer", progress.fractionCompleted, "Preparing live speaker recognition")
+                }
+            }
+        }
+    )
+
+    let manager = DiarizerManager(config: liveConfig)
+    manager.initialize(models: models)
+
+    let loadSeconds = Date().timeIntervalSince(start)
+    progressOutput.write(Data(String(
+        format: "Streaming (live) diarizer ready in %.2fs — models at: %@\n",
+        loadSeconds, repoDir.path
+    ).utf8))
+
+    return LoadedLiveDiarizer(manager: manager, modelsDir: repoDir, loadSeconds: loadSeconds)
+}

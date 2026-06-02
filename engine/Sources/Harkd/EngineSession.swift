@@ -67,6 +67,15 @@ actor EngineSession {
     /// Used only by the post-stop pass.
     private var diarizer: Diarizer?
 
+    /// Shared STREAMING diarizer manager for OPTIONAL live provisional labels.
+    /// Loaded once at startup (separate model pair from the offline pass), held
+    /// for the daemon's life. nil if the streaming models failed to load — in
+    /// which case `live_diarization: true` degrades to a no-op (capture + the
+    /// offline pass still work). A fresh per-session `LiveDiarizer` actor wraps
+    /// this manager only when a session opts in; it resets the manager's
+    /// speaker database at session start for clean per-meeting IDs.
+    private var liveDiarizerManager: DiarizerManager?
+
     // ─── Session-scoped state (reset per capture.start) ────────────────
     private var sessionId: String?
     private var sessionStartDate: Date?
@@ -111,6 +120,32 @@ actor EngineSession {
     // escape hatch if long meetings pressure memory. Cleared at capture.start
     // and after the diarization pass at stop.
     private var sessionAudio: [Float] = []
+
+    // ─── Live (provisional) diarization, OPTIONAL per session ───────────────
+    //
+    // Created per `capture.start` ONLY when the payload sets
+    // `live_diarization: true` AND the streaming manager loaded. nil otherwise
+    // (the default), so the live path is byte-for-byte unchanged when off.
+    //
+    /// Per-session streaming diarizer actor (provisional labels). nil = off.
+    private var liveDiarizer: LiveDiarizer?
+    /// Continuous-audio chunker for the live diarizer. We tee the SAME mixed
+    /// frames the transcription window sees into here and, every
+    /// `liveChunkSkipSec` of accumulated wall-clock audio, hand the most-recent
+    /// `liveChunkDurationSec` window to the LiveDiarizer actor (off the hot
+    /// path). Holds raw 16 kHz mono Float; bounded to the chunk window.
+    private var liveDiarChunkBuffer: [Float] = []
+    /// Session-time (seconds since capture start) of the first sample currently
+    /// in `liveDiarChunkBuffer`. Anchors each dispatched chunk on the SAME axis
+    /// the emitted utterances use, so overlap tagging is correct.
+    private var liveDiarChunkStartTime: Double = 0
+    /// Samples accumulated since the last chunk was dispatched.
+    private var liveDiarSamplesSinceDispatch: Int = 0
+    /// Streaming chunk geometry (FluidAudio docs' 5 s / 2 s recommendation).
+    /// 5 s gives the segmentation model enough context; a 2 s skip keeps labels
+    /// arriving roughly every 2 s of speech — well inside the provisional remit.
+    private let liveChunkDurationSec: Double = 5.0
+    private let liveChunkSkipSec: Double = 2.0
 
     /// Finalized utterances accumulated during the session, kept so the
     /// post-stop diarization pass can label them by time-overlap AND so the
@@ -200,6 +235,14 @@ actor EngineSession {
     /// wire frame in Slice 1 — readiness is logged in HarkdCommand.
     func attachDiarizer(_ diarizer: Diarizer) {
         self.diarizer = diarizer
+    }
+
+    /// Inject the shared STREAMING diarizer manager for OPTIONAL live labels.
+    /// Held for the daemon's life; a per-session `LiveDiarizer` wraps it only
+    /// when a `capture.start` opts in. Loaded after both WhisperKit and the
+    /// offline diarizer — purely additive, never affects readiness.
+    func attachLiveDiarizer(manager: DiarizerManager) {
+        self.liveDiarizerManager = manager
     }
 
     /// Broadcast a `meta.model_progress` frame and retain it as the latest
@@ -336,6 +379,13 @@ actor EngineSession {
                   !raw.isEmpty, raw != "auto" else { return nil }
             return raw
         }()
+        // Live provisional diarization is OPT-IN and only honoured when the
+        // streaming manager actually loaded. Default false → unchanged behavior.
+        let wantsLiveDiar = (cmd.liveDiarization ?? false) && (liveDiarizerManager != nil)
+        if (cmd.liveDiarization ?? false) && liveDiarizerManager == nil {
+            FileHandle.standardError.write(Data(
+                "harkd: live_diarization requested but streaming diarizer unavailable — provisional labels disabled this session\n".utf8))
+        }
 
         startingCapture = true
         defer { startingCapture = false }
@@ -356,7 +406,8 @@ actor EngineSession {
         do {
             try startCapture(captureMic: captureMic,
                              captureSystem: captureSystem,
-                             language: language)
+                             language: language,
+                             liveDiarization: wantsLiveDiar)
         } catch {
             sendError(client, id: id, code: "INTERNAL",
                       message: "could not start capture: \(error)", recoverable: false)
@@ -445,6 +496,23 @@ actor EngineSession {
         self.committedUpTo = 0
         self.rtfSum = 0
         self.rtfSamples = 0
+        // Tear down the per-session live (provisional) diarizer. The offline
+        // pass owns the authoritative labels at stop; the live diarizer's
+        // timeline is session-scoped and not consumed after stop. Log its
+        // run stats (state only) off the actor via a detached Task — the
+        // stats() await must not block the synchronous stop handler.
+        if let live = self.liveDiarizer {
+            Task {
+                let s = await live.stats()
+                FileHandle.standardError.write(Data(String(
+                    format: "harkd: live diarizer session done — chunks processed=%d dropped=%d, provisional speakers=%d, timeline segments=%d\n",
+                    s.processed, s.dropped, s.speakers, s.segments).utf8))
+            }
+        }
+        self.liveDiarizer = nil
+        self.liveDiarChunkBuffer.removeAll(keepingCapacity: false)
+        self.liveDiarChunkStartTime = 0
+        self.liveDiarSamplesSinceDispatch = 0
         // NOTE: `finalizedUtterances`, `sessionAudio`, and `supersededIds` are
         // NOT cleared here — the flush Task (which runs later on the actor)
         // still needs them for the diarization pass + vault write. They're
@@ -559,7 +627,8 @@ actor EngineSession {
 
     private func startCapture(captureMic: Bool,
                               captureSystem: Bool,
-                              language: String?) throws {
+                              language: String?,
+                              liveDiarization: Bool) throws {
         self.sessionId = UUID().uuidString
         self.sessionStartDate = Date()
         self.captureWallStart = Date()
@@ -582,6 +651,22 @@ actor EngineSession {
         }
         self.finalizedUtterances.removeAll(keepingCapacity: true)
         self.supersededIds.removeAll(keepingCapacity: true)
+
+        // Live provisional diarizer (OPTIONAL). Create a fresh per-session actor
+        // wrapping the shared streaming manager when this session opted in AND
+        // the manager loaded. The actor resets the manager's speaker DB at init
+        // for clean per-meeting IDs. nil = off (default) → live path unchanged.
+        self.liveDiarChunkBuffer.removeAll(keepingCapacity: true)
+        self.liveDiarChunkStartTime = 0
+        self.liveDiarSamplesSinceDispatch = 0
+        if liveDiarization, let mgr = liveDiarizerManager {
+            self.liveDiarizer = LiveDiarizer(manager: mgr)
+            self.liveDiarChunkBuffer.reserveCapacity(Int(liveChunkDurationSec * 16_000) + 16_000)
+            FileHandle.standardError.write(Data(
+                "harkd: live provisional diarization ON (chunk=\(liveChunkDurationSec)s skip=\(liveChunkSkipSec)s)\n".utf8))
+        } else {
+            self.liveDiarizer = nil
+        }
 
         // CapturePipeline runs its pump on a background DispatchQueue. The
         // floatFrameSink fires there. We bounce into the actor via a Task
@@ -623,6 +708,16 @@ actor EngineSession {
         // (which the VAD drops) still advance the timeline.
         let now = captureWallStart.map { Date().timeIntervalSince($0) } ?? sessionTimeSeconds
 
+        // Tee the SAME continuous (pre-VAD) frames to the live provisional
+        // diarizer's chunker, off the hot path. We feed continuous audio (not
+        // the speech-only window) so the diarizer's segment timeline shares the
+        // wall-clock session axis the emitted utterances are tagged against.
+        // The actual diarization runs on the LiveDiarizer actor (dispatched
+        // below), never here — this just accumulates + decides when to fire.
+        if liveDiarizer != nil {
+            feedLiveDiarizer(frames, frameStartSessionTime: now)
+        }
+
         let verdict = vad.classify(frames)
         switch verdict {
         case .silence:
@@ -653,6 +748,64 @@ actor EngineSession {
             await self?.runTranscription(samples: snapshot.samples,
                                          windowStartSessionTime: snapshot.windowStartSessionTime)
         }
+    }
+
+    // ─── Live (provisional) diarizer chunker ─────────────────────────────
+    //
+    // Accumulates the continuous mixed frames and, every `liveChunkSkipSec` of
+    // audio, dispatches the most-recent `liveChunkDurationSec` window to the
+    // LiveDiarizer actor. The accumulation + the dispatch decision run on THIS
+    // actor (cheap: appends + an index compare); the heavy diarization runs on
+    // the LiveDiarizer actor via a `Task { await … }` hop — it NEVER blocks the
+    // transcription hot path, and the LiveDiarizer drops a chunk if a prior one
+    // is still in flight (so provisional work can never queue unbounded). The
+    // chunk is snapshotted by value before the hop, so a later capture.stop that
+    // nils `liveDiarizer` can't race the snapshot.
+
+    private func feedLiveDiarizer(_ frames: [Float], frameStartSessionTime: Double) {
+        if liveDiarChunkBuffer.isEmpty {
+            liveDiarChunkStartTime = frameStartSessionTime
+        }
+        liveDiarChunkBuffer.append(contentsOf: frames)
+        liveDiarSamplesSinceDispatch += frames.count
+
+        let skipSamples = Int(liveChunkSkipSec * 16_000)
+        let chunkSamples = Int(liveChunkDurationSec * 16_000)
+        guard liveDiarSamplesSinceDispatch >= skipSamples else { return }
+        liveDiarSamplesSinceDispatch = 0
+
+        // Take the most-recent `chunkSamples` as this chunk; anchor its start
+        // time at the buffer start advanced by however many samples we dropped.
+        let dropCount = max(0, liveDiarChunkBuffer.count - chunkSamples)
+        let chunk = Array(liveDiarChunkBuffer.suffix(chunkSamples))
+        let chunkStart = liveDiarChunkStartTime + Double(dropCount) / 16_000.0
+
+        // Trim the retained buffer to the chunk window so it stays bounded;
+        // advance the buffer's start-time anchor to match.
+        if dropCount > 0 {
+            liveDiarChunkBuffer.removeFirst(dropCount)
+            liveDiarChunkStartTime = chunkStart
+        }
+
+        guard let live = liveDiarizer else { return }
+        let skipSec = liveChunkSkipSec  // capture the immutable value for the hop
+        Task { [weak self] in
+            let elapsed = await live.ingest(chunk, chunkStartTime: chunkStart)
+            if let secs = elapsed, secs > skipSec {
+                // Diarizing a chunk took longer than the skip interval — the
+                // live diarizer is the limiting factor. The LiveDiarizer's own
+                // busy-drop already prevents backlog; just note it (no text).
+                await self?.noteLiveDiarSlow(chunkSeconds: secs)
+            }
+        }
+    }
+
+    /// Off-hot-path log when a live-diarization chunk overran the skip interval.
+    /// State only — no transcript text (rule #2/#3).
+    private func noteLiveDiarSlow(chunkSeconds: Double) {
+        FileHandle.standardError.write(Data(String(
+            format: "harkd: live diarize chunk slow (%.2fs > %.2fs skip) — provisional labels may lag\n",
+            chunkSeconds, liveChunkSkipSec).utf8))
     }
 
     // ─── Transcription path ─────────────────────────────────────────────
@@ -767,13 +920,15 @@ actor EngineSession {
                                        commitHorizon: commitHorizon) {
             case .finalize:
                 ledger.markFinalized(utteranceId: uid)
-                emitSegment(uid: uid, isFinal: true, seg: seg)
+                let spk = await provisionalSpeaker(forStart: seg.tStart, end: seg.tEnd)
+                emitSegment(uid: uid, isFinal: true, seg: seg, speaker: spk)
                 // This region — its FULL span [tStart, tEnd] — is now committed.
                 maxCommittedEnd = max(maxCommittedEnd, seg.tEnd)
             case .partial:
                 // Still-hot region (after the watermark, ahead of the horizon):
                 // a partial — fresh tail or refined. Live replace-in-place.
-                emitSegment(uid: uid, isFinal: false, seg: seg)
+                let spk = await provisionalSpeaker(forStart: seg.tStart, end: seg.tEnd)
+                emitSegment(uid: uid, isFinal: false, seg: seg, speaker: spk)
             case .skipAlreadyCommitted:
                 // seg.tStart <= committedUpTo — already finalized in a prior hop.
                 // Never re-emit (this is what kills the duplicate finals).
@@ -816,7 +971,8 @@ actor EngineSession {
             let orphanSeg = WindowSegment(
                 tStart: p.tStart, tEnd: p.tEnd, text: p.lastText, language: nil
             )
-            emitSegment(uid: p.id, isFinal: true, seg: orphanSeg)
+            let spk = await provisionalSpeaker(forStart: p.tStart, end: p.tEnd)
+            emitSegment(uid: p.id, isFinal: true, seg: orphanSeg, speaker: spk)
         }
 
         // Drain + broadcast any supersessions detected during this reconcile
@@ -1693,7 +1849,15 @@ actor EngineSession {
 
     // ─── Emission helpers ───────────────────────────────────────────────
 
-    private func emitSegment(uid: String, isFinal: Bool, seg: WindowSegment) {
+    /// `speaker` is the PROVISIONAL live label ("Speaker A/B/…") when the
+    /// session opted into live diarization and the timeline has caught up to
+    /// this segment's span; nil otherwise (the default, and for stop-path emits
+    /// that `meeting.transcript` replaces within ~1s anyway). It is purely a
+    /// display hint — it does NOT affect the offline pass, which always replaces
+    /// it with the authoritative "Speaker 1/2/…" labels at stop. We deliberately
+    /// do NOT persist the provisional label into `finalizedUtterances`: the
+    /// vault write uses the offline labels exclusively.
+    private func emitSegment(uid: String, isFinal: Bool, seg: WindowSegment, speaker: String? = nil) {
         // Retain finalized utterances for the post-stop pass: timing+uid drive
         // the diarization time-overlap labelling, and text feeds the vault
         // markdown body (Slice 2). We retain UNCONDITIONALLY now (not only when
@@ -1710,12 +1874,21 @@ actor EngineSession {
             tEnd: seg.tEnd,
             text: seg.text,
             language: seg.language,
-            speaker: nil,        // Phase 5
+            speaker: speaker,    // provisional live label, or nil (Phase 5 stop pass refines)
             translation: nil     // Phase 6
         )
         let env = WireEnvelope(type: isFinal ? "segment.final" : "segment.partial",
                                payload: payload)
         broadcast(env)
+    }
+
+    /// Resolve the provisional live speaker label for a segment's span, or nil
+    /// when live diarization is off or the timeline hasn't caught up yet. Awaits
+    /// the LiveDiarizer actor — only ever called from the async transcription
+    /// path, never the audio hot path.
+    private func provisionalSpeaker(forStart start: Double, end: Double) async -> String? {
+        guard let live = liveDiarizer else { return nil }
+        return await live.provisionalSpeaker(forStart: start, end: end)
     }
 
     /// Drain any supersession events the ledger recorded since the last drain

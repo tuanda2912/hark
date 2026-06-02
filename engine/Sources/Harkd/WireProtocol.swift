@@ -339,6 +339,14 @@ struct CaptureStartCommand: Decodable {
     /// implicitly the decoder's prompt language, so this affects more
     /// than just language detection.
     let language: String?
+    /// Optional flag: run the STREAMING diarizer in parallel with live
+    /// transcription so `segment.partial`/`segment.final` carry a PROVISIONAL
+    /// `speaker` label DURING the meeting. `live_diarization` on the wire
+    /// (`.convertFromSnakeCase`). `nil`/false (the DEFAULT) → unchanged: no
+    /// live diarizer, `speaker` stays nil live. The authoritative offline pass
+    /// at stop + `meeting.transcript` back-annotation are unaffected either way
+    /// — they always replace whatever provisional labels the live path emitted.
+    let liveDiarization: Bool?
 }
 
 struct BookmarkCreateCommand: Decodable {
