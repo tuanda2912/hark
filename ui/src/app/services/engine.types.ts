@@ -31,6 +31,30 @@ export interface MetaHeartbeatPayload {
 }
 
 /**
+ * First-run model warm-up progress. Emitted repeatedly during a cold
+ * start while harkd downloads + ANE-compiles the speech / diarizer
+ * models — before `meta.ready`. The UI uses it to drive the
+ * "Preparing Hark" overlay so a fresh install doesn't look hung.
+ *
+ * `fraction` is 0..1 for the downloadable phases; it is `null` for the
+ * indeterminate ANE-compile / optimization phases (no byte count to
+ * track) — the UI shows a spinner, NOT a fake percentage, when null.
+ * `phase` is a stable machine token; `detail` is the human label to show.
+ *
+ * Mirrors the Swift `MetaModelProgressPayload` (snake_case on the wire
+ * via `.convertToSnakeCase`). `fraction` is encoded as explicit JSON `null`
+ * (not omitted) for indeterminate phases — keep both sides in lockstep.
+ */
+export interface MetaModelProgressPayload {
+  /** "downloading_speech" | "optimizing_speech" | "downloading_diarizer" | "optimizing_diarizer" */
+  readonly phase: string;
+  /** 0..1 for determinate (download) phases; null when indeterminate (ANE compile). */
+  readonly fraction: number | null;
+  /** Human label, e.g. "Downloading speech model". */
+  readonly detail: string;
+}
+
+/**
  * Sent once when the model finishes loading. harkd brings up the
  * WebSocket + port file before the model is ready, so an early client
  * sees `meta.hello.model_loaded === "(loading)"` and then this frame

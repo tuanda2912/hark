@@ -124,6 +124,40 @@ struct MetaReadyPayload: Encodable {
     let modelLoaded: String
 }
 
+/// First-run model-load progress (engine→UI event, type `meta.model_progress`).
+/// On a fresh install the WhisperKit (~626 MB) + diarizer CoreML bundles
+/// download and ANE-compile during warm-up — without this the UI looks hung.
+/// Emitted purely additively; `meta.ready` stays the terminal readiness signal.
+///
+/// `phase` is one of the four literal values below. It's a VALUE, not a key, so
+/// `.convertToSnakeCase` leaves it alone — we keep the snake_case form literal.
+///
+/// `fraction` is nil during the ANE compile/specialize step (WhisperKit's
+/// load/prewarm exposes no progress API) — we encode that as JSON `null`, not a
+/// dropped key, so the UI can distinguish "indeterminate" from "absent" and show
+/// a spinner instead of a bar. Same explicit-`encodeNil` pattern `SegmentPayload`
+/// uses, required because `.convertToSnakeCase` keeps optionals' keys but the
+/// synthesized `encode(to:)` would omit a nil value entirely.
+struct MetaModelProgressPayload: Encodable {
+    /// "downloading_speech" | "optimizing_speech" | "downloading_diarizer" | "optimizing_diarizer"
+    let phase: String
+    /// 0..1, or nil when indeterminate (ANE compile). Encodes as JSON `null`.
+    let fraction: Double?
+    /// Human label, e.g. "Downloading speech model".
+    let detail: String
+
+    enum CodingKeys: String, CodingKey {
+        case phase, fraction, detail
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(phase, forKey: .phase)
+        if let v = fraction { try c.encode(v, forKey: .fraction) } else { try c.encodeNil(forKey: .fraction) }
+        try c.encode(detail, forKey: .detail)
+    }
+}
+
 struct MetaHeartbeatPayload: Encodable {
     let rtfCurrent: Double
     let ringBufferFillSec: Double

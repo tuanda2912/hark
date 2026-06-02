@@ -47,6 +47,14 @@ actor EngineSession {
     private var modelReady: Bool { whisperKit != nil }
     private weak var server: HarkdWebSocketServer?
 
+    /// The most recent model-load progress snapshot, so a UI that connects
+    /// MID-DOWNLOAD immediately sees the current phase instead of a blank
+    /// "(loading)" until the next callback fires. Set by `emitModelProgress`,
+    /// replayed in `handleConnect` (after `meta.hello`), cleared in `attachModel`
+    /// when `meta.ready` makes it terminal. Same spirit as `attachModel` pushing
+    /// `meta.ready` to already-connected clients. nil once the model is ready.
+    private var lastModelProgress: MetaModelProgressPayload?
+
     /// At-stop dedup time-gate, seconds (stage 2 of `dedupedFinalizedUtterances`).
     /// Resolved once at init from `HARK_DEDUP_WINDOW_SEC` (clamped, logged) so it
     /// can be swept on-device without recompiling. See `resolveDedupWindow`.
@@ -178,6 +186,10 @@ actor EngineSession {
     func attachModel(_ pipe: WhisperKit, name: String) {
         self.whisperKit = pipe
         self.modelName = name
+        // `meta.ready` is the terminal readiness signal — model-load progress is
+        // done. Clear the snapshot so a client connecting after this point gets
+        // the ready hello (model_loaded = name) and no stale progress replay.
+        self.lastModelProgress = nil
         // Push readiness to any clients already connected behind the warmup
         // gate, so the UI clears "warming up" without polling capture.start.
         broadcast(WireEnvelope(type: "meta.ready", payload: MetaReadyPayload(modelLoaded: name)))
@@ -188,6 +200,26 @@ actor EngineSession {
     /// wire frame in Slice 1 — readiness is logged in HarkdCommand.
     func attachDiarizer(_ diarizer: Diarizer) {
         self.diarizer = diarizer
+    }
+
+    /// Broadcast a `meta.model_progress` frame and retain it as the latest
+    /// snapshot for mid-download replay (see `lastModelProgress`). Called from
+    /// the model loaders' off-actor `@Sendable` progress callbacks via a
+    /// `Task { await session.emitModelProgress(...) }` hop — the callbacks never
+    /// touch actor state directly. The CALLER throttles before the hop (the
+    /// FluidAudio byte callback + WhisperKit per-1% callback fire very
+    /// frequently); this method just snapshots + broadcasts. Additive: it never
+    /// affects readiness — `attachModel`/`meta.ready` remains the terminal
+    /// signal and clears the snapshot.
+    func emitModelProgress(phase: String, fraction: Double?, detail: String) {
+        // A late progress callback can arrive after `attachModel` cleared the
+        // snapshot (the compile heartbeat / diarizer download races readiness).
+        // Once ready, model-load progress is terminal — drop it rather than
+        // re-broadcast post-ready noise or resurrect the replay snapshot.
+        guard !modelReady else { return }
+        let payload = MetaModelProgressPayload(phase: phase, fraction: fraction, detail: detail)
+        lastModelProgress = payload
+        broadcast(WireEnvelope(type: "meta.model_progress", payload: payload))
     }
 
     // ─── Client connection lifecycle (called by WS delegate) ────────────
@@ -207,6 +239,14 @@ actor EngineSession {
             capabilities: ["diarization"]
         ))
         sendOnly(client, envelope: hello)
+        // If the model is still loading and we have a progress snapshot, replay
+        // it to THIS client right after hello so a UI connecting mid-download
+        // sees the current phase/fraction immediately rather than waiting for
+        // the next callback. Same spirit as `attachModel` pushing `meta.ready`
+        // to already-connected clients. Cleared once `meta.ready` fires.
+        if !modelReady, let progress = lastModelProgress {
+            sendOnly(client, envelope: WireEnvelope(type: "meta.model_progress", payload: progress))
+        }
         startHeartbeatIfNeeded()
     }
 

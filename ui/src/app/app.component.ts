@@ -32,6 +32,7 @@ import { TranscriptLineComponent } from './components/transcript-line.component'
 import { StatusBannerComponent } from './components/status-banner.component';
 import { SettingsPanelComponent } from './components/settings-panel.component';
 import { MeetingSavedToastComponent } from './components/meeting-saved-toast.component';
+import { ModelLoadingComponent } from './components/model-loading.component';
 
 @Component({
   selector: 'hark-root',
@@ -41,6 +42,7 @@ import { MeetingSavedToastComponent } from './components/meeting-saved-toast.com
     StatusBannerComponent,
     SettingsPanelComponent,
     MeetingSavedToastComponent,
+    ModelLoadingComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
@@ -57,12 +59,72 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly ready = this.engine.ready;
   readonly segments = this.engine.segments;
   readonly lastError = this.engine.lastError;
+  readonly modelProgress = this.engine.modelProgress;
 
   readonly bookmarks = this.engine.bookmarks;
 
   /** Connected but the model is still loading — show the warming-up banner
    *  and keep Start disabled until `meta.ready` arrives. */
   readonly warmingUp = computed(() => this.isConnected() && !this.ready());
+
+  // ─── First-run "Preparing Hark" overlay + anti-flash gate ───────────
+  //
+  // A cold start (no cached models) downloads + ANE-compiles for tens of
+  // seconds — we show the full-screen ModelLoading overlay for that. But a
+  // WARM start (models cached) reaches meta.ready in ~1–2s, and flashing a
+  // full-screen loader for a second looks broken. So we gate the overlay:
+  //
+  //   - As soon as a `meta.model_progress` frame arrives, we're clearly in a
+  //     real (cold) warm-up → show immediately, no wait.
+  //   - Otherwise, only show once warm-up has lasted longer than the
+  //     ANTI_FLASH_MS grace period (a setTimeout armed when warming begins).
+  //   - Hide the moment ready() flips true (or warm-up otherwise ends): the
+  //     timer is cleared and the flag reset so the next reconnect re-gates.
+  //
+  // `showLoadingOverlay` is the single gating signal the template reads.
+  private static readonly ANTI_FLASH_MS = 800;
+  readonly showLoadingOverlay = signal(false);
+  private antiFlashTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Drives the gate from the two relevant signals. Whenever warm-up state
+   *  or progress changes: arm the grace timer on entering warm-up, reveal
+   *  immediately once a progress frame lands, and tear everything down on
+   *  ready / disconnect. */
+  private readonly _overlayGate = effect(() => {
+    const warming = this.warmingUp();
+    const hasProgress = this.modelProgress() !== null;
+
+    if (!warming) {
+      // Ready (or disconnected/idle) — hide and disarm.
+      if (this.antiFlashTimer !== null) {
+        clearTimeout(this.antiFlashTimer);
+        this.antiFlashTimer = null;
+      }
+      this.showLoadingOverlay.set(false);
+      return;
+    }
+
+    // A real progress frame means a genuine (cold) warm-up — reveal now,
+    // skipping the grace period.
+    if (hasProgress) {
+      if (this.antiFlashTimer !== null) {
+        clearTimeout(this.antiFlashTimer);
+        this.antiFlashTimer = null;
+      }
+      this.showLoadingOverlay.set(true);
+      return;
+    }
+
+    // Warming with no progress frame yet — arm the grace timer once so a
+    // fast warm start doesn't flash. Don't re-arm if it's already running.
+    if (this.antiFlashTimer === null) {
+      this.antiFlashTimer = setTimeout(() => {
+        this.antiFlashTimer = null;
+        // Only reveal if we're still warming up when the grace period ends.
+        if (this.warmingUp()) this.showLoadingOverlay.set(true);
+      }, AppComponent.ANTI_FLASH_MS);
+    }
+  });
 
   /** Latest engine warning (e.g. rtf_high). Shown in a warning banner;
    *  cleared when capture starts or stops so it doesn't linger stale. */
@@ -204,6 +266,7 @@ export class AppComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     if (this.timerId !== null) clearInterval(this.timerId);
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
+    if (this.antiFlashTimer !== null) clearTimeout(this.antiFlashTimer);
     this.bookmarkSub?.unsubscribe();
     this.warningSub?.unsubscribe();
     this.meetingSavedSub?.unsubscribe();

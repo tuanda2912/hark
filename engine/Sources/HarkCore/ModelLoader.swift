@@ -39,10 +39,21 @@ public struct LoadedModel {
 ///     copies of a 626 MB model.
 ///   - progressOutput: file handle for progress redraws. Stderr by default
 ///     so stdout stays clean for JSON piping (`hark-engine ... | jq .`).
+///   - onProgress: optional, off-thread sink for structured load progress so a
+///     caller (harkd) can forward it to the UI over the WebSocket. It runs
+///     ALONGSIDE the stderr `ProgressRenderer`/heartbeat (a dev affordance we
+///     keep), not instead of it. `@Sendable` because WhisperKit's download
+///     callback fires on an unspecified queue and the compile ticker runs on a
+///     detached Task — the caller is responsible for hopping into its own actor.
+///     Phases emitted: `downloading_speech` (with fraction 0..1) during Phase A;
+///     `optimizing_speech` (fraction nil — the ANE compile exposes no progress)
+///     once at the start of Phase B and re-emitted every ~1.5s so the UI knows
+///     it's alive. fraction stays nil for the compile — we do NOT fabricate one.
 public func loadWhisperKit(
     modelName: String = DEFAULT_MODEL_NAME,
     downloadBase: URL? = nil,
-    progressOutput: FileHandle = .standardError
+    progressOutput: FileHandle = .standardError,
+    onProgress: (@Sendable (_ phase: String, _ fraction: Double?, _ detail: String) -> Void)? = nil
 ) async throws -> LoadedModel {
     // Phase A — download.
     let renderer = ProgressRenderer(label: "Downloading model", output: progressOutput)
@@ -56,6 +67,9 @@ public func loadWhisperKit(
             downloadBase: downloadBase,
             progressCallback: { progress in
                 renderer.update(progress)
+                // Forward the same fraction to the structured sink. The caller
+                // throttles before its actor hop; we pass every callback through.
+                onProgress?("downloading_speech", progress.fractionCompleted, "Downloading speech model")
             }
         )
         renderer.finish()
@@ -73,6 +87,23 @@ public func loadWhisperKit(
     let compileStart = Date()
     let heartbeat = startHeartbeat(label: "still loading", output: progressOutput)
 
+    // Structured "optimizing" pulse for the UI. The ANE compile/specialize step
+    // exposes NO progress fraction, so we emit `optimizing_speech` with a nil
+    // fraction once now, then re-emit it on a ~1.5s ticker (mirroring the stderr
+    // heartbeat pattern) so a progress bar can show an alive, indeterminate
+    // state. fraction is ALWAYS nil here — never fabricated. Cancelled the
+    // instant load returns (success or throw).
+    onProgress?("optimizing_speech", nil, "Optimizing for Neural Engine")
+    let optimizingPulse: Task<Void, Never>? = onProgress.map { sink in
+        Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                if Task.isCancelled { break }
+                sink("optimizing_speech", nil, "Optimizing for Neural Engine")
+            }
+        }
+    }
+
     let pipe: WhisperKit
     do {
         // Pass `modelFolder` so WhisperKit skips its internal (no-progress)
@@ -87,9 +118,11 @@ public func loadWhisperKit(
             download: false
         ))
     } catch {
+        optimizingPulse?.cancel()
         heartbeat.cancel()
         throw error
     }
+    optimizingPulse?.cancel()
     heartbeat.cancel()
     let compileSeconds = Date().timeIntervalSince(compileStart)
     let totalLoadSeconds = Date().timeIntervalSince(loadStart)

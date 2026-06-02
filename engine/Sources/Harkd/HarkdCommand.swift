@@ -95,10 +95,24 @@ struct HarkdCommand: AsyncParsableCommand {
         try writePortFile(at: portFileURL, port: boundPort, pid: Int(ProcessInfo.processInfo.processIdentifier))
         eprint("Port file: \(portFileURL.path)")
 
+        // Model-load progress → UI. The loaders' progress callbacks fire OFF the
+        // actor on unspecified/arbitrary queues; we bounce each into the actor
+        // via `Task { await session.emitModelProgress(...) }` (the SAME hop the
+        // WS delegate + capture sink use). The FluidAudio byte callback and the
+        // WhisperKit per-1% callback can both fire very frequently, so we
+        // THROTTLE before the Task hop (a flood of tasks would be the cost we're
+        // trying to avoid): forward only when fraction moved ≥0.01, ≥200ms
+        // elapsed, OR the phase changed. See `ModelProgressThrottle`.
+        let progressThrottle = ModelProgressThrottle()
+        let onModelProgress: @Sendable (String, Double?, String) -> Void = { phase, fraction, detail in
+            guard progressThrottle.shouldEmit(phase: phase, fraction: fraction) else { return }
+            Task { await session.emitModelProgress(phase: phase, fraction: fraction, detail: detail) }
+        }
+
         // Load WhisperKit behind the server (NIO keeps serving during this
         // await). capture.start is gated on readiness until attachModel below.
         eprint("Loading model… (first run on this Mac compiles for ANE — can take ~90s)")
-        let loaded = try await loadWhisperKit(progressOutput: .standardError)
+        let loaded = try await loadWhisperKit(progressOutput: .standardError, onProgress: onModelProgress)
         await session.attachModel(loaded.pipe, name: loaded.modelName)
         eprint("Model ready: \(loaded.modelName) — capture available")
 
@@ -108,7 +122,7 @@ struct HarkdCommand: AsyncParsableCommand {
         // is skipped. Loaded AFTER WhisperKit so the live path is available as
         // early as possible (capture doesn't need the diarizer to start).
         do {
-            let diar = try await loadDiarizerModels(progressOutput: .standardError)
+            let diar = try await loadDiarizerModels(progressOutput: .standardError, onProgress: onModelProgress)
             await session.attachDiarizer(Diarizer(manager: diar.manager))
             eprint("Diarizer ready — offline speaker pass enabled (models: \(diar.modelsDir.path))")
         } catch {
@@ -182,6 +196,75 @@ struct HarkdCommand: AsyncParsableCommand {
 @inline(__always)
 func eprint(_ s: String, terminator: String = "\n") {
     FileHandle.standardError.write(Data((s + terminator).utf8))
+}
+
+// ─── Model-load progress throttle ────────────────────────────────────────
+//
+// The model-load progress callbacks fire on arbitrary queues, potentially
+// concurrently, and VERY often (FluidAudio's per-byte download callback,
+// WhisperKit's per-1% callback). We throttle BEFORE spawning the actor-hop
+// Task so we don't flood the actor with thousands of tiny `emitModelProgress`
+// tasks. The decision is forced through whenever the phase changes (so a
+// transition is never dropped) or a terminal 1.0 fraction arrives, and
+// otherwise rate-limited to a meaningful delta or a time interval.
+//
+// `@unchecked Sendable`: the cross-call state (last phase/fraction/time) is
+// guarded by an internal lock, the same pattern as `ProgressRenderer`. The
+// PURE `decide` static below carries no state and is what the unit test drives,
+// so the time-based branch is deterministic in tests (we pass `now`).
+
+@available(macOS 14.4, *)
+final class ModelProgressThrottle: @unchecked Sendable {
+    /// Minimum fraction delta to emit on (1%). Below this, only time/phase gate.
+    static let minFractionDelta = 0.01
+    /// Minimum wall interval between emits within the same phase (200 ms).
+    static let minInterval = 0.2
+
+    private let lock = NSLock()
+    private var lastPhase: String?
+    private var lastFraction: Double?
+    private var lastEmitAt: Date?
+
+    /// Thread-safe gate used from the `@Sendable` progress callbacks. Returns
+    /// true when this update should be forwarded to the actor; updates the
+    /// retained "last emitted" state when it does.
+    func shouldEmit(phase: String, fraction: Double?, now: Date = Date()) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let emit = Self.decide(
+            phase: phase, fraction: fraction, now: now,
+            lastPhase: lastPhase, lastFraction: lastFraction, lastEmitAt: lastEmitAt)
+        if emit {
+            lastPhase = phase
+            lastFraction = fraction
+            lastEmitAt = now
+        }
+        return emit
+    }
+
+    /// PURE throttle decision (no state, no I/O) so the unit test can drive the
+    /// time-based branch deterministically. Emit when:
+    ///   - the phase changed (a transition must never be dropped), OR
+    ///   - this is the first update, OR
+    ///   - the fraction is terminal (1.0) and wasn't already, OR
+    ///   - the fraction moved ≥ `minFractionDelta`, OR
+    ///   - ≥ `minInterval` elapsed since the last emit.
+    /// A nil fraction (the indeterminate ANE-compile pulse) has no delta to
+    /// measure, so within a phase it gates purely on time — exactly what the
+    /// ~1.5s compile re-emit wants.
+    static func decide(
+        phase: String, fraction: Double?, now: Date,
+        lastPhase: String?, lastFraction: Double?, lastEmitAt: Date?
+    ) -> Bool {
+        guard let lastPhase = lastPhase, let lastEmitAt = lastEmitAt else { return true }
+        if phase != lastPhase { return true }
+        if let f = fraction {
+            if f >= 1.0 && lastFraction != 1.0 { return true }
+            if let lf = lastFraction, abs(f - lf) >= minFractionDelta { return true }
+            if lastFraction == nil { return true }  // nil → known fraction is news
+        }
+        return now.timeIntervalSince(lastEmitAt) >= minInterval
+    }
 }
 
 // ─── Shutdown coordinator (one-shot) ─────────────────────────────────────

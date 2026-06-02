@@ -175,8 +175,10 @@
   </header>
 
   <!-- Engine warming up — connected but the model is still loading.
-       Start stays disabled until meta.ready arrives. -->
-  @if (warmingUp()) {
+       Start stays disabled until meta.ready arrives. Suppressed while the
+       full-screen "Preparing Hark" overlay is up (it supersedes this strip);
+       the banner still covers the brief sub-grace-period warm-up window. -->
+  @if (warmingUp() && !showLoadingOverlay()) {
     <app-status-banner
       message="Engine warming up — loading model…"
       severity="info"
@@ -197,50 +199,67 @@
     </div>
   }
 
-  <!-- Transcript feed: finalized history, then live partials at the
-       bottom. Replace-by-utterance-id is handled in EngineService; here
-       we just split on isFinal so partials render with the live-tail
-       (italic + caret) treatment and "commit" into history on finalize. -->
-  <main
-    #transcriptScroll
-    (scroll)="onTranscriptScroll()"
-    class="flex-1 overflow-y-auto px-6 py-4"
-  >
-    @if (segments().length === 0) {
-      <div class="text-text-3 text-sm py-12 text-center">
-        @if (!isConnected()) {
-          Waiting for engine…
-        } @else if (!isCapturing()) {
-          Press Start to begin capture.
-        } @else {
-          Listening…
-        }
-      </div>
-    } @else {
-      <div class="max-w-3xl mx-auto">
-        @for (s of finalizedSegments(); track s.utteranceId) {
-          <hark-transcript-line
-            [time]="formatTime(s.tStart)"
-            [text]="s.text"
-            [speaker]="s.speaker"
-            [translation]="s.translation"
-            [bookmarked]="isBookmarked(s)"
-          />
-        }
-        @for (s of liveSegments(); track s.utteranceId; let last = $last) {
-          <hark-transcript-line
-            [time]="formatTime(s.tStart)"
-            [text]="s.text"
-            [speaker]="s.speaker"
-            [translation]="s.translation"
-            [partial]="true"
-            [caret]="last"
-            [bookmarked]="isBookmarked(s)"
-          />
-        }
-      </div>
+  <!-- Content region — relatively positioned so the first-run
+       "Preparing Hark" overlay (position:absolute; inset:0) covers just
+       this area, leaving the top bar (and its macOS window-drag region)
+       interactive. -->
+  <div class="relative flex-1 flex flex-col min-h-0">
+    <!-- Transcript feed: finalized history, then live partials at the
+         bottom. Replace-by-utterance-id is handled in EngineService; here
+         we just split on isFinal so partials render with the live-tail
+         (italic + caret) treatment and "commit" into history on finalize. -->
+    <main
+      #transcriptScroll
+      (scroll)="onTranscriptScroll()"
+      class="flex-1 overflow-y-auto px-6 py-4"
+    >
+      @if (segments().length === 0) {
+        <div class="text-text-3 text-sm py-12 text-center">
+          @if (!isConnected()) {
+            Waiting for engine…
+          } @else if (!isCapturing()) {
+            Press Start to begin capture.
+          } @else {
+            Listening…
+          }
+        </div>
+      } @else {
+        <div class="max-w-3xl mx-auto">
+          @for (s of finalizedSegments(); track s.utteranceId) {
+            <hark-transcript-line
+              [time]="formatTime(s.tStart)"
+              [text]="s.text"
+              [speaker]="s.speaker"
+              [translation]="s.translation"
+              [bookmarked]="isBookmarked(s)"
+            />
+          }
+          @for (s of liveSegments(); track s.utteranceId; let last = $last) {
+            <hark-transcript-line
+              [time]="formatTime(s.tStart)"
+              [text]="s.text"
+              [speaker]="s.speaker"
+              [translation]="s.translation"
+              [partial]="true"
+              [caret]="last"
+              [bookmarked]="isBookmarked(s)"
+            />
+          }
+        </div>
+      }
+    </main>
+
+    <!-- First-run "Preparing Hark" overlay — covers the content area while
+         the engine downloads + ANE-compiles models on a cold start. Gated by
+         showLoadingOverlay() (anti-flash: only after ~800ms of warm-up, or
+         immediately once a meta.model_progress frame lands). -->
+    @if (showLoadingOverlay()) {
+      <hark-model-loading
+        [detail]="modelProgress()?.detail ?? null"
+        [fraction]="modelProgress()?.fraction ?? null"
+      />
     }
-  </main>
+  </div>
 
   <!-- Transient bookmark confirmation. Auto-dismisses after 2.5s. -->
   @if (bookmarkToast(); as toast) {

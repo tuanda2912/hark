@@ -21,6 +21,7 @@ import {
   MetaHelloPayload,
   MetaHeartbeatPayload,
   MetaReadyPayload,
+  MetaModelProgressPayload,
   CaptureStartedPayload,
   CaptureStoppedPayload,
   SegmentPayload,
@@ -90,6 +91,17 @@ export class EngineService {
    */
   private readonly _ready = signal(false);
   readonly ready = this._ready.asReadonly();
+
+  /**
+   * Latest `meta.model_progress` frame during a cold-start warm-up, or
+   * null when no progress is in flight. Drives the "Preparing Hark"
+   * overlay (detail text + determinate bar / indeterminate spinner).
+   * Cleared on `meta.ready` (warm-up done) and on socket close (a fresh
+   * connection re-derives readiness, so stale progress must not linger).
+   */
+  private readonly _modelProgress = signal<MetaModelProgressPayload | null>(null);
+  readonly modelProgress: Signal<MetaModelProgressPayload | null> =
+    this._modelProgress.asReadonly();
 
   /**
    * Latest error envelope from the engine. Cleared when capture starts
@@ -188,6 +200,8 @@ export class EngineService {
       // Re-gate Start on reconnect: a fresh socket must see hello/ready
       // again before we trust the model is loaded.
       this._ready.set(false);
+      // Drop any in-flight warm-up progress — a reconnect re-derives it.
+      this._modelProgress.set(null);
       this.socket = null;
     };
     ws.onmessage = (ev) => this.dispatchFrame(ev.data);
@@ -307,10 +321,17 @@ export class EngineService {
       }
       case 'meta.ready':
         this._ready.set(true);
+        // Warm-up is done — clear progress so the overlay tears down.
+        this._modelProgress.set(null);
         // Keep the displayed model name fresh when hello arrived during load.
         this._hello.update((h) =>
           h ? { ...h, model_loaded: (env.payload as MetaReadyPayload).model_loaded } : h,
         );
+        break;
+      case 'meta.model_progress':
+        // Cold-start warm-up tick (download / ANE-compile). Drives the
+        // "Preparing Hark" overlay; superseded by meta.ready, which clears it.
+        this._modelProgress.set(env.payload as MetaModelProgressPayload);
         break;
       case 'meta.heartbeat':
         this._heartbeat.set(env.payload as MetaHeartbeatPayload);

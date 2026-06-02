@@ -146,9 +146,19 @@ func makeDiarizerConfigFromEnv(progressOutput: FileHandle = .standardError) -> O
 ///     "Speaker N" — within-meeting clustering only, no enrollment.
 ///   - progressOutput: stderr by default (keeps stdout clean), same as
 ///     ModelLoader.
+///   - onProgress: optional, off-thread sink for structured load progress so the
+///     daemon can forward it to the UI over the WebSocket. `@Sendable` because
+///     FluidAudio fires its `ProgressHandler` on an unspecified queue — the
+///     caller hops into its own actor. We map FluidAudio's `DownloadPhase`:
+///     `.listing`/`.downloading` → `downloading_diarizer`, `.compiling` →
+///     `optimizing_diarizer`, both carrying FluidAudio's `fractionCompleted`
+///     (download 0..0.5, compile 0.5..1.0 — byte-continuous). Diarizer load is
+///     NON-FATAL (readiness gates on WhisperKit only); a failure here never
+///     reaches the UI as anything but the absence of further frames.
 func loadDiarizerModels(
     config: OfflineDiarizerConfig? = nil,
-    progressOutput: FileHandle = .standardError
+    progressOutput: FileHandle = .standardError,
+    onProgress: (@Sendable (_ phase: String, _ fraction: Double?, _ detail: String) -> Void)? = nil
 ) async throws -> LoadedDiarizer {
     let start = Date()
     let config = config ?? makeDiarizerConfigFromEnv(progressOutput: progressOutput)
@@ -166,7 +176,23 @@ func loadDiarizerModels(
     progressOutput.write(Data(
         "Loading OFFLINE diarizer models (first run downloads ~pyannote-community-1 + wespeaker CoreML bundles)…\n".utf8))
 
-    let models = try await OfflineDiarizerModels.load(from: harkModels)
+    let models = try await OfflineDiarizerModels.load(
+        from: harkModels,
+        progressHandler: onProgress.map { sink in
+            { @Sendable (progress: DownloadUtils.DownloadProgress) in
+                // One human label across both phases ("Preparing speaker
+                // recognition") — the phase string is the machine-readable
+                // distinction; FluidAudio's fraction is byte-continuous
+                // (download 0..0.5, compile 0.5..1.0).
+                switch progress.phase {
+                case .listing, .downloading:
+                    sink("downloading_diarizer", progress.fractionCompleted, "Preparing speaker recognition")
+                case .compiling:
+                    sink("optimizing_diarizer", progress.fractionCompleted, "Preparing speaker recognition")
+                }
+            }
+        }
+    )
 
     let manager = OfflineDiarizerManager(config: config)
     manager.initialize(models: models)
