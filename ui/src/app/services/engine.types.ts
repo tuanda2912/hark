@@ -150,6 +150,16 @@ export interface MeetingStats {
 export interface MeetingSavedPayload {
   readonly session_id: string;
   readonly vault_path: string;
+  /**
+   * Absolute path to the persisted meeting audio (`vault/.audio/<id>.wav`,
+   * 16 kHz mono), or `null` when *Keep audio* was off (the default) or the
+   * write didn't happen. Privacy-gated by `keep_audio` (ADR-0027); audio is
+   * persisted only on explicit opt-in (ADR-0028). The Post-Meeting Review
+   * screen uses this to load the audio for verify-by-ear speaker tagging.
+   * Mirrors the Swift `MeetingSavedPayload.audioPath` — always present on the
+   * wire (explicit JSON `null`, never a dropped key), analogous to `vault_path`.
+   */
+  readonly audio_path: string | null;
   readonly speakers: readonly MeetingSpeaker[];
   readonly stats: MeetingStats;
 }

@@ -243,11 +243,33 @@ struct SegmentSupersededPayload: Encodable {
 /// `SegmentPayload`, nested nullables use explicit `encode(to:)` so they
 /// serialize as JSON `null` rather than dropped keys — the wire shape stays
 /// stable across phases.
+/// `audioPath` (ADR-0027, slice B): the ABSOLUTE path to the persisted
+/// `<vault>/.audio/<id>.wav` when the session opted in via `keep_audio` AND the
+/// write succeeded; `nil` (encoded as explicit JSON `null`) otherwise — opted
+/// out, or the write failed. Analogous to `vaultPath`/`vault_path`. The optional
+/// uses an explicit `encode(to:)` so it serializes as `null` rather than a
+/// dropped key (same reason as `SegmentPayload`/`MeetingSpeaker`): with
+/// `.convertToSnakeCase` the synthesized encoder would omit a nil value, and the
+/// UI distinguishes "no audio" (null) from a forgotten field.
 struct MeetingSavedPayload: Encodable {
     let sessionId: String
     let vaultPath: String
+    let audioPath: String?
     let speakers: [MeetingSpeaker]
     let stats: MeetingStats
+
+    enum CodingKeys: String, CodingKey {
+        case sessionId, vaultPath, audioPath, speakers, stats
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(sessionId, forKey: .sessionId)
+        try c.encode(vaultPath, forKey: .vaultPath)
+        if let v = audioPath { try c.encode(v, forKey: .audioPath) } else { try c.encodeNil(forKey: .audioPath) }
+        try c.encode(speakers, forKey: .speakers)
+        try c.encode(stats, forKey: .stats)
+    }
 }
 
 struct MeetingSpeaker: Encodable {

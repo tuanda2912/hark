@@ -69,6 +69,13 @@ actor EngineSession {
     /// without recompiling. See `SpeakerStore`.
     private let speakerStore: SpeakerStore
 
+    /// Opt-in meeting-audio store (slice B, ADR-0027). Persists the full-meeting
+    /// 16 kHz mono PCM to `vault/.audio/<meeting-id>.wav` — but ONLY when the
+    /// session's `keepAudio` gate is on. When off there is ZERO `.audio/` I/O.
+    /// Same nil-tolerant, off-the-live-path spirit as `speakerStore`: an audio
+    /// write failure NEVER blocks the vault `.md` write or the stop lifecycle.
+    private let audioStore: AudioStore
+
     /// Offline speaker diarizer (Phase 5, ADR-0016). Wraps FluidAudio's
     /// `OfflineDiarizerManager` (VBx global clustering, overlapping windows,
     /// exclusive segments). nil until the models finish loading; nil-tolerant
@@ -215,6 +222,7 @@ actor EngineSession {
         let enrollThreshold = SpeakerStore.resolveThreshold(
             ProcessInfo.processInfo.environment["HARK_ENROLL_THRESHOLD"])
         self.speakerStore = SpeakerStore(threshold: enrollThreshold)
+        self.audioStore = AudioStore()
     }
 
     /// Inject the model once it has finished loading. Until this runs,
@@ -969,12 +977,16 @@ actor EngineSession {
         // to `finalizedUtterances`, not to `sessionAudio`, so taking the audio
         // here is safe; we grab the finalized list after the drain.
         //
-        // TODO(slice B): persist audio when keepAudio — write `capturedAudio`
-        // (16 kHz mono PCM) into the vault for the review screen, gated on the
-        // session's `keepAudio` flag (ADR-0027). For now we always discard it
-        // below (current privacy-safe behavior); the flag is plumbing only.
+        // Slice B (ADR-0027): this same `capturedAudio` (the continuous 16 kHz
+        // mono PCM the diarization pass uses) is what we persist to the vault when
+        // the session opted in via `keepAudio` — no second full-meeting buffer.
+        // The actual write happens in `persistMeeting`, AFTER the `.md` write, so
+        // the `.wav` reuses the `.md`'s exact basename. When `keepAudio` is off
+        // (the default) it's discarded here exactly as before — `AudioStore`'s
+        // gate guarantees zero `.audio/` I/O on that path.
         let capturedAudio = sessionAudio
         sessionAudio.removeAll(keepingCapacity: false)
+        let keepAudio = self.keepAudio
 
         // The commit watermark is carried across the drain + hot-region
         // finalize as a local (the actor's `committedUpTo` was reset to 0 when
@@ -1048,7 +1060,8 @@ actor EngineSession {
             sessionId: sessionId, sessionStart: sessionStart,
             durationSec: durationSec, rtfAvg: rtfAvg,
             segmentCount: capturedUtterances.count,
-            outcome: outcome)
+            outcome: outcome,
+            audio: capturedAudio, keepAudio: keepAudio)
     }
 
     /// Collapse the append-only `finalizedUtterances` emission log into the set
@@ -1332,7 +1345,8 @@ actor EngineSession {
     private func persistMeeting(
         sessionId: String, sessionStart: Date,
         durationSec: Double, rtfAvg: Double, segmentCount: Int,
-        outcome: DiarizationOutcome
+        outcome: DiarizationOutcome,
+        audio: [Float], keepAudio: Bool
     ) async {
         let labeled = outcome.labeled
         let attendees = outcome.attendees
@@ -1365,6 +1379,16 @@ actor EngineSession {
             result.fileURL.path, result.committed ? "yes" : "no",
             segmentCount, attendees.count
         ).utf8))
+
+        // Slice B (ADR-0027): persist the meeting audio ONLY when `keepAudio` is on
+        // — `AudioStore`'s gate guarantees zero `.audio/` I/O when off. We do this
+        // AFTER the `.md` write so the `.wav` reuses the EXACT same basename as the
+        // markdown (the VaultWriter result's filename stem, collision suffix and
+        // all): `<id>.wav` ↔ `<id>.md` correlate. Best-effort: a failed/absent
+        // write yields `audioPath == nil`; it never affects the meeting save.
+        let meetingId = result.fileURL.deletingPathExtension().lastPathComponent
+        let audioPath = audioStore.persist(
+            meetingId: meetingId, samples: audio, keepAudio: keepAudio)?.path
 
         // Retain the snapshot so a post-save `speaker.rename` can re-render THIS
         // file with the user's display names (see SavedMeetingSnapshot). Captured
@@ -1409,6 +1433,7 @@ actor EngineSession {
         let payload = MeetingSavedPayload(
             sessionId: sessionId,
             vaultPath: result.fileURL.path,
+            audioPath: audioPath,   // absolute .wav path when keepAudio + write OK; else nil (slice B)
             speakers: speakers,
             stats: MeetingStats(
                 segments: segmentCount,

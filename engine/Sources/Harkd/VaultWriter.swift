@@ -313,8 +313,30 @@ struct VaultWriter: Sendable {
     /// that directory, regardless of whether a meeting was ever saved first.
     /// Idempotent, so calling it from both sites can't duplicate the rule.
     static func ensureSpeakersGitignored(vaultRoot: URL) {
+        ensureGitignoreRule(
+            vaultRoot: vaultRoot, rule: ".speakers/",
+            header: "# Hark vault — voice embeddings stay local (CLAUDE.md rule #5)\n")
+    }
+
+    /// Ensure `<vaultRoot>/.gitignore` excludes `.audio/` (ADR-0027 / rule #2):
+    /// opt-in meeting audio must never travel a vault git remote. Same idempotent
+    /// create-or-append semantics + `vaultRoot:` parameterization as
+    /// `ensureSpeakersGitignored`, so `EngineSession`'s audio-persist path can
+    /// assert the rule the moment it creates `.audio/`, regardless of call order.
+    /// Calling both helpers can't duplicate or clobber lines — each only adds its
+    /// own missing rule.
+    static func ensureAudioGitignored(vaultRoot: URL) {
+        ensureGitignoreRule(
+            vaultRoot: vaultRoot, rule: ".audio/",
+            header: "# Hark vault — meeting audio stays local (ADR-0027 / CLAUDE.md rule #2)\n")
+    }
+
+    /// Shared core for the two gitignore self-assertions above: create the
+    /// `.gitignore` with `header` + `rule` when missing, append `rule` when the
+    /// file exists but lacks it, do nothing when it's already present. Never
+    /// rewrites unrelated lines; idempotent by construction.
+    private static func ensureGitignoreRule(vaultRoot: URL, rule: String, header: String) {
         let url = vaultRoot.appendingPathComponent(".gitignore")
-        let rule = ".speakers/"
         let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? nil
         if let existing {
             let hasRule = existing
@@ -325,7 +347,6 @@ struct VaultWriter: Sendable {
             let appended = existing + sep + "\(rule)\n"
             try? Data(appended.utf8).write(to: url, options: .atomic)
         } else {
-            let header = "# Hark vault — voice embeddings stay local (CLAUDE.md rule #5)\n"
             try? Data((header + "\(rule)\n").utf8).write(to: url, options: .atomic)
         }
     }
