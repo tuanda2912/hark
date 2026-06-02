@@ -371,10 +371,13 @@
       </div>
 
       <!-- RIGHT: Ask / Q&A SHELL (no model wired; honest empty state).
-           Provider-agnostic — cloud AND local models land in Phase 6. -->
+           Provider-agnostic — cloud AND local models land in Phase 6. The
+           model-picker CTA opens the existing Settings modal (the hook for
+           the future provider layer). -->
       <hark-ask-panel
         class="hark-col-right"
         (dismiss)="toggleRightPanel()"
+        (openSettings)="openSettings()"
       />
     </div>
 
