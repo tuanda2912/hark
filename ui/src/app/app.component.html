@@ -292,4 +292,12 @@
   @if (settingsOpen()) {
     <hark-settings-panel (close)="closeSettings()" />
   }
+
+  <!-- First-run onboarding — full-window takeover above EVERYTHING (z-50 vs
+       model-loading's z-20). Shown only once prefs have loaded and the
+       persisted hasCompletedOnboarding flag is false. The component persists
+       the flag itself on "Start using Hark", which unmounts this for good. -->
+  @if (showOnboarding()) {
+    <hark-onboarding />
+  }
 </div>

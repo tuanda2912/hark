@@ -25,15 +25,16 @@ _Last updated: 2026-06-02_
   - *Pick up:* `@electron/notarize` afterSign hook + `notarytool` + `stapler`. We build the
     app **notarization-ready** now (hardened runtime + entitlements), so this is the last mile
     once a Developer ID is available. Packaging ADR (TBD) will record the signing chain.
-- **Onboarding flow** (3 screens — `vault/hark/docs/design/ui/artboards/Onboarding.jsx`).
-  - *Deferred because:* explicitly slated for "until packaging" (STATUS). No home until there
-    is an installed app to onboard into.
-  - *Pick up:* build alongside the first-run model-download UX below.
-- **First-run model-download UX.** WhisperKit (~626 MB) + diarization CoreML models download
-  on first use to `~/Library/Application Support/Hark/Models/`. A fresh install currently has
-  no progress/spinner for this — it'll look hung.
-  - *Pick up:* a download-progress surface in onboarding; the engine already streams progress
-    we can wire to a frame.
+- **Configurable vault location.** The vault path is fixed at `~/Documents/vault/hark`
+  (main `VAULT_DIR` + the engine's `VaultWriter`). The onboarding Setup screen (ADR-0023) and
+  Settings show a folder picker, but it's disabled until this lands.
+  - *Pick up:* a vault-path pref + a folder picker (`dialog.showOpenDialog`), plumbed to the
+    engine so `VaultWriter` writes there. Makes onboarding screen-3 fully match the design.
+- **Anthropic API key storage (Keychain).** The onboarding Setup screen + the design show an
+  optional API-key field — "stored in macOS Keychain, we never see your key." Disabled until
+  Phase 6 (the key has nothing to authenticate against yet).
+  - *Pick up:* a Keychain-backed secure store (main process) + the key field; gates the cloud
+    features (summary/translation/Q&A). Part of Phase 6.
 - **App icon.** No `ui/build/icon.icns` exists; electron-builder warns and falls back to the
   default Electron icon. Fine for the unsigned dry-run, not for a release.
   - *Pick up:* drop a 1024px `icon.icns` (or `.png`, electron-builder converts) at `ui/build/`.
@@ -110,7 +111,6 @@ Phase 4 surfaces" carries the live detail; summary:
 - **Q&A side panel** (`QAPanel.jsx`). Blocked on Phase 6 (Claude API).
 - **Full speaker-management UI** (`SpeakerTagging.jsx` modal + auto-recognition states).
   Naming is covered by the rename MVP (ADR-0020); enrollment/auto-match UI is Phase 5.1.
-- **Onboarding flow** (3 screens). Deferred until packaging matures (also in Packaging).
 - **Settings → Privacy pane extras** — redaction toggles, voiceprint folder, cloud-calls
   log. Slot in as their backing features land.
 - **Remaining design atoms** — `SpeakerTag`, `Eyebrow`, `Toggle`, `CitationChip`.

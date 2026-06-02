@@ -38,11 +38,21 @@ export interface Prefs {
     /** Default language: ISO-639-1 code, or null for auto-detect. */
     readonly language: string | null;
   };
+  /**
+   * Whether the user has finished the first-run onboarding flow. Defaults
+   * to false, and — crucially — a *missing* field reads as false too (see
+   * sanitize). So an old prefs.json from before this field existed, or a
+   * fresh install with no file at all, both correctly read as "first run".
+   * The renderer flips this true when the user taps "Start using Hark" and
+   * persists it; the onboarding overlay never returns after that.
+   */
+  readonly hasCompletedOnboarding: boolean;
 }
 
 export const DEFAULT_PREFS: Prefs = {
   version: 1,
   audio: { mic: true, system: true, language: null },
+  hasCompletedOnboarding: false,
 };
 
 /** Resolve the on-disk prefs path. Pinned to ~/Library/Application Support/Hark/. */
@@ -128,7 +138,15 @@ function sanitize(input: unknown): Prefs {
         ? null
         : DEFAULT_PREFS.audio.language;
 
-  return { version: 1, audio: { mic, system, language } };
+  // Additive, back-compat: a missing (or non-boolean) field is "not yet
+  // onboarded" = first run. Only an explicit `true` on disk suppresses
+  // the flow, so we never accidentally skip onboarding on a malformed read.
+  const hasCompletedOnboarding =
+    typeof o['hasCompletedOnboarding'] === 'boolean'
+      ? o['hasCompletedOnboarding']
+      : DEFAULT_PREFS.hasCompletedOnboarding;
+
+  return { version: 1, audio: { mic, system, language }, hasCompletedOnboarding };
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

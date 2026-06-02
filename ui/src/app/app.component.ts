@@ -33,6 +33,7 @@ import { StatusBannerComponent } from './components/status-banner.component';
 import { SettingsPanelComponent } from './components/settings-panel.component';
 import { MeetingSavedToastComponent } from './components/meeting-saved-toast.component';
 import { ModelLoadingComponent } from './components/model-loading.component';
+import { OnboardingComponent } from './components/onboarding.component';
 
 @Component({
   selector: 'hark-root',
@@ -43,6 +44,7 @@ import { ModelLoadingComponent } from './components/model-loading.component';
     SettingsPanelComponent,
     MeetingSavedToastComponent,
     ModelLoadingComponent,
+    OnboardingComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
@@ -66,6 +68,21 @@ export class AppComponent implements OnInit, OnDestroy {
   /** Connected but the model is still loading — show the warming-up banner
    *  and keep Start disabled until `meta.ready` arrives. */
   readonly warmingUp = computed(() => this.isConnected() && !this.ready());
+
+  // ─── First-run onboarding overlay (Slice 2) ─────────────────────────
+  //
+  // Shown as a full-window takeover ABOVE everything (including the
+  // model-loading overlay) on a fresh install. We wait for prefs to finish
+  // loading before deciding, so a returning user (flag already true) never
+  // sees a flash of onboarding during the async disk read; while loading we
+  // show nothing here (the normal shell / model-loading handles that window).
+  // After "Start using Hark", PreferencesService.completeOnboarding() flips
+  // the persisted flag, this computed goes false, and the overlay unmounts
+  // for good. Re-trigger for testing by deleting prefs.json (or its
+  // hasCompletedOnboarding key) under ~/Library/Application Support/Hark/.
+  readonly showOnboarding = computed(
+    () => this.prefs.loaded() && !this.prefs.hasCompletedOnboarding(),
+  );
 
   // ─── First-run "Preparing Hark" overlay + anti-flash gate ───────────
   //

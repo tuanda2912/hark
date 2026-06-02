@@ -62,6 +62,11 @@ declare global {
       savePrefs(prefs: Prefs): void;
       /** Reveal the vault folder in Finder. */
       revealVault(): void;
+      /** Current macOS Microphone TCC status ('granted' | 'denied' |
+       *  'restricted' | 'not-determined' | 'unknown'). */
+      getMicPermission(): Promise<string>;
+      /** Fire the macOS Microphone prompt; resolves true if granted. */
+      askMicPermission(): Promise<boolean>;
     };
   }
 }

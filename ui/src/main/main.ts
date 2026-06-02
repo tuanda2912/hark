@@ -6,7 +6,7 @@
 //   window → loads ng serve URL (dev) or dist/renderer/index.html (prod)
 //   quit   → SIGTERM harkd, wait up to 5 s, SIGKILL if necessary
 
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, systemPreferences } from 'electron';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
@@ -240,6 +240,33 @@ ipcMain.on('hark:reveal-vault', () => {
       console.error('[hark] failed to reveal vault:', VAULT_DIR, err);
     }
   });
+});
+
+// ─── Microphone permission IPC (onboarding) ───────────────────────────
+// macOS gates Microphone behind TCC. The onboarding Permissions screen
+// reads the live status to show a real "Granted / Not yet" badge, and can
+// optionally fire the system prompt. System-audio capture uses Core Audio
+// Process Taps (kTCCServiceAudioCapture) which Electron exposes NO API for
+// and which macOS only prompts for at first capture (ADR-0011/0012) — so we
+// deliberately do NOT expose a "grant" for it; onboarding frames it as
+// "macOS will ask when you start your first recording".
+ipcMain.handle('hark:get-mic-permission', (): string => {
+  try {
+    return systemPreferences.getMediaAccessStatus('microphone');
+  } catch {
+    return 'unknown';
+  }
+});
+
+ipcMain.handle('hark:ask-mic-permission', async (): Promise<boolean> => {
+  try {
+    // Already-decided returns immediately; otherwise this shows the OS
+    // prompt and resolves once the user picks. Granted/denied both resolve
+    // (no throw); a denied user is then steered to System Settings in-copy.
+    return await systemPreferences.askForMediaAccess('microphone');
+  } catch {
+    return false;
+  }
 });
 
 // eslint-disable-next-line no-console

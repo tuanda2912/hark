@@ -1,0 +1,311 @@
+<div class="ob-panel" role="dialog" aria-modal="true" aria-label="Welcome to Hark">
+  <!-- Eyebrow + step progress. The fill width is the step fraction; the
+       label switches per screen. -->
+  <div class="ob-eyebrow">
+    <span class="ob-eyebrow-label">
+      @switch (step()) {
+        @case (1) { Step 1 of 3 · Trust }
+        @case (2) { Step 2 of 3 · Permissions }
+        @case (3) { Step 3 of 3 · Setup }
+      }
+    </span>
+    <span
+      class="ob-progress-track"
+      role="progressbar"
+      aria-valuemin="1"
+      aria-valuemax="3"
+      [attr.aria-valuenow]="step()"
+    >
+      <span class="ob-progress-fill" [style.width.%]="step() * 33.333"></span>
+    </span>
+  </div>
+
+  @switch (step()) {
+    <!-- ───────────────────────── Screen 1 · Trust ───────────────────── -->
+    @case (1) {
+      <div class="flex-1 flex flex-col justify-center" style="margin-top: 40px">
+        <h1 class="ob-display ob-display-lg">Your audio never leaves this Mac.</h1>
+        <p class="ob-body" style="margin-top: 16px">
+          Hark transcribes meetings entirely on-device using WhisperKit on Apple
+          Silicon. Three things to know before we start.
+        </p>
+
+        <div class="flex flex-col gap-3.5" style="margin-top: 28px">
+          <!-- (a) local capture -->
+          <div class="flex items-start gap-3.5">
+            <div class="ob-trust-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                <path d="M19 11a7 7 0 0 1-14 0M12 18v3" />
+              </svg>
+            </div>
+            <div>
+              <div class="text-sm font-medium text-text">
+                Audio is captured and transcribed locally
+              </div>
+              <div class="text-text-2" style="font-size: 12.5px; margin-top: 2px; line-height: 1.55; max-width: 460px">
+                Apple Silicon · WhisperKit large-v3-turbo · never streamed anywhere.
+              </div>
+            </div>
+          </div>
+
+          <!-- (b) cloud opt-in & itemized -->
+          <div class="flex items-start gap-3.5">
+            <div class="ob-trust-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.34 9.5 4 4 0 0 0 7 19h10.5z" />
+              </svg>
+            </div>
+            <div>
+              <div class="text-sm font-medium text-text">
+                Cloud features are opt-in and itemized
+              </div>
+              <div class="text-text-2" style="font-size: 12.5px; margin-top: 2px; line-height: 1.55; max-width: 460px">
+                Summary, translation, and Q&amp;A use Claude — only when you ask.
+                PII is redacted first.
+              </div>
+            </div>
+          </div>
+
+          <!-- (c) markdown vault you control -->
+          <div class="flex items-start gap-3.5">
+            <div class="ob-trust-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+              </svg>
+            </div>
+            <div>
+              <div class="text-sm font-medium text-text">
+                Your notes live in a folder you control
+              </div>
+              <div class="text-text-2" style="font-size: 12.5px; margin-top: 2px; line-height: 1.55; max-width: 460px">
+                Plain markdown in your vault. Open it in Obsidian, version it with
+                git, move it offline.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between" style="margin-top: 24px">
+        <span class="font-mono text-text-3" style="font-size: 11px">
+          ↵ to continue
+        </span>
+        <button
+          type="button"
+          class="btn btn-primary"
+          style="padding: 8px 18px; font-size: 13px"
+          (click)="next()"
+        >
+          Got it
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </button>
+      </div>
+    }
+
+    <!-- ──────────────────────── Screen 2 · Permissions ──────────────── -->
+    @case (2) {
+      <h1 class="ob-display ob-display-md" style="margin: 32px 0 4px">
+        Two system permissions.
+      </h1>
+      <p class="ob-subhead">
+        macOS will ask the first time you record — here's why, no surprises.
+      </p>
+
+      <div class="flex flex-col gap-2.5" style="margin-top: 24px">
+        <!-- Microphone — real status badge + optional Grant when undecided. -->
+        <div class="ob-perm-card">
+          <div class="ob-perm-icon" [class.is-granted]="micGranted()" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+              stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+              <path d="M19 11a7 7 0 0 1-14 0M12 18v3" />
+            </svg>
+          </div>
+          <div>
+            <div class="text-text font-medium" style="font-size: 13.5px">Microphone</div>
+            <div class="text-text-2" style="font-size: 12px; margin-top: 2px; line-height: 1.5; max-width: 460px">
+              Captures your voice during meetings.
+            </div>
+          </div>
+          @if (micGranted()) {
+            <span class="ob-badge ob-badge-granted">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+                stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
+                stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 13l4 4L19 7" />
+              </svg>
+              Granted
+            </span>
+          } @else if (canPromptMic()) {
+            <button
+              type="button"
+              class="btn btn-primary"
+              style="font-size: 12px"
+              [disabled]="micAsking()"
+              (click)="grantMic()"
+            >
+              {{ micAsking() ? 'Asking…' : 'Grant microphone' }}
+            </button>
+          } @else {
+            <span class="ob-badge ob-badge-pending">{{ micBadgeLabel() }}</span>
+          }
+        </div>
+
+        <!-- System Audio Recording — INFORMATIONAL. Core Audio Process Taps
+             (kTCCServiceAudioCapture, ADR-0011), NOT Screen Recording. macOS
+             prompts lazily at first capture (ADR-0012), so there's no honest
+             "Grant" to offer here. -->
+        <div class="ob-perm-card">
+          <div class="ob-perm-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+              stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M11 5L6 9H3v6h3l5 4V5z" />
+              <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+            </svg>
+          </div>
+          <div>
+            <div class="text-text font-medium" style="font-size: 13.5px">
+              System Audio Recording
+            </div>
+            <div class="text-text-2" style="font-size: 12px; margin-top: 2px; line-height: 1.5; max-width: 460px">
+              Lets Hark capture the meeting audio you hear through your speakers
+              or headphones. No video, no screen contents.
+            </div>
+          </div>
+          <span class="ob-badge ob-badge-pending" style="text-align: right; max-width: 9rem">
+            macOS asks at first recording
+          </span>
+        </div>
+      </div>
+
+      <div class="flex-1"></div>
+      <div class="flex items-center justify-between" style="margin-top: 20px">
+        <button type="button" class="btn btn-ghost" style="font-size: 12.5px" (click)="back()">
+          ← Back
+        </button>
+        <button type="button" class="btn btn-primary" style="padding: 8px 18px" (click)="next()">
+          Continue
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </button>
+      </div>
+    }
+
+    <!-- ─────────────────────────── Screen 3 · Setup ─────────────────── -->
+    @case (3) {
+      <h1 class="ob-display ob-display-md" style="margin: 32px 0 4px">
+        Where your notes live.
+      </h1>
+      <p class="ob-subhead">
+        Hark writes plain markdown into a vault folder on this Mac. You own it —
+        open it in Obsidian, version it with git, move it offline.
+      </p>
+
+      <div class="flex flex-col" style="margin-top: 24px; gap: 18px">
+        <!-- Vault folder — FIXED path. Real Reveal in Finder; the picker is
+             deferred (configurable path is future work). -->
+        <div>
+          <label class="ob-field-label">Vault folder</label>
+          <div class="ob-field-box">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+              stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+              stroke-linejoin="round" class="text-accent" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+            </svg>
+            <span class="ob-field-value" [title]="vaultPath()">
+              {{ vaultPath() || '~/Documents/vault/hark' }}
+            </span>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              style="font-size: 12px"
+              (click)="revealVault()"
+            >
+              Reveal in Finder
+            </button>
+            <!-- Picker is deferred — disabled, with an honest note below. -->
+            <button
+              type="button"
+              class="btn btn-secondary"
+              style="font-size: 12px"
+              disabled
+              title="Custom vault location coming soon"
+            >
+              Choose…
+            </button>
+          </div>
+          <div class="flex flex-wrap items-center gap-3" style="margin-top: 6px">
+            <span class="ob-chip ob-chip-ok">
+              <span class="ob-chip-dot"></span> writable
+            </span>
+            <span class="ob-chip">
+              <span class="ob-chip-dot"></span> git-tracked
+            </span>
+            <span class="ob-note">Custom location coming soon</span>
+          </div>
+        </div>
+
+        <!-- Anthropic API key — DEFERRED. Keychain storage doesn't exist yet,
+             so the field is disabled and clearly framed as optional/later.
+             We never ship an input that silently does nothing. -->
+        <div>
+          <label class="ob-field-label">Anthropic API key</label>
+          <span class="ob-note" style="margin-left: 8px">
+            · optional · add later when you enable cloud features
+          </span>
+          <div class="ob-field-box is-deferred">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+              stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+              stroke-linejoin="round" class="text-text-3" aria-hidden="true">
+              <rect x="5" y="11" width="14" height="9" rx="2" />
+              <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+            </svg>
+            <span class="ob-field-value is-muted">
+              sk-ant-····················································
+            </span>
+          </div>
+          <div class="ob-note" style="margin-top: 6px">
+            Will be stored in the macOS Keychain. Hark
+            <strong class="text-text-2">never</strong> sees your key.
+          </div>
+        </div>
+      </div>
+
+      <div class="flex-1"></div>
+      <div class="flex items-center justify-between">
+        <button type="button" class="btn btn-ghost" style="font-size: 12.5px" (click)="back()">
+          ← Back
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          style="padding: 8px 22px; font-size: 13px"
+          (click)="finish()"
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+            stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+            stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 13l4 4L19 7" />
+          </svg>
+          Start using Hark
+        </button>
+      </div>
+    }
+  }
+</div>

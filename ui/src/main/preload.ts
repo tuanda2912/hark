@@ -75,11 +75,27 @@ contextBridge.exposeInMainWorld('hark', {
         language:
           typeof prefs.audio.language === 'string' ? prefs.audio.language : null,
       },
+      hasCompletedOnboarding: !!prefs.hasCompletedOnboarding,
     });
   },
 
   /** Open the vault folder in Finder. main holds the fixed path. */
   revealVault(): void {
     ipcRenderer.send('hark:reveal-vault');
+  },
+
+  /** Read the current Microphone TCC authorization status from macOS, via
+   *  the main process (`systemPreferences.getMediaAccessStatus`). Returns a
+   *  status string ('granted' | 'denied' | 'restricted' | 'not-determined'
+   *  | 'unknown'); never throws. Used by onboarding to show a real badge. */
+  getMicPermission(): Promise<string> {
+    return ipcRenderer.invoke('hark:get-mic-permission');
+  },
+
+  /** Trigger the macOS Microphone permission prompt (no-op if already
+   *  decided). Resolves true if access is granted afterward, false
+   *  otherwise. Optional nicety on the onboarding Permissions screen. */
+  askMicPermission(): Promise<boolean> {
+    return ipcRenderer.invoke('hark:ask-mic-permission');
   },
 });
