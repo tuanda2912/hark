@@ -19,11 +19,16 @@
 // diarization"). Faking live attendees here would be dishonest, so during
 // capture we show an explicit info state instead.
 //
-// ── "Who is this?" ───────────────────────────────────────────────────
-// SHELL only. The full speaker-tagging modal + auto-recognition is a later
-// slice (SpeakerTagging.jsx). For now the button emits `tagSpeaker` so the
-// host can wire a placeholder; inline renaming already exists in the
-// meeting-saved card (ADR-0020).
+// ── "Who is this?" + re-tag ──────────────────────────────────────────
+// Two paths open the speaker-tagging modal (SpeakerTagging.jsx, the
+// `22-st-tagging-modal` artboard), both via the `tagSpeaker` output:
+//   - the "Who is this?" button on an unlabeled `Speaker N` row, and
+//   - a click on an already-named row (to re-tag / correct it).
+// The output carries the speaker's CURRENT engine label (the rename key), its
+// display name (to prefill / title the modal), and its palette index (so the
+// modal chip matches this row's color). The host (AppComponent) owns the
+// modal + the session id; inline renaming in the meeting-saved card
+// (ADR-0020) coexists, both backed by EngineService.renameSpeakers.
 
 import {
   ChangeDetectionStrategy,
@@ -45,6 +50,16 @@ interface AttendeeRow {
   readonly tagged: boolean;
   readonly meta: string;
   readonly i: number;
+}
+
+/** Payload emitted when the user wants to tag/re-tag a speaker. Carries
+ *  everything the host needs to open the modal without re-reading the roster:
+ *  the engine label (rename KEY), the display name (prefill/title), and the
+ *  palette index (chip color). */
+export interface TagSpeakerRequest {
+  readonly label: string;
+  readonly displayName: string;
+  readonly index: number;
 }
 
 @Component({
@@ -90,6 +105,25 @@ interface AttendeeRow {
       .row.untagged {
         background: color-mix(in oklab, var(--status-warning) 8%, transparent);
         border: 1px dashed color-mix(in oklab, var(--status-warning) 35%, transparent);
+      }
+      /* A named row is a button (click to re-tag): strip native chrome, left-
+       * align, full-width, show it's interactive on hover. */
+      .row-btn {
+        width: 100%;
+        text-align: left;
+        font: inherit;
+        color: inherit;
+        background: transparent;
+        cursor: pointer;
+      }
+      .row-btn:hover {
+        background: var(--highlight);
+        border-color: var(--border-2);
+      }
+      .row-btn:focus-visible {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
       }
 
       .chip {
@@ -198,27 +232,48 @@ interface AttendeeRow {
     @if (rows().length > 0) {
       <div class="list" role="list">
         @for (row of rows(); track row.label) {
-          <div class="row" [class.untagged]="!row.tagged" role="listitem">
-            <span
-              class="chip"
-              [style.--chip-color]="speakerColor(row.i)"
-              aria-hidden="true"
-            ></span>
-            <div class="body">
-              <div class="name" [class.untagged]="!row.tagged">{{ row.name }}</div>
-              <div class="meta">{{ row.meta }}</div>
-              @if (!row.tagged) {
+          <!-- A named row is itself a button (re-tag); an unlabeled row keeps
+               its inline "Who is this?" button so the affordance is explicit
+               and the dashed warning treatment stays. -->
+          @if (row.tagged) {
+            <button
+              type="button"
+              class="row row-btn"
+              role="listitem"
+              (click)="emitTag(row)"
+              [title]="'Rename ' + row.name"
+            >
+              <span
+                class="chip"
+                [style.--chip-color]="speakerColor(row.i)"
+                aria-hidden="true"
+              ></span>
+              <div class="body">
+                <div class="name">{{ row.name }}</div>
+                <div class="meta">{{ row.meta }}</div>
+              </div>
+            </button>
+          } @else {
+            <div class="row untagged" role="listitem">
+              <span
+                class="chip"
+                [style.--chip-color]="speakerColor(row.i)"
+                aria-hidden="true"
+              ></span>
+              <div class="body">
+                <div class="name untagged">{{ row.name }}</div>
+                <div class="meta">{{ row.meta }}</div>
                 <button
                   type="button"
                   class="who"
-                  (click)="tagSpeaker.emit(row.label)"
+                  (click)="emitTag(row)"
                   [title]="'Identify ' + row.label"
                 >
                   Who is this?
                 </button>
-              }
+              </div>
             </div>
-          </div>
+          }
         }
       </div>
     } @else {
@@ -257,9 +312,10 @@ export class AttendeesPanelComponent {
   /** True while a capture is running — selects the "listening" info state. */
   readonly capturing = input<boolean>(false);
 
-  /** User clicked "Who is this?" on an unlabeled speaker. Emits the engine
-   *  label (the rename key). SHELL — host wires a placeholder for now. */
-  readonly tagSpeaker = output<string>();
+  /** User asked to tag/re-tag a speaker — via the "Who is this?" button on an
+   *  unlabeled row, or a click on an already-named row. The host opens the
+   *  speaker-tagging modal with this payload. */
+  readonly tagSpeaker = output<TagSpeakerRequest>();
 
   /** The retained last `meeting.saved` roster. Null until a meeting is saved
    *  (and after "New meeting" clears it). */
@@ -275,6 +331,17 @@ export class AttendeesPanelComponent {
     const n = this.rows().length;
     return n > 0 ? `Attendees · ${n}` : 'Attendees';
   });
+
+  /** Build the tag request from a row and emit it. The host opens the modal;
+   *  the rename KEY is the row's current `label`, the prefill is its display
+   *  `name`, and `i` keeps the chip color stable across surfaces. */
+  protected emitTag(row: AttendeeRow): void {
+    this.tagSpeaker.emit({
+      label: row.label,
+      displayName: row.name,
+      index: row.i,
+    });
+  }
 
   private toRow(sp: MeetingSpeaker, i: number): AttendeeRow {
     const tagged = sp.matched_name !== null;

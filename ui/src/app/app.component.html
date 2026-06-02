@@ -425,6 +425,24 @@
     <hark-settings-panel (close)="closeSettings()" />
   }
 
+  <!-- Speaker-tagging modal (Slice 3). Mounted only while a speaker is being
+       tagged AND there's a saved meeting to rename. Renames the
+       most-recently-saved meeting (ADR-0020 MVP); the optimistic roster update
+       lives in EngineService so the Attendees panel + saved card refresh at
+       once. Closes on Esc / backdrop / Cancel / × (close) and on save (saved). -->
+  @if (taggingTarget(); as target) {
+    @if (taggingSessionId(); as session) {
+      <hark-speaker-tagging
+        [label]="target.label"
+        [displayName]="target.displayName"
+        [sessionId]="session"
+        [chipColor]="taggingChipColor()"
+        (close)="closeTagging()"
+        (saved)="onSpeakerTagged()"
+      />
+    }
+  }
+
   <!-- First-run onboarding — full-window takeover above EVERYTHING (z-50 vs
        model-loading's z-20). Shown only once prefs have loaded and the
        persisted hasCompletedOnboarding flag is false. The component persists

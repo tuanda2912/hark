@@ -262,6 +262,39 @@ export class EngineService {
   renameSpeakers(sessionId: string, names: Record<string, string>): void {
     if (Object.keys(names).length === 0) return;
     this.send({ type: 'speaker.rename', payload: { session_id: sessionId, names } });
+    this.applyOptimisticRename(sessionId, names);
+  }
+
+  /**
+   * Reflect a `speaker.rename` in the retained `meeting.saved` roster
+   * immediately, before the engine acks — so every consumer that reads
+   * `lastMeetingSaved()` (the Attendees panel, the meeting-saved card) shows
+   * the new name reactively. This is the SINGLE source of truth for the
+   * optimistic update; surfaces should NOT keep their own divergent copy.
+   *
+   * For each speaker whose CURRENT label is a key in `names`, set its
+   * `matched_name` to the chosen name AND advance its `label` to that name —
+   * so the speaker's rename key for a follow-up edit is the new name, matching
+   * the engine's own relabeling. Only touched when the saved session matches
+   * (a stale/mismatched session id is a no-op, leaving the roster untouched).
+   * If the engine later rejects the rename it emits an `error` frame on the
+   * existing channel; this is an optimistic projection, not a guarantee.
+   */
+  private applyOptimisticRename(
+    sessionId: string,
+    names: Record<string, string>,
+  ): void {
+    this._lastMeetingSaved.update((saved) => {
+      if (!saved || saved.session_id !== sessionId) return saved;
+      let changed = false;
+      const speakers = saved.speakers.map((sp) => {
+        const next = names[sp.label];
+        if (next === undefined || next === sp.label) return sp;
+        changed = true;
+        return { ...sp, label: next, matched_name: next };
+      });
+      return changed ? { ...saved, speakers } : saved;
+    });
   }
 
   /**

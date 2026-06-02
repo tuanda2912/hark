@@ -34,9 +34,13 @@ import { SettingsPanelComponent } from './components/settings-panel.component';
 import { MeetingSavedToastComponent } from './components/meeting-saved-toast.component';
 import { ModelLoadingComponent } from './components/model-loading.component';
 import { OnboardingComponent } from './components/onboarding.component';
-import { AttendeesPanelComponent } from './components/attendees-panel.component';
+import {
+  AttendeesPanelComponent,
+  TagSpeakerRequest,
+} from './components/attendees-panel.component';
 import { AskPanelComponent } from './components/ask-panel.component';
 import { EyebrowComponent } from './components/eyebrow.component';
+import { SpeakerTaggingComponent } from './components/speaker-tagging.component';
 
 @Component({
   selector: 'hark-root',
@@ -51,6 +55,7 @@ import { EyebrowComponent } from './components/eyebrow.component';
     AttendeesPanelComponent,
     AskPanelComponent,
     EyebrowComponent,
+    SpeakerTaggingComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
@@ -187,17 +192,44 @@ export class AppComponent implements OnInit, OnDestroy {
     this.rightPanelOpen.update((v) => !v);
   }
 
-  /**
-   * "Who is this?" on an unlabeled attendee — SHELL for Slice 1. The full
-   * speaker-tagging modal + auto-recognition is a later slice
-   * (SpeakerTagging.jsx; docs/BACKLOG.md). Inline renaming already exists in
-   * the meeting-saved card (ADR-0020), so for now we point the user there
-   * via a transient hint rather than faking a modal.
-   */
-  onTagSpeaker(_label: string): void {
-    this.showBookmarkToast(
-      'Name speakers from the "Meeting saved" card after recording.',
-    );
+  // ─── Speaker-tagging modal (Slice 3) ────────────────────────────────
+  //
+  // Opened from the left Attendees column — either the "Who is this?" button
+  // on an unlabeled row or a click on an already-named row (re-tag). Holds the
+  // speaker being tagged; the modal renames the MOST-RECENTLY-SAVED meeting
+  // (ADR-0020 MVP), whose session id we read off EngineService at open time.
+  // The optimistic roster update lives in EngineService.renameSpeakers, so
+  // both the Attendees panel and the saved card reflect the new name at once.
+  readonly taggingTarget = signal<TagSpeakerRequest | null>(null);
+
+  /** The session id the modal renames — the most-recently-saved meeting.
+   *  Read live so it stays correct if a newer meeting lands while open. */
+  readonly taggingSessionId = computed(
+    () => this.engine.lastMeetingSaved()?.session_id ?? null,
+  );
+
+  /** Chip color token for the modal, matching this speaker's roster color. */
+  readonly taggingChipColor = computed(() => {
+    const t = this.taggingTarget();
+    return t ? `var(--sp-${(t.index % 6) + 1})` : 'var(--text-3)';
+  });
+
+  /** Open the modal for a speaker. No-op if there's no saved meeting to rename
+   *  (the roster — hence the modal trigger — only exists when one is saved). */
+  onTagSpeaker(req: TagSpeakerRequest): void {
+    if (this.taggingSessionId() === null) return;
+    this.taggingTarget.set(req);
+  }
+
+  /** Esc / backdrop / Cancel / × — close the modal. */
+  closeTagging(): void {
+    this.taggingTarget.set(null);
+  }
+
+  /** Modal reported a successful save. The service already applied the
+   *  optimistic roster update (so the panels refreshed); we just close. */
+  onSpeakerTagged(): void {
+    this.taggingTarget.set(null);
   }
 
   /** Seed the live top-bar selections from the persisted defaults once the
@@ -232,11 +264,29 @@ export class AppComponent implements OnInit, OnDestroy {
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private bookmarkSub: Subscription | null = null;
 
-  /** Saved-confirmation card (path + speaker roster). Unlike the bookmark
-   *  toast it's retained — it carries actionable content the user reads, so
-   *  it stays until they dismiss it or start the next capture. */
-  readonly meetingSaved = signal<MeetingSavedPayload | null>(null);
-  private meetingSavedSub: Subscription | null = null;
+  // ─── Saved-confirmation card (path + speaker roster) ────────────────
+  //
+  // The card carries actionable content (vault path + the editable roster) so,
+  // unlike the bookmark toast, it's retained until the user dismisses it or
+  // starts the next capture.
+  //
+  // SOURCE OF TRUTH: EngineService.lastMeetingSaved(). The card and the left
+  // Attendees panel BOTH read this one signal, so an optimistic rename applied
+  // in EngineService.renameSpeakers() reflects in both surfaces at once — no
+  // divergent local copies. We derive the card's payload directly from the
+  // service rather than snapshotting it on the `meeting.saved$` event.
+  //
+  // Dismissal (× button) is local-only: hiding the card must NOT wipe the
+  // shared roster (the Attendees column keeps showing it). We track the
+  // session id the user explicitly dismissed; a later `meeting.saved` with a
+  // different session id re-reveals the card. onStart / onNewMeeting clear the
+  // service signal (via clearTranscript), so the card naturally disappears.
+  private readonly dismissedSavedSession = signal<string | null>(null);
+  readonly meetingSaved = computed<MeetingSavedPayload | null>(() => {
+    const saved = this.engine.lastMeetingSaved();
+    if (!saved) return null;
+    return saved.session_id === this.dismissedSavedSession() ? null : saved;
+  });
 
   /** Ticks every second so the REC counter advances. */
   private readonly nowMs = signal<number>(0);
@@ -295,11 +345,10 @@ export class AppComponent implements OnInit, OnDestroy {
     this.bookmarkSub = this.engine.bookmarkCreated$.subscribe((bm) => {
       this.showBookmarkToast(`Bookmark saved at ${this.formatClock(bm.t)}`);
     });
-    // Surface the vault-write confirmation (fired at capture.stop, after
-    // diarization). Retained until dismissed or the next capture start.
-    this.meetingSavedSub = this.engine.meetingSaved$.subscribe((saved) => {
-      this.meetingSaved.set(saved);
-    });
+    // The saved-confirmation card is derived from EngineService
+    // .lastMeetingSaved() (see `meetingSaved` computed) — no subscription
+    // needed. A fresh `meeting.saved` repopulates that signal, and since its
+    // session id differs from any previously-dismissed one, the card reappears.
     // Surface the latest engine warning (e.g. rtf_high) in a banner.
     this.warningSub = this.engine.warnings$.subscribe((w) => {
       this.warning.set(w.message);
@@ -324,7 +373,6 @@ export class AppComponent implements OnInit, OnDestroy {
     if (this.antiFlashTimer !== null) clearTimeout(this.antiFlashTimer);
     this.bookmarkSub?.unsubscribe();
     this.warningSub?.unsubscribe();
-    this.meetingSavedSub?.unsubscribe();
   }
 
   /** ⌘⇧B — mark the current moment (the design's shortcut). ⌘, — open
@@ -427,10 +475,10 @@ export class AppComponent implements OnInit, OnDestroy {
   onStart(): void {
     // The service-side view (segments, saved card, bookmarks, lastError) is
     // reset inside startCapture(); here we only clear the component-local
-    // signals it can't reach (the warning banner + the locally-mirrored
-    // meeting-saved card).
+    // signals it can't reach (the warning banner + the dismiss latch — a new
+    // meeting must not stay hidden because a prior one was dismissed).
     this.warning.set(null);
-    this.meetingSaved.set(null);
+    this.dismissedSavedSession.set(null);
     this.engine.startCapture({
       mic: this.micEnabled(),
       system: this.systemEnabled(),
@@ -447,7 +495,9 @@ export class AppComponent implements OnInit, OnDestroy {
   onNewMeeting(): void {
     if (!this.canClear()) return;
     this.warning.set(null);
-    this.meetingSaved.set(null);
+    this.dismissedSavedSession.set(null);
+    // clearTranscript() nulls EngineService.lastMeetingSaved(), so both the
+    // card (derived) and the Attendees roster clear together.
     this.engine.clearTranscript();
   }
 
@@ -483,9 +533,13 @@ export class AppComponent implements OnInit, OnDestroy {
     return Math.max(0, (this.nowMs() - startedMs) / 1000);
   }
 
-  /** Dismiss the saved-confirmation card (its × button). */
+  /** Dismiss the saved-confirmation card (its × button). Local-only: we latch
+   *  the dismissed session id so the card hides WITHOUT clearing the shared
+   *  roster (the Attendees panel keeps showing it). A later meeting (different
+   *  session id) reappears; "New meeting" / Start reset the latch. */
   dismissMeetingSaved(): void {
-    this.meetingSaved.set(null);
+    const saved = this.engine.lastMeetingSaved();
+    if (saved) this.dismissedSavedSession.set(saved.session_id);
   }
 
   /** Open the vault folder in Finder. Reuses the existing revealVault bridge

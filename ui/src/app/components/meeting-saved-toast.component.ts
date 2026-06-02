@@ -15,11 +15,20 @@
 // Phase 5.1 — speaker naming: the roster is editable. Each row carries the
 // engine-known CURRENT label (the `speaker.rename` map key) separately from
 // the editable display value, so a user can type "Alice" over "Speaker 1"
-// and we still send { "Speaker 1": "Alice" }. After a successful apply the
-// row's current label is advanced to the typed name, so a second edit maps
-// "Alice" → "Alicia" correctly. The engine acks (no inbound frame); failures
-// arrive on EngineService's existing error channel (rendered by AppComponent),
-// so we don't subscribe to or invent an error surface here.
+// and we still send { "Speaker 1": "Alice" }. The engine acks (no inbound
+// frame); failures arrive on EngineService's existing error channel (rendered
+// by AppComponent), so we don't subscribe to or invent an error surface here.
+//
+// SOURCE OF TRUTH for the optimistic rename is EngineService.renameSpeakers,
+// which updates the retained `meeting.saved` roster (label→name,
+// matched_name→name) so EVERY consumer of lastMeetingSaved() — this card AND
+// the left Attendees panel — reflects the new name at once. This card's
+// `saved` input is derived from that same signal, so after apply() the input
+// changes and `_seed` re-derives `rows` from the renamed speakers. We
+// therefore do NOT keep a second local optimistic relabel here (it would
+// duplicate the service's). The only thing `_seed` must be careful about: only
+// reset the "Names saved" note when the payload is a genuinely DIFFERENT
+// meeting (new session_id), not on an in-place rename of the same one.
 //
 // Auto-dismiss: this card has NO auto-hide timer (only the bookmark toast in
 // AppComponent does). It is dismissed only explicitly — the × button, or the
@@ -297,19 +306,30 @@ export class MeetingSavedToastComponent {
    */
   protected readonly rows = signal<RosterRow[]>([]);
 
-  /** Re-seed the local model whenever the saved payload changes (e.g. the
-   *  same component instance is reused for a new meeting). Resets the
-   *  confirmation note too. */
+  /** Tracks which meeting the local model is currently seeded from, so we can
+   *  tell a NEW meeting (reset the note) from an in-place rename of the same
+   *  one (keep the "Names saved" note the user just earned). */
+  private seededSession: string | null = null;
+
+  /** Re-seed the editable model whenever the saved payload changes — both when
+   *  the component instance is reused for a new meeting AND when the service
+   *  applies an optimistic rename to the same meeting (which mutates
+   *  speakers → label/matched_name). Rows are always re-derived from the
+   *  current payload (the single source of truth). The confirmation note is
+   *  reset ONLY on a genuinely different meeting. */
   private readonly _seed = effect(() => {
-    const speakers = this.saved().speakers;
+    const saved = this.saved();
     this.rows.set(
-      speakers.map((sp, i) => ({
+      saved.speakers.map((sp, i) => ({
         label: sp.label,
         name: sp.matched_name ?? sp.label,
         i,
       })),
     );
-    this.savedConfirmed.set(false);
+    if (saved.session_id !== this.seededSession) {
+      this.savedConfirmed.set(false);
+      this.seededSession = saved.session_id;
+    }
   });
 
   /** Shows a subtle "Names saved" note after a successful apply. */
@@ -348,10 +368,13 @@ export class MeetingSavedToastComponent {
     if (this.savedConfirmed()) this.savedConfirmed.set(false);
   }
 
-  /** Build the changed-only `names` map, send it, then optimistically advance
-   *  each changed row's current label to the applied name so a second edit
-   *  maps from the new key. EngineService no-ops an empty map; failures land
-   *  on the shared engine error channel (AppComponent's banner). */
+  /** Build the changed-only `names` map and send it. EngineService applies the
+   *  optimistic roster update (advancing each changed label→name and setting
+   *  matched_name), which flows back through `saved()` → `_seed` and re-derives
+   *  `rows` — so a follow-up edit already maps from the new key. We don't
+   *  relabel locally here (that would duplicate the service's update). The
+   *  engine no-ops an empty map; failures land on the shared engine error
+   *  channel (AppComponent's banner). */
   protected apply(): void {
     const names: Record<string, string> = {};
     for (const r of this.rows()) {
@@ -361,17 +384,6 @@ export class MeetingSavedToastComponent {
     if (Object.keys(names).length === 0) return;
 
     this.engine.renameSpeakers(this.saved().session_id, names);
-
-    // Optimistic: reflect the trimmed names and advance the current label so
-    // the key for a follow-up edit is the new name, not the old "Speaker N".
-    this.rows.update((rows) =>
-      rows.map((r) => {
-        const typed = r.name.trim();
-        return typed.length > 0 && typed !== r.label
-          ? { ...r, name: typed, label: typed }
-          : r;
-      }),
-    );
     this.savedConfirmed.set(true);
   }
 
