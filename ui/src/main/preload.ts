@@ -8,7 +8,14 @@
 
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 import type { Prefs } from './prefs';
-import type { LlmConfig, LlmStatus, LlmTestResult } from './llm/types';
+import type {
+  LlmConfig,
+  LlmStatus,
+  LlmTestResult,
+  SummarizeReq,
+  SummarizeResult,
+  CloudCallLogEntry,
+} from './llm/types';
 
 /** State snapshot the renderer pushes to the tray. Mirrors TrayState in
  *  main/tray.ts and the Window.hark interface in engine.service.ts. */
@@ -163,6 +170,29 @@ contextBridge.exposeInMainWorld('hark', {
      *  short, content-free message — never a response body or the key. */
     testConnection(): Promise<LlmTestResult> {
       return ipcRenderer.invoke('hark:llm:test');
+    },
+
+    /** Summarize a meeting transcript (Slice 2 — ADR-0031). For a CLOUD
+     *  provider main REDACTS the transcript before send; for a LOCAL (loopback)
+     *  endpoint it's sent as-is (zero egress). We re-shape to ONLY the
+     *  whitelisted fields here so nothing extra crosses the bridge; main
+     *  re-coerces again. Resolves a SummarizeResult — on success the markdown
+     *  summary + a content-free redaction receipt, on failure { ok:false,
+     *  detail } with a status-derived message (never a key or response body). */
+    summarize(req: SummarizeReq): Promise<SummarizeResult> {
+      return ipcRenderer.invoke('hark:llm:summarize', {
+        transcript: typeof req?.transcript === 'string' ? req.transcript : '',
+        knownNames: Array.isArray(req?.knownNames)
+          ? req.knownNames.filter((n): n is string => typeof n === 'string')
+          : undefined,
+      });
+    },
+
+    /** Read the local cloud-call activity log (Settings → Privacy). Resolves
+     *  an array of METADATA-ONLY entries (lengths/ids/status) — never any
+     *  transcript or summary content. */
+    getCloudLog(): Promise<CloudCallLogEntry[]> {
+      return ipcRenderer.invoke('hark:llm:get-cloud-log');
     },
   },
 });

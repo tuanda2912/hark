@@ -41,6 +41,9 @@ import type {
   LlmConfig,
   LlmStatus,
   LlmTestResult,
+  SummarizeReq,
+  SummarizeResult,
+  CloudCallLogEntry,
 } from './llm.types';
 
 /** Capture/connection snapshot pushed to the menu-bar tray. Mirrors
@@ -96,6 +99,15 @@ declare global {
         clearApiKey(): Promise<LlmStatus>;
         /** Probe the configured provider; returns a one-line verdict. */
         testConnection(): Promise<LlmTestResult>;
+        /**
+         * Summarize transcript TEXT (ADR-0031). Main owns the cloud/local fork,
+         * redaction (cloud only), the provider HTTP, and the local cloud-call
+         * log. The renderer never makes a network call and never sees the key.
+         */
+        summarize(req: SummarizeReq): Promise<SummarizeResult>;
+        /** Read the local cloud-activity log (metadata only — never content)
+         *  for Settings → Privacy. */
+        getCloudLog(): Promise<CloudCallLogEntry[]>;
       };
     };
   }
@@ -312,6 +324,19 @@ export class EngineService {
     if (Object.keys(names).length === 0) return;
     this.send({ type: 'speaker.rename', payload: { session_id: sessionId, names } });
     this.applyOptimisticRename(sessionId, names);
+  }
+
+  /**
+   * Persist a generated meeting summary into the saved meeting note (ADR-0031).
+   * Sent over the SAME socket as `renameSpeakers` (the `send()` path); the
+   * engine appends a `## Summary` section to `session_id`'s meeting markdown and
+   * makes the local git-commit, then acks. A no-op for empty content. Failure
+   * arrives as an `error` frame on the existing `errors$` / `lastError` channel
+   * — there is no dedicated inbound frame.
+   */
+  writeSummary(sessionId: string, summary: string): void {
+    if (!sessionId || summary.trim().length === 0) return;
+    this.send({ type: 'summary.write', payload: { session_id: sessionId, summary } });
   }
 
   /**

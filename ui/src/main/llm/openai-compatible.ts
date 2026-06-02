@@ -17,7 +17,10 @@ import {
   LlmProvider,
   LlmCompleteOptions,
   LlmStreamChunk,
+  CompleteReq,
+  CompleteResult,
   LLM_REQUEST_TIMEOUT_MS,
+  LLM_COMPLETE_TIMEOUT_MS,
   detailForStatus,
   notImplemented,
 } from './provider';
@@ -96,11 +99,109 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     }
   }
 
-  // ── Later slices (Phase 6) ──────────────────────────────────────────────
-  async complete(_opts: LlmCompleteOptions): Promise<string> {
-    return notImplemented('complete');
+  /**
+   * Non-streaming completion against POST {baseUrl}/chat/completions
+   * (Slice 2 — summary). Works for cloud (OpenAI/OpenRouter/Gemini-compat)
+   * and local (Ollama/LM Studio/llama.cpp) backends alike. The
+   * `Authorization: Bearer <key>` header is attached ONLY when a key exists,
+   * so a local no-auth endpoint still works (zero egress per ADR-0031).
+   *
+   * PRIVACY: the request body (system/user content) and the response body are
+   * NEVER logged — only metadata (a status line). On a non-ok HTTP we throw an
+   * Error whose message is derived ONLY from the numeric status via
+   * detailForStatus — the response body is never read into the error.
+   */
+  async complete(req: CompleteReq): Promise<CompleteResult> {
+    const base = this.normalizedBaseUrl();
+    if (!base) {
+      throw new Error('No base URL set');
+    }
+    if (!this.config.model) {
+      throw new Error('No model set');
+    }
+
+    const url = `${base}/chat/completions`;
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (this.key) {
+      headers['Authorization'] = `Bearer ${this.key}`;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LLM_COMPLETE_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: this.config.model,
+          max_tokens: req.maxTokens,
+          messages: [
+            { role: 'system', content: req.system },
+            { role: 'user', content: req.user },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        // eslint-disable-next-line no-console
+        console.log(`[llm] complete openai-compatible → fail (${res.status})`);
+        throw new Error(detailForStatus(res.status));
+      }
+
+      // Parse: { choices: [{ message: { content } }] }.
+      const text = this.extractText(await res.json());
+      // eslint-disable-next-line no-console
+      console.log(`[llm] complete openai-compatible → ok (${text.length} chars)`);
+      return { text };
+    } catch (err) {
+      const host = this.hostForDetail(base);
+      if (err instanceof Error && err.name === 'AbortError') {
+        // eslint-disable-next-line no-console
+        console.log('[llm] complete openai-compatible → timeout');
+        throw new Error(`Timed out reaching ${host}`);
+      }
+      if (err instanceof Error && this.isStatusDerived(err.message)) {
+        throw err;
+      }
+      // eslint-disable-next-line no-console
+      console.log('[llm] complete openai-compatible → network error');
+      throw new Error(`Couldn't reach ${host}`);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
+  /** Extract choices[0].message.content from an OpenAI-compatible response.
+   *  Tolerant of unexpected shapes (returns '' rather than throwing on a
+   *  malformed body — body content never surfaces in an error). */
+  private extractText(body: unknown): string {
+    if (typeof body !== 'object' || body === null) return '';
+    const choices = (body as Record<string, unknown>)['choices'];
+    if (!Array.isArray(choices) || choices.length === 0) return '';
+    const first = choices[0];
+    if (typeof first !== 'object' || first === null) return '';
+    const message = (first as Record<string, unknown>)['message'];
+    if (typeof message !== 'object' || message === null) return '';
+    const content = (message as Record<string, unknown>)['content'];
+    return typeof content === 'string' ? content : '';
+  }
+
+  /** True if `msg` is a known status-derived string from detailForStatus, so
+   *  the catch re-throws it unchanged rather than masking it as a network
+   *  error. Mirrors detailForStatus's outputs. */
+  private isStatusDerived(msg: string): boolean {
+    return (
+      msg === 'Invalid API key' ||
+      msg === 'Model not found' ||
+      msg === 'Rate limited — try again shortly' ||
+      msg.startsWith('Provider error (') ||
+      msg.startsWith('HTTP ')
+    );
+  }
+
+  // ── Later slices (Phase 6) ──────────────────────────────────────────────
   stream(_opts: LlmCompleteOptions): AsyncIterable<LlmStreamChunk> {
     return notImplemented('stream');
   }

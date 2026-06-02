@@ -14,7 +14,7 @@ import { spawnHarkd, HarkdHandle } from './harkd-spawn';
 import { HarkTray, TrayState } from './tray';
 import { loadPrefs, savePrefs, getPrefsPath, Prefs } from './prefs';
 import * as llm from './llm';
-import type { LlmStatus, LlmTestResult } from './llm/types';
+import type { LlmStatus, LlmTestResult, SummarizeResult, CloudCallLogEntry } from './llm/types';
 
 // The user's vault lives OUTSIDE the repo and the app-support dir. Per
 // CLAUDE.md it is the only place transcripts/notes are written, so the
@@ -507,10 +507,37 @@ ipcMain.handle('hark:llm:test', (): Promise<LlmTestResult> => {
   return llm.testConnection();
 });
 
+// Summarize a meeting transcript (Slice 2 — ADR-0031). This is the FIRST IPC
+// that routes real user content (transcript text) toward an outbound network
+// call, and only on explicit user invocation. The `raw` payload crosses the
+// bridge as untrusted structured-clone data; llm.summarize coerces it
+// (string transcript, string[] knownNames). For a CLOUD provider the
+// transcript is REDACTED before send; for a LOCAL (loopback) endpoint it is
+// sent as-is (zero egress). Every call appends a METADATA-ONLY cloud-log entry.
+// The resolved SummarizeResult carries the summary + a content-free redaction
+// receipt; on failure { ok:false, detail } with a status-derived message —
+// never a key or response body.
+ipcMain.handle('hark:llm:summarize', (_ev, raw: unknown): Promise<SummarizeResult> => {
+  const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const transcript = typeof o['transcript'] === 'string' ? o['transcript'] : '';
+  const knownNames = Array.isArray(o['knownNames'])
+    ? o['knownNames'].filter((n): n is string => typeof n === 'string')
+    : undefined;
+  return llm.summarize({ transcript, knownNames });
+});
+
+// Read the local cloud-call activity log (Settings → Privacy). METADATA ONLY —
+// lengths/ids/status, never transcript or summary content.
+ipcMain.handle('hark:llm:get-cloud-log', (): CloudCallLogEntry[] => {
+  return llm.getCloudLog();
+});
+
 // eslint-disable-next-line no-console
 console.log(`[hark] prefs file: ${getPrefsPath()}`);
 // eslint-disable-next-line no-console
 console.log(`[hark] llm keystore: ${llm.getKeyStorePath()}`);
+// eslint-disable-next-line no-console
+console.log(`[hark] llm cloud-call log: ${llm.getCloudLogPath()}`);
 
 app.whenReady().then(bootstrap).catch((err) => {
   // eslint-disable-next-line no-console

@@ -418,8 +418,22 @@
         (dismiss)="dismissMeetingSaved()"
         (reveal)="revealVault()"
         (review)="openReview()"
+        (summarize)="openSummary()"
+        (openSettings)="openSettings()"
       />
     </div>
+  }
+
+  <!-- Summary panel (Phase 6 slice 2). Opened from the saved card's
+       "Summarize" affordance when a model is configured. Mounted only while
+       open AND a saved meeting with a session id exists; it assembles the
+       transcript text + known names, calls main's LLM bridge (no direct
+       network), and writes the result back through the engine on Save. Closes
+       on Esc / backdrop / × / Close. -->
+  @if (summaryOpen()) {
+    @if (summarySessionId(); as session) {
+      <hark-summary-panel [sessionId]="session" (close)="closeSummary()" />
+    }
   }
 
   <!-- Post-Meeting Review — full-window takeover (verify-by-ear speaker

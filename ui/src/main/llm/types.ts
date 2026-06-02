@@ -61,3 +61,71 @@ export interface LlmTestResult {
   ok: boolean;
   detail: string;
 }
+
+// ─── Slice 2: meeting summary (ADR-0031) ──────────────────────────────────
+//
+// The summary path is the FIRST time user content (transcript text) leaves
+// the machine. These shapes are part of the LOCKED contract the renderer
+// codes against (window.hark.llm.summarize / getCloudLog). Per ADR-0031:
+//   - cloud egress is REDACTED before send + logged; local egress is full
+//     transcript, redaction all-zero, still logged (egress: 'local').
+//   - the cloud-call log stores METADATA ONLY — never transcript/summary text.
+
+/**
+ * A summarize request from the renderer. `transcript` is the (already
+ * speaker-back-annotated) meeting text. `knownNames` is the roster's display
+ * names so the redactor can collapse them to `[name]` for CLOUD egress
+ * (ADR-0031 §2). Both arrive as untrusted IPC data; main coerces them.
+ */
+export interface SummarizeReq {
+  transcript: string;
+  knownNames?: string[];
+}
+
+/**
+ * Per-category redaction tally for the on-screen receipt + the cloud log.
+ * `total` = sum of all categories. For a LOCAL (zero-egress) call every count
+ * is 0 — nothing was redacted because nothing left the Mac.
+ * Category keys: email, phone, money, number, url, name.
+ */
+export interface RedactionCounts {
+  total: number;
+  byCategory: Record<string, number>;
+}
+
+/**
+ * Result of a summarize call. On success the renderer gets the markdown
+ * summary plus the egress kind + redaction receipt; on failure a short,
+ * content-free `detail` (derived from the HTTP status, never a body).
+ */
+export type SummarizeResult =
+  | {
+      ok: true;
+      summary: string;
+      model: string;
+      egress: 'cloud' | 'local';
+      redaction: RedactionCounts;
+    }
+  | { ok: false; detail: string };
+
+/**
+ * One entry in the local cloud-call activity log (ADR-0031 §4). METADATA
+ * ONLY — there is deliberately NO transcript/summary field. `inChars` is the
+ * length of the text actually SENT (redacted, for cloud); `outChars` the
+ * summary length; `redactionTotal` mirrors RedactionCounts.total. Local
+ * actions are logged too (egress: 'local', redactionTotal: 0) so the user
+ * sees the full picture.
+ */
+export interface CloudCallLogEntry {
+  ts: string;
+  /** The action that triggered the call. Slice 2: always 'summary'. */
+  action: string;
+  provider: string;
+  model: string;
+  egress: 'cloud' | 'local';
+  inChars: number;
+  outChars: number;
+  redactionTotal: number;
+  status: 'ok' | 'error';
+  detail?: string;
+}

@@ -279,11 +279,30 @@ export interface SpeakerRenameCommand {
   };
 }
 
+/**
+ * Persist a generated meeting summary into the saved meeting note (ADR-0031).
+ * The renderer NEVER writes the vault — main NEVER writes the vault behind the
+ * engine's back — so the summary goes back through the engine, which appends a
+ * `## Summary` section to the meeting markdown for `session_id` and makes the
+ * local git-commit (keeping vault writes + git history single-owner, CLAUDE.md
+ * #4). Mirrors `SpeakerRenameCommand`'s shape: the engine replies with a plain
+ * `ack` on success and an `error` frame on failure (no dedicated inbound
+ * frame), surfaced via the existing `errors$` / `lastError` channel.
+ */
+export interface SummaryWriteCommand {
+  readonly type: 'summary.write';
+  readonly payload: {
+    readonly session_id: string;
+    readonly summary: string;
+  };
+}
+
 export type EngineCommand =
   | CaptureStartCommand
   | CaptureStopCommand
   | BookmarkCreateCommand
-  | SpeakerRenameCommand;
+  | SpeakerRenameCommand
+  | SummaryWriteCommand;
 
 // ─── Renderer-side derived types ─────────────────────────────────────
 

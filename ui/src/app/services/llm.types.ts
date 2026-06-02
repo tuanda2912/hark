@@ -41,3 +41,77 @@ export interface LlmTestResult {
   ok: boolean;
   detail: string;
 }
+
+// ─── Summarize (Phase 6 slice 2, ADR-0031) ──────────────────────────────
+//
+// The renderer hands main the transcript TEXT only (never audio/voiceprints).
+// `knownNames` are the meeting's applied speaker display-names so main can
+// collapse them to their labels before a CLOUD send (so a name like "Tuan"
+// doesn't egress as itself). For a LOCAL provider main sends the full
+// transcript with no redaction (zero egress). Redaction/egress decisions live
+// entirely in main — the renderer only consumes the result.
+
+/** What the renderer sends main to summarize: the assembled transcript text
+ *  plus the applied speaker display-names main should collapse on a cloud send.
+ *  Text only — never audio. */
+export interface SummarizeReq {
+  /** The transcript as readable lines (e.g. "Speaker 1 00:12: …"). */
+  transcript: string;
+  /** Applied speaker display-names for known-name → label collapse (cloud).
+   *  Optional / may be empty when no names have been applied yet. */
+  knownNames?: string[];
+}
+
+/** Per-category redaction tally main computed before a cloud send (all zero
+ *  for a local provider). Drives the receipt + the cloud-activity log. */
+export interface RedactionCounts {
+  /** Total items replaced across all categories. */
+  total: number;
+  /** Count keyed by category token ("email", "phone", "money", "id", "url",
+   *  "name", …). Display-only; categories are main's to define. */
+  byCategory: Record<string, number>;
+}
+
+/**
+ * Result of a `summarize()` call. Discriminated on `ok`:
+ *  - success carries the summary markdown, the model that produced it, whether
+ *    it went to the cloud or ran locally, and the redaction tally;
+ *  - failure carries a one-line human-readable `detail`.
+ */
+export type SummarizeResult =
+  | {
+      ok: true;
+      summary: string;
+      model: string;
+      egress: 'cloud' | 'local';
+      redaction: RedactionCounts;
+    }
+  | { ok: false; detail: string };
+
+/**
+ * One row of the local cloud-activity log (ADR-0031). Metadata ONLY — the
+ * transcript content is never logged. Both cloud and local actions are
+ * recorded (local marked `egress: 'local'`) so the user sees the full picture.
+ * Mirrors the `cloud-calls.json` shape main appends to; read-only in the UI.
+ */
+export interface CloudCallLogEntry {
+  /** ISO-8601 timestamp of the call. */
+  ts: string;
+  /** The action that triggered it, e.g. "summarize". */
+  action: string;
+  /** Provider id/family, e.g. "anthropic" / "openai-compatible". */
+  provider: string;
+  /** The model used. */
+  model: string;
+  /** Whether content actually left the Mac (cloud) or ran locally. */
+  egress: 'cloud' | 'local';
+  /** Characters sent / received — size only, never content. */
+  inChars: number;
+  outChars: number;
+  /** Total items redacted before send (0 for local). */
+  redactionTotal: number;
+  /** Whether the call succeeded. */
+  status: 'ok' | 'error';
+  /** Optional one-line error detail when `status === 'error'`. */
+  detail?: string;
+}

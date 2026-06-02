@@ -46,6 +46,7 @@ import {
 } from '@angular/core';
 import { MeetingSavedPayload } from '../services/engine.types';
 import { EngineService } from '../services/engine.service';
+import { LlmService } from '../services/llm.service';
 
 /** One editable roster row. `label` is the engine-known CURRENT key (advanced
  *  to the applied name after a successful rename); `name` is the live text the
@@ -224,6 +225,25 @@ interface RosterRow {
       .btn-review svg {
         flex-shrink: 0;
       }
+
+      /* Summarize — icon + label, like Review & tag. When a model IS
+         configured it's accent-tinted (the rich action); when none is, it
+         reads as a quieter CTA that routes to Settings. */
+      .btn-summarize {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .btn-summarize.is-ready {
+        border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+        color: var(--accent);
+      }
+      .btn-summarize.is-ready:hover {
+        background: var(--accent-soft);
+      }
+      .btn-summarize svg {
+        flex-shrink: 0;
+      }
     `,
   ],
   template: `
@@ -297,6 +317,30 @@ interface RosterRow {
             Apply names
           </button>
         }
+        <!-- Summarize — sends the transcript TEXT to the configured model
+             (cloud or local) via main; never needs audio (works regardless of
+             Keep audio). When a model is configured this opens the Summary
+             panel; with none it routes to Settings to set one up. -->
+        <button
+          type="button"
+          class="btn btn-summarize"
+          [class.is-ready]="modelConfigured()"
+          (click)="onSummarize()"
+          [title]="modelConfigured()
+            ? 'Summarize this meeting with your model'
+            : 'Set up a model in Settings to summarize'"
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+            stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 6h16M4 11h16M4 16h9" />
+          </svg>
+          @if (modelConfigured()) {
+            Summarize
+          } @else {
+            Summarize…
+          }
+        </button>
         <!-- Verify-by-ear path — only when the meeting kept its audio
              (audio_path non-null). Opens the Post-Meeting Review screen to
              play the recording and tag speakers by listening. When audio
@@ -326,8 +370,13 @@ interface RosterRow {
 })
 export class MeetingSavedToastComponent {
   private readonly engine = inject(EngineService);
+  private readonly llm = inject(LlmService);
 
   readonly saved = input.required<MeetingSavedPayload>();
+
+  /** True once an LLM provider is configured (ADR-0029). Drives the Summarize
+   *  button: configured → opens the Summary panel; not → routes to Settings. */
+  protected readonly modelConfigured = this.llm.configured;
 
   /** User dismissed the card (the × button). */
   readonly dismiss = output<void>();
@@ -337,6 +386,12 @@ export class MeetingSavedToastComponent {
    *  tagging). Emitted ONLY from the affordance shown when audio was kept
    *  (audio_path non-null); the host mounts the review takeover. */
   readonly review = output<void>();
+  /** User asked to summarize this meeting AND a model is configured — host
+   *  opens the Summary panel for this session. */
+  readonly summarize = output<void>();
+  /** User asked to summarize but no model is configured — host opens Settings
+   *  (mirrors the Ask panel's "set up a model" routing). */
+  readonly openSettings = output<void>();
 
   /**
    * Editable roster model. Seeded from `saved().speakers`: `name` is the
@@ -433,6 +488,14 @@ export class MeetingSavedToastComponent {
 
     this.engine.renameSpeakers(this.saved().session_id, names);
     this.savedConfirmed.set(true);
+  }
+
+  /** Summarize affordance. With a model configured, ask the host to open the
+   *  Summary panel; without one, route to Settings to set a model up (the same
+   *  pattern as the Ask panel's empty-state CTA). */
+  protected onSummarize(): void {
+    if (this.modelConfigured()) this.summarize.emit();
+    else this.openSettings.emit();
   }
 
   /** Cycle the six muted speaker palette tokens (sp-1..sp-6). */

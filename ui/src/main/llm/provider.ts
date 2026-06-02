@@ -6,15 +6,37 @@
 // (ADR-0029: avoids SDK telemetry + supply-chain/native-dep surface; egress
 // stays small + auditable).
 //
-// This slice (Phase 6 Slice 1) only requires testConnection() to work. The
-// complete()/stream() signatures are declared NOW so later slices have a
-// stable shape to build against, but they throw "not implemented" for now.
+// Slice 1 wired testConnection(); Slice 2 (ADR-0031) wires the non-streaming
+// complete() used by the meeting-summary path. stream() remains a declared-but-
+// unimplemented stub for a later slice.
 
 import type { LlmConfig, LlmTestResult } from './types';
 
-/** Network timeout for any provider HTTP call. A misconfigured/dead endpoint
- *  must not hang the main process — we abort via AbortController after this. */
+/** Network timeout for a cheap validation/discovery call (testConnection).
+ *  A misconfigured/dead endpoint must not hang main — we abort after this. */
 export const LLM_REQUEST_TIMEOUT_MS = 15_000;
+
+/** Network timeout for a completion (summary). Summaries process the whole
+ *  transcript, so they're materially slower than the ping; allow more headroom
+ *  while still capping the worst case so a hung endpoint can't block main. */
+export const LLM_COMPLETE_TIMEOUT_MS = 60_000;
+
+/**
+ * A non-streaming completion request. System + user are the two prompt parts;
+ * `maxTokens` bounds the response. Text only — main never has an audio path
+ * into a provider (ADR-0029 privacy invariant). The `system`/`user` strings
+ * may contain (redacted-if-cloud) transcript content and MUST NEVER be logged.
+ */
+export interface CompleteReq {
+  system: string;
+  user: string;
+  maxTokens: number;
+}
+
+/** Result of a non-streaming completion: the assembled response text only. */
+export interface CompleteResult {
+  text: string;
+}
 
 /** A single chat message handed to a provider. Text only — main never has an
  *  audio path into a provider (ADR-0029 privacy invariant). */
@@ -38,10 +60,12 @@ export interface LlmStreamChunk {
 }
 
 /**
- * The provider contract. `testConnection` is the only method implemented this
- * slice; `complete`/`stream` are declared for later slices and throw until
- * then. Implementations must NEVER log keys, request bodies, or response
- * bodies (ADR-0029).
+ * The provider contract. `testConnection` (Slice 1) and `complete` (Slice 2)
+ * are implemented; `stream` remains a declared-but-unimplemented stub for a
+ * later slice. Implementations must NEVER log keys, request bodies, or
+ * response bodies (ADR-0029) — and on a non-ok HTTP they throw an Error whose
+ * message is derived ONLY from the numeric status (detailForStatus), never the
+ * response body.
  */
 export interface LlmProvider {
   /** Cheap live call validating key + endpoint + model. Resolves an
@@ -49,9 +73,9 @@ export interface LlmProvider {
    *  `{ ok: false, detail }`). */
   testConnection(): Promise<LlmTestResult>;
 
-  /** Non-streaming completion (Phase 6 later slices). Throws 'not implemented'
-   *  this slice. */
-  complete(opts: LlmCompleteOptions): Promise<string>;
+  /** Non-streaming completion (Slice 2 — meeting summary). Rejects on an
+   *  HTTP/network failure with a content-free, status-derived Error. */
+  complete(req: CompleteReq): Promise<CompleteResult>;
 
   /** Streaming completion (Phase 6 later slices). Throws 'not implemented'
    *  this slice. */

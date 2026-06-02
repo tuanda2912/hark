@@ -137,6 +137,100 @@ struct VaultWriter: Sendable {
         return Result(fileURL: fileURL, slug: slug, committed: committed)
     }
 
+    /// APPEND-OR-REPLACE a `## Summary` section in an already-written meeting file
+    /// and (best-effort) git-commit the change (ADR-0031 §6). The summary is
+    /// generated in the Electron main process and handed in as plain markdown — this
+    /// method only persists it; no model is ever called here. Centralizes the vault
+    /// write + git-commit in the one owner (hard rule #4), like `rewrite`.
+    ///
+    /// IDEMPOTENT: if the file already carries a `## Summary` section (re-summarize),
+    /// its body is REPLACED in place; otherwise a new `## Summary` section is appended
+    /// after the existing content. Never duplicates the heading. The merge itself is
+    /// the PURE, unit-tested `mergeSummarySection` (so the live path and the tests
+    /// share one definition); this method only does read → merge → atomicWrite →
+    /// commit, writing to the EXISTING `fileURL` (overwrite, hard rule #4 — the
+    /// meeting's OWN file, never another, never a new one).
+    ///
+    /// - Throws: only on the FILE I/O (read of the existing file / atomic write).
+    ///   Git failures are swallowed and reported via `Result.committed == false` —
+    ///   same best-effort-commit contract as `write` / `rewrite`: the `.md` is the
+    ///   durable artefact, so a missing commit must not fail the summary save.
+    func appendSummary(
+        to fileURL: URL,
+        summary: String,
+        commitMessage: String
+    ) throws -> Result {
+        let existing = try String(contentsOf: fileURL, encoding: .utf8)
+        let merged = Self.mergeSummarySection(into: existing, summary: summary)
+        try atomicWrite(merged, to: fileURL)
+        let slug = fileURL.deletingPathExtension().lastPathComponent
+        let committed = gitCommit(fileURL: fileURL, slug: slug, message: commitMessage)
+        return Result(fileURL: fileURL, slug: slug, committed: committed)
+    }
+
+    /// PURE append-or-replace of a `## Summary` section in a meeting markdown body.
+    /// No I/O, no state — unit-tested directly so the live `appendSummary` path and
+    /// the regression suite share one definition of "merge the summary."
+    ///
+    ///   - If `## Summary` is ABSENT: append a new section after the existing
+    ///     content (trimming trailing blank lines first, then one blank line, the
+    ///     heading, a blank line, the body) so the file ends with exactly one
+    ///     trailing newline.
+    ///   - If `## Summary` is PRESENT: REPLACE its body (everything from the heading
+    ///     up to the NEXT `## ` heading at column 0, or end-of-file) with the new
+    ///     body, leaving everything before the heading and any following sections
+    ///     untouched. This is what makes a re-summarize idempotent — no duplicate
+    ///     `## Summary` heading, no stacked bodies.
+    ///
+    /// `summary` is the markdown body only (no heading); it's trimmed of surrounding
+    /// whitespace and rendered under a freshly-emitted `## Summary` heading.
+    static func mergeSummarySection(into existing: String, summary: String) -> String {
+        let heading = "## Summary"
+        let body = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let section = "\(heading)\n\n\(body)\n"
+
+        let lines = existing.components(separatedBy: "\n")
+        // Find the `## Summary` heading line (exact match on the trimmed line, so a
+        // `### Summary` subheading or a quoted "## Summary" in the body doesn't match).
+        guard let headingIdx = lines.firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespaces) == heading
+        }) else {
+            // ABSENT → append. Drop trailing blank lines from the existing content,
+            // then separate with one blank line so the section reads cleanly.
+            var trimmed = existing
+            while trimmed.hasSuffix("\n") { trimmed.removeLast() }
+            if trimmed.isEmpty { return section }
+            return trimmed + "\n\n" + section
+        }
+
+        // PRESENT → replace the section body. The section runs from the heading up
+        // to (but not including) the next top-level `## ` heading, or end-of-file.
+        var endIdx = lines.count
+        if headingIdx + 1 < lines.count {
+            for i in (headingIdx + 1)..<lines.count where lines[i].hasPrefix("## ") {
+                endIdx = i
+                break
+            }
+        }
+
+        let before = lines[..<headingIdx]            // content above the section
+        let after = lines[endIdx...]                 // following sections, if any
+
+        var out = before.joined(separator: "\n")
+        // Keep exactly one blank line between prior content and the section.
+        if !out.isEmpty {
+            while out.hasSuffix("\n") { out.removeLast() }
+            out += "\n\n"
+        }
+        out += section
+        if !after.isEmpty {
+            // `section` already ends in "\n"; add one blank line before the next
+            // section, then re-join the tail verbatim.
+            out += "\n" + after.joined(separator: "\n")
+        }
+        return out
+    }
+
     // ─── Markdown rendering (ADR-0015 §1, design doc 07) ────────────────────
 
     // `internal` (not `private`) so the rename re-render path's regression tests

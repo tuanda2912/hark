@@ -398,3 +398,20 @@ struct SpeakerRenameCommand: Decodable {
     let sessionId: String          // ← session_id
     let names: [String: String]    // currentLabel -> newName
 }
+
+/// Persist a generated meeting summary back into the vault markdown (UI → engine,
+/// ADR-0031 §6). The summary itself is generated in the Electron main process (the
+/// cloud/local egress chokepoint, ADR-0029); the ENGINE only persists the text it's
+/// handed — it never calls a model. This keeps every vault write + git-commit in the
+/// one owner (hard rule #4), exactly like `speaker.rename` re-renders the saved file.
+///
+/// `sessionId` scopes the write to the most-recently-saved meeting (the same MVP
+/// limitation as `speaker.rename`); `summary` is the markdown body to drop under a
+/// `## Summary` section. `session_id` arrives snake_case and is folded to `sessionId`
+/// by `decodeInbound`'s `.convertFromSnakeCase` — `summary` is single-word, unchanged.
+/// Like the rename command, the SUMMARY STRING is a value, not a key, so the decoder
+/// passes its content through verbatim.
+struct SummaryWriteCommand: Decodable {
+    let sessionId: String          // ← session_id
+    let summary: String
+}

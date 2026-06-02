@@ -15,7 +15,14 @@
 // read model (the status signals) the UI binds to.
 
 import { Injectable, signal, computed } from '@angular/core';
-import type { LlmConfig, LlmStatus, LlmTestResult } from './llm.types';
+import type {
+  LlmConfig,
+  LlmStatus,
+  LlmTestResult,
+  SummarizeReq,
+  SummarizeResult,
+  CloudCallLogEntry,
+} from './llm.types';
 
 @Injectable({ providedIn: 'root' })
 export class LlmService {
@@ -43,6 +50,18 @@ export class LlmService {
   readonly testing = signal(false);
   /** Result of the most recent probe, or null if none has run / it was reset. */
   readonly testResult = signal<LlmTestResult | null>(null);
+
+  // ─── Summarize state (ADR-0031) ─────────────────────────────────────
+
+  /** True while a `summarize()` call is in flight. Drives the panel's
+   *  "Summarizing…" state. */
+  readonly summarizing = signal(false);
+  /** The most recent summarize result (success or failure), or null before the
+   *  first call / after a reset. */
+  readonly summary = signal<SummarizeResult | null>(null);
+  /** The local cloud-activity log (metadata only — never content). Surfaced
+   *  read-only in Settings → Privacy. */
+  readonly cloudLog = signal<CloudCallLogEntry[]>([]);
 
   constructor() {
     // Pull the initial status once. Fire-and-forget: the guard inside
@@ -99,5 +118,58 @@ export class LlmService {
     } finally {
       this.testing.set(false);
     }
+  }
+
+  // ─── Summarize (ADR-0031) ───────────────────────────────────────────
+
+  /**
+   * Send the transcript text to main for summarization (no direct network —
+   * main owns the provider HTTP + redaction + cloud/local fork). Stores the
+   * result in `summary` and toggles `summarizing`. Returns the result so a
+   * caller can react inline; resolves with `{ ok: false }` (never throws) so
+   * the panel only ever renders a result. No-op (a failure result) outside
+   * Electron, where `window.hark.llm` is absent.
+   */
+  async summarize(req: SummarizeReq): Promise<SummarizeResult> {
+    const llm = window.hark?.llm;
+    if (!llm) {
+      const result: SummarizeResult = {
+        ok: false,
+        detail: 'No model bridge available (running outside Electron).',
+      };
+      this.summary.set(result);
+      return result;
+    }
+    this.summarizing.set(true);
+    this.summary.set(null);
+    try {
+      const result = await llm.summarize(req);
+      this.summary.set(result);
+      return result;
+    } catch (err) {
+      const result: SummarizeResult = {
+        ok: false,
+        detail: err instanceof Error ? err.message : 'summarize failed',
+      };
+      this.summary.set(result);
+      return result;
+    } finally {
+      this.summarizing.set(false);
+    }
+  }
+
+  /** Reset the summarize state — used when a panel opens fresh so a prior
+   *  meeting's summary doesn't flash. */
+  resetSummary(): void {
+    this.summary.set(null);
+    this.summarizing.set(false);
+  }
+
+  /** Re-read the local cloud-activity log from main into the `cloudLog`
+   *  signal. Guarded for `window.hark?.llm`; a no-op outside Electron. */
+  async refreshCloudLog(): Promise<void> {
+    const llm = window.hark?.llm;
+    if (!llm) return;
+    this.cloudLog.set(await llm.getCloudLog());
   }
 }

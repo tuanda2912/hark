@@ -43,6 +43,7 @@ import { AskPanelComponent } from './components/ask-panel.component';
 import { EyebrowComponent } from './components/eyebrow.component';
 import { SpeakerTaggingComponent } from './components/speaker-tagging.component';
 import { PostMeetingReviewComponent } from './components/post-meeting-review.component';
+import { SummaryPanelComponent } from './components/summary-panel.component';
 
 @Component({
   selector: 'hark-root',
@@ -59,6 +60,7 @@ import { PostMeetingReviewComponent } from './components/post-meeting-review.com
     EyebrowComponent,
     SpeakerTaggingComponent,
     PostMeetingReviewComponent,
+    SummaryPanelComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
@@ -288,6 +290,42 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly _reviewGuard = effect(() => {
     if (this.reviewOpen() && this.reviewMeeting() === null) {
       this.reviewOpen.set(false);
+    }
+  });
+
+  // ─── Summary panel (Phase 6 slice 2, ADR-0029/0031) ─────────────────
+  //
+  // A modal opened from the saved-confirmation card's "Summarize" affordance
+  // (available regardless of Keep audio — a summary doesn't need the recording).
+  // It assembles the transcript text + applied speaker names from EngineService
+  // and calls main's LLM bridge via LlmService (NO direct network), then writes
+  // the summary back through the engine (summary.write) on "Save to note". When
+  // no model is configured the card routes to Settings instead of opening this.
+  readonly summaryOpen = signal(false);
+
+  /** The summary panel's target — the most-recently-saved meeting's session id,
+   *  read live so it stays correct if a newer meeting lands while open. */
+  readonly summarySessionId = computed(
+    () => this.engine.lastMeetingSaved()?.session_id ?? null,
+  );
+
+  /** Open the Summary panel for the saved meeting. Guarded: a saved meeting
+   *  must exist (the card — hence the trigger — only renders then). */
+  openSummary(): void {
+    if (this.engine.lastMeetingSaved() === null) return;
+    this.summaryOpen.set(true);
+  }
+
+  /** Esc / backdrop / × / Close inside the panel — unmount it. */
+  closeSummary(): void {
+    this.summaryOpen.set(false);
+  }
+
+  /** Auto-close the summary panel if its meeting goes away (New meeting / Start
+   *  clears lastMeetingSaved()). Belt-and-braces alongside the template guard. */
+  private readonly _summaryGuard = effect(() => {
+    if (this.summaryOpen() && this.engine.lastMeetingSaved() === null) {
+      this.summaryOpen.set(false);
     }
   });
 

@@ -280,6 +280,70 @@
             everything on your Mac to support that. This isn't legal advice.
           </span>
         </p>
+
+        <!-- Cloud activity (ADR-0031). A read-only log of model calls — cloud
+             AND local — recorded locally as METADATA ONLY (never transcript
+             content). Surfaces exactly what left the Mac, per call. -->
+        <div class="flex flex-col gap-2">
+          <div class="flex flex-col gap-1">
+            <h4 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+              Cloud activity
+            </h4>
+            <p class="text-xs text-text-3">
+              Every model call is logged on this Mac — metadata only, never the
+              transcript text. A local model sends nothing off your Mac.
+            </p>
+          </div>
+
+          @if (cloudLog().length === 0) {
+            <p class="text-xs text-text-3 px-3 py-3 rounded-panel bg-bg-2 border border-border">
+              No cloud calls yet.
+            </p>
+          } @else {
+            <ul class="flex flex-col gap-1.5">
+              @for (call of cloudLog(); track $index) {
+                <li
+                  class="flex items-center gap-2 px-3 py-2 rounded-panel bg-bg-2 border border-border text-xs"
+                >
+                  <!-- time -->
+                  <span class="font-mono text-text-3 shrink-0 whitespace-nowrap">
+                    {{ formatCallTime(call.ts) }}
+                  </span>
+                  <!-- action · model -->
+                  <span class="flex-1 min-w-0 truncate text-text-2" [title]="call.action + ' · ' + call.model">
+                    <span class="text-text">{{ call.action }}</span>
+                    <span class="text-text-3"> · {{ call.model }}</span>
+                  </span>
+                  <!-- redaction count (cloud calls only carry a non-zero) -->
+                  @if (call.egress === 'cloud') {
+                    <span class="shrink-0 font-mono text-[10.5px] text-text-3 whitespace-nowrap">
+                      redacted {{ call.redactionTotal }}
+                    </span>
+                  }
+                  <!-- egress badge: cloud vs local -->
+                  <span
+                    class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-mono text-[10px] whitespace-nowrap"
+                    [style.color]="call.egress === 'cloud' ? 'var(--status-cloud)' : 'var(--status-success)'"
+                    [style.background]="call.egress === 'cloud'
+                      ? 'color-mix(in oklab, var(--status-cloud) 12%, transparent)'
+                      : 'color-mix(in oklab, var(--status-success) 12%, transparent)'"
+                  >
+                    {{ call.egress }}
+                  </span>
+                  <!-- status -->
+                  <span
+                    class="shrink-0"
+                    [style.color]="call.status === 'ok' ? 'var(--status-success)' : 'var(--status-recording)'"
+                    [title]="call.status === 'error' && call.detail ? call.detail : call.status"
+                    [attr.aria-label]="call.status"
+                  >
+                    {{ call.status === 'ok' ? '✓' : '✗' }}
+                  </span>
+                </li>
+              }
+            </ul>
+          }
+        </div>
       </section>
 
       <!-- ─── Models (LLM provider) — ADR-0029 ─── -->

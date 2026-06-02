@@ -52,9 +52,17 @@ is being built **provider-agnostic now**; the integration lands later.
   key in macOS Keychain via `safeStorage` (ADR-0030); local needs none. Settings → Models pane
   (provider / model / baseUrl / key / Test connection); `modelConfigured()` gate live. Engine
   stays network-free; CSP unchanged. Privacy-audited PASS.
-- **Meeting summary (Slice 2 — next).** "Summarize" → main reads the meeting `.md` → redact →
-  stream TL;DR/chapters/actions → append to the vault file. First content egress; redaction +
-  cloud-call log land here.
+- **Meeting summary — SHIPPED (Slice 2).** "Summarize" on the saved card → renderer builds the
+  transcript → `llm.summarize` in main → (redact if cloud) → Anthropic/OpenAI-compatible
+  completion → summary panel + receipt → "Save to note" writes `## Summary` to the vault via the
+  engine (`summary.write` → `VaultWriter.appendSummary` + git-commit). Cloud-call log + Settings
+  Cloud-activity list shipped. Local model ⇒ full transcript, zero egress. ADR-0031. Audited PASS.
+  - *Redaction v1 gaps (ADR-0031 §3, deferred to NER):* regex catches email/url/money/phone/
+    long-numbers + known roster names; it does NOT catch zip-style 5–6 digit numbers, word-form
+    currency ("50 dollars"), or arbitrary free-text names. The receipt is honest (claims a count,
+    not "all PII removed"). *Pick up:* a local NER pass for names + a user-facing redaction toggle.
+  - *Non-streaming v1:* the summary returns whole (≤60s), no token streaming. *Pick up:* SSE
+    streaming over IPC for a live-typing summary (design wants it; deferred for simplicity).
 - **This-meeting Q&A (Slice 3).** Wire the Ask panel for the *current* meeting — feeds the
   current transcript as context (no vector index needed). Streaming answer + citations.
 - **Vault-wide / 2nd-brain Q&A — RAG (Slice 4, deferred).** Cross-meeting questions over the

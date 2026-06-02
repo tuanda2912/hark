@@ -49,6 +49,14 @@ export class SettingsPanelComponent {
   private readonly prefs = inject(PreferencesService);
   private readonly llm = inject(LlmService);
 
+  constructor() {
+    // Settings is mounted on open (AppComponent `@if (settingsOpen())`), so
+    // construction == open: pull the latest cloud-activity log + provider
+    // status. Fire-and-forget; both are guarded no-ops outside Electron.
+    void this.llm.refreshCloudLog();
+    void this.llm.refresh();
+  }
+
   // ─── General (read-only) ────────────────────────────────────────────
   private readonly hello = this.engine.hello;
   private readonly connection = this.engine.connection;
@@ -231,6 +239,31 @@ export class SettingsPanelComponent {
   /** Probe the configured provider; result surfaces inline. */
   async testConnection(): Promise<void> {
     await this.llm.test();
+  }
+
+  // ─── Cloud activity (ADR-0031) ──────────────────────────────────────
+  //
+  // A read-only list of recent model calls (cloud AND local), metadata only —
+  // never transcript content. The list comes from main's local
+  // `cloud-calls.json` via LlmService. Settings is mounted only while open
+  // (AppComponent's `@if (settingsOpen())`), so refreshing in the constructor
+  // is effectively "refresh on open". Most-recent-first for the display.
+  readonly cloudLog = computed(() =>
+    // Copy before reverse so we never mutate the service's array in place.
+    [...this.llm.cloudLog()].reverse(),
+  );
+
+  /** A short, human-readable timestamp for a log row. Falls back to the raw
+   *  string if it isn't a parseable date. */
+  formatCallTime(ts: string): string {
+    const ms = Date.parse(ts);
+    if (Number.isNaN(ms)) return ts;
+    return new Date(ms).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }
 
   // ─── Vault ──────────────────────────────────────────────────────────

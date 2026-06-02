@@ -333,6 +333,8 @@ actor EngineSession {
             dispatchBookmarkCreate(client, id: header.id, data: data)
         case "speaker.rename":
             dispatchSpeakerRename(client, id: header.id, data: data)
+        case "summary.write":
+            dispatchSummaryWrite(client, id: header.id, data: data)
         case "meta.heartbeat":
             // Client heartbeat — ignored beyond noting liveness. NIO's
             // protocol ping/pong is the actual liveness signal.
@@ -672,6 +674,68 @@ actor EngineSession {
     /// `commitDecision` is shared by the live loop and CommitWatermarkTests.
     static func voiceprintAccessAllowed(rememberSpeakers: Bool) -> Bool {
         rememberSpeakers
+    }
+
+    // ─── Summary persistence (ADR-0031 §6) ──────────────────────────────────
+
+    /// Persist a generated meeting summary into the most-recently-saved meeting's
+    /// OWN vault markdown and git-commit it. The summary text is generated in the
+    /// Electron main process (the cloud/local egress chokepoint, ADR-0029) and
+    /// handed to the engine — the engine NEVER calls a model here; it only writes.
+    /// Centralizing the vault write + git-commit in the one owner is the whole
+    /// point (hard rule #4), exactly mirroring `speaker.rename`'s re-render.
+    ///
+    /// Same MVP scope + ack/error shape as `speaker.rename`: only the single most-
+    /// recent meeting is writable (located by the retained `lastSavedMeeting`
+    /// snapshot's `sessionId`); a plain `ack` on success, `MEETING_NOT_FOUND` when
+    /// the session id doesn't match the retained meeting, `WRITE_FAILED` when the
+    /// `.md` write itself fails. A failed git commit alone is NOT a failure — the
+    /// `.md` is the durable artefact (VaultWriter's best-effort-commit semantics).
+    private func dispatchSummaryWrite(_ client: WebSocketClient, id: String?, data: Data) {
+        let cmd: SummaryWriteCommand
+        do {
+            cmd = try decodeInbound(data, payloadType: SummaryWriteCommand.self)
+        } catch {
+            sendError(client, id: id, code: "PROTOCOL_MISMATCH",
+                      message: "bad summary.write payload", recoverable: false)
+            return
+        }
+
+        // Reuse the SAME retained snapshot mechanism speaker.rename uses: only the
+        // most-recently-saved meeting is summarizable, and only ITS file is touched
+        // (hard rule #4 — never another file, never a new one).
+        guard let snapshot = lastSavedMeeting, snapshot.sessionId == cmd.sessionId else {
+            sendError(client, id: id, code: "MEETING_NOT_FOUND",
+                      message: "can only write a summary for the most recently saved meeting",
+                      recoverable: true)
+            return
+        }
+
+        let writer = VaultWriter()
+        let result: VaultWriter.Result
+        do {
+            result = try writer.appendSummary(
+                to: snapshot.vaultPath,
+                summary: cmd.summary,
+                commitMessage: "docs(meeting): summary for \(snapshot.vaultPath.deletingPathExtension().lastPathComponent)")
+        } catch {
+            // The `.md` read-modify-write failed (read / atomic write). This is the
+            // durable part — a failed write means the summary did NOT land, so it's
+            // a hard error. (A failed git COMMIT alone is best-effort, surfaced as
+            // committed=false below, NOT an error — same as the meeting write.)
+            FileHandle.standardError.write(Data(
+                "harkd: summary write failed (\(type(of: error))); file unchanged\n".utf8))
+            sendError(client, id: id, code: "WRITE_FAILED",
+                      message: "could not write the meeting summary to the vault", recoverable: true)
+            return
+        }
+
+        // Privacy: log path + commit status only — never the summary text (rule #2/#3).
+        FileHandle.standardError.write(Data(String(
+            format: "harkd: summary written — %@  (committed=%@)\n",
+            result.fileURL.path, result.committed ? "yes" : "no").utf8))
+
+        sendAck(client, id: id)
     }
 
     // ─── Capture wiring ─────────────────────────────────────────────────
