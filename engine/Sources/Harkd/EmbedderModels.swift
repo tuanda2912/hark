@@ -69,18 +69,29 @@ enum EmbedderModels {
     /// SentencePiece tokenizer; masked mean-pooling; e5 query/passage prefixes.
     ///
     /// The CoreML `.mlpackage` is produced by `scripts/convert-embedder-coreml.py`
-    /// (validated on-device 2026-06-03 — the gated cross-lingual test passes on ANE).
-    /// PRODUCTION TODO: publish `MultilingualE5Small.mlpackage` (ideally FP16-quantized
-    /// to ~halve the 224 MB FP32 size) to a Hark-owned HF repo and point `repo` at it;
-    /// the source repo below provides only the tokenizer files. Until then, dev/test
-    /// loads the local conversion via the `HARK_EMBEDDER_LOCAL_DIR` env override
-    /// (EmbedderLoader) — no hosting required.
+    /// (fp16, ~224 MB) then `scripts/quantize-embedder-int8.py` (int8 weights,
+    /// ~113 MB; fp16↔int8 embedding cosine 0.99986 — validated on-device, the gated
+    /// cross-lingual + end-to-end tests pass on ANE with the int8 artifact).
+    ///
+    /// PRODUCTION HOSTING: publish the int8 `.mlpackage` + tokenizer to a Hark-owned
+    /// HF repo via `scripts/publish-embedder-hf.sh <namespace>/<repo>`, then set BOTH
+    /// fields below to that repo: `repo` → the published repo id, `revision` → the
+    /// published commit SHA (the script prints it). NOTE: once `repo` points at the
+    /// CoreML repo, `revision` is that repo's commit — NOT the source-weights commit
+    /// below (which stays recorded in the model card for provenance). Until published,
+    /// the production download can't resolve the `.mlpackage`; dev/test loads the
+    /// local int8 dir via `HARK_EMBEDDER_LOCAL_DIR=/tmp/hark-coreml/int8` (EmbedderLoader).
     static let multilingualE5Small = EmbedderModel(
         id: "multilingual-e5-small",
+        // PUBLISH TODO: change to the Hark-owned CoreML repo (e.g.
+        // "<namespace>/hark-multilingual-e5-small-coreml") after running
+        // publish-embedder-hf.sh. The source repo below has NO `.mlpackage`, so the
+        // production download degrades gracefully (no vault search) until this is set.
         repo: "intfloat/multilingual-e5-small",
-        // PIN: the source-weights commit we converted from. Recorded so a re-convert
-        // is reproducible and the manifest can detect a model change. (Source repo
-        // pin; the CoreML artifact is produced by our own recipe from this revision.)
+        // PIN: paired with `repo`. While `repo` is still the source repo this is the
+        // source-weights commit we converted from (also recorded in the model card
+        // for reproducibility); set it to the PUBLISHED CoreML repo's commit SHA when
+        // you point `repo` at the Hark repo.
         revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
         mlpackageName: "MultilingualE5Small.mlpackage",
         dimension: 384,
