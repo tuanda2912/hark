@@ -25,6 +25,11 @@
   - **Built-in (default):** engine **CoreML embedder** (`multilingual-e5-small`, 384-dim, ANE) + brute-force in-memory cosine over a flat file, **offset-only** (`meta.jsonl` holds pointers; snippets read **live from the vault** at retrieve, stale/deleted files skipped) + **FSEvents watcher** (30 s, content-hash). New `rag.retrieve`/`rag.results`/`rag.index_status` wire frames. Embedder loads **concurrently** with the speech model (no longer blocked behind the large-v3 compile).
   - **External:** a user-run **LOCAL** retrieval service — `src/main/rag/` is a hand-rolled (raw `fetch`, no SDK) loopback client with two transports: **plain HTTP** (`POST {query,k,scope}→{chunks}`) and **minimal MCP-over-HTTP** (`initialize`→`tools/call`, JSON or SSE). **Loopback-guarded** before every fetch + `redirect:'error'` (SSRF closed).
   - **Renderer:** `RetrievalService` hides the fork; the Ask panel gained a **this-meeting | vault** scope toggle and renders **real numbered source cards** (the empty `[1][2]` citations Slice 3 left). Settings → "Vault search" + an onboarding choice select the backend.
+  - **Embedder hosting — DONE:** the int8 CoreML model (~113 MB) is published to
+    `tuanda2912/hark-multilingual-e5-small-coreml` (public, MIT) and pinned in
+    `EmbedderModels.swift`. The production first-run download path is **validated end-to-end with
+    no env override** (clean run: download 24 s → ANE compile 6 s → cross-lingual + full retrieve
+    tests pass; second run hits the cache). Built-in vault RAG is **shippable**.
   - **Verified:** live WS smoke (built-in, on-device, real embedder + real vault) · 12-check external-transport smoke (both HTTP + MCP, JSON + SSE) · 168 engine tests green · **privacy-audited PASS** (built-in 4a/4b/4c + external 7/7).
 
 ### ✅ Done — Phases 0–5 (condensed; full log in the session archive)
@@ -35,11 +40,10 @@
 
 ### ⏳ Next up
 
-1. **Ship-readiness — built-in RAG model hosting (blocks shipping built-in RAG).** FP16-quantize the `MultilingualE5Small.mlpackage` (~224 MB → ~112 MB) + publish to a Hark-owned HF repo + point `EmbedderModels.multilingualE5Small.repo` at it. Today production download can't resolve it; **dev uses `HARK_EMBEDDER_LOCAL_DIR=/tmp/hark-coreml/out`** (artifact + tokenizer live there; conversion recipe: `engine/scripts/convert-embedder-coreml.py`). Optionally cache the compiled `.mlmodelc`.
-2. **On-device LLM testing (user).** Exercise summary / this-meeting Q&A / vault Q&A with a real API key (Anthropic / OpenAI-compatible) **or** a local Ollama (`baseUrl` → zero egress). External RAG: a ~10-line local stub server proves the path (see BACKLOG / the 4c–external report).
-3. **Translation** (designed, deferred behind RAG — see BACKLOG): end-of-meeting transcript translation (reuse `summarize`) + live translation (WhisperKit `task=.translate` → English; arbitrary target via MT/Apple Translation/per-segment LLM).
-4. **Phase 7 — packaging / notarization.** electron-builder + sign the Swift sidecar + hardened-runtime entitlements + `kTCCServiceAudioCapture` attribution. Onboarding flow polish.
-5. **Polish / deferred** (all in BACKLOG): jump-to-source citations (chunks carry `note_path` + offsets); live index-status for the external backend; richer MCP (resources/streaming/SDK); a committed renderer/main **test runner** (only Swift + throwaway smokes today); transcript-readability finalization fix; clustering-threshold tuning; redaction NER + toggle.
+1. **On-device LLM testing (user).** Exercise summary / this-meeting Q&A / vault Q&A with a real API key (Anthropic / OpenAI-compatible) **or** a local Ollama (`baseUrl` → zero egress). Built-in vault RAG now works on a clean install (embedder hosted — see above); external RAG: a ~10-line local stub server proves the path (see BACKLOG / the 4c–external report).
+2. **Translation** (designed, deferred behind RAG — see BACKLOG): end-of-meeting transcript translation (reuse `summarize`) + live translation (WhisperKit `task=.translate` → English; arbitrary target via MT/Apple Translation/per-segment LLM).
+3. **Phase 7 — packaging / notarization.** electron-builder + sign the Swift sidecar + hardened-runtime entitlements + `kTCCServiceAudioCapture` attribution. Onboarding flow polish.
+4. **Polish / deferred** (all in BACKLOG): jump-to-source citations (chunks carry `note_path` + offsets); live index-status for the external backend; richer MCP (resources/streaming/SDK); a committed renderer/main **test runner** (only Swift + throwaway smokes today); transcript-readability finalization fix; clustering-threshold tuning; redaction NER + toggle.
 
 ---
 

@@ -73,26 +73,22 @@ enum EmbedderModels {
     /// ~113 MB; fp16↔int8 embedding cosine 0.99986 — validated on-device, the gated
     /// cross-lingual + end-to-end tests pass on ANE with the int8 artifact).
     ///
-    /// PRODUCTION HOSTING: publish the int8 `.mlpackage` + tokenizer to a Hark-owned
-    /// HF repo via `scripts/publish-embedder-hf.sh <namespace>/<repo>`, then set BOTH
-    /// fields below to that repo: `repo` → the published repo id, `revision` → the
-    /// published commit SHA (the script prints it). NOTE: once `repo` points at the
-    /// CoreML repo, `revision` is that repo's commit — NOT the source-weights commit
-    /// below (which stays recorded in the model card for provenance). Until published,
-    /// the production download can't resolve the `.mlpackage`; dev/test loads the
-    /// local int8 dir via `HARK_EMBEDDER_LOCAL_DIR=/tmp/hark-coreml/int8` (EmbedderLoader).
+    /// HOSTING: the int8 `.mlpackage` + tokenizer are published (via
+    /// `scripts/publish-embedder-hf.sh`) to the Hark-owned HF repo pinned below —
+    /// public + MIT (inherited from the source model), downloaded anonymously by the
+    /// engine at first run into HarkPaths.modelsDir(). Source-weights provenance
+    /// (intfloat revision 614241f…) is recorded in the published model card.
+    /// Dev/test can still bypass the download via `HARK_EMBEDDER_LOCAL_DIR` (EmbedderLoader).
     static let multilingualE5Small = EmbedderModel(
         id: "multilingual-e5-small",
-        // PUBLISH TODO: change to the Hark-owned CoreML repo (e.g.
-        // "<namespace>/hark-multilingual-e5-small-coreml") after running
-        // publish-embedder-hf.sh. The source repo below has NO `.mlpackage`, so the
-        // production download degrades gracefully (no vault search) until this is set.
-        repo: "intfloat/multilingual-e5-small",
-        // PIN: paired with `repo`. While `repo` is still the source repo this is the
-        // source-weights commit we converted from (also recorded in the model card
-        // for reproducibility); set it to the PUBLISHED CoreML repo's commit SHA when
-        // you point `repo` at the Hark repo.
-        revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+        // The Hark-owned CoreML conversion repo (NOT the source PyTorch repo) — it
+        // holds the int8 MultilingualE5Small.mlpackage + tokenizer files the loader
+        // snapshots.
+        repo: "tuanda2912/hark-multilingual-e5-small-coreml",
+        // PIN: the published CoreML repo commit. We never track a moving `main` for a
+        // model the index depends on (a silent re-convert would corrupt every stored
+        // vector). A change here ⇒ full re-index (recorded in the manifest with `id`).
+        revision: "0a386d4aea14586b042c6e68a83acb6ff8d87970",
         mlpackageName: "MultilingualE5Small.mlpackage",
         dimension: 384,
         maxSequenceLength: 512,

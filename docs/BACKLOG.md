@@ -103,16 +103,17 @@ is being built **provider-agnostic now**; the integration lands later.
     was run on-device; the gated cross-lingual test (EN↔TH/VI closer than unrelated) **passes on
     ANE**. 123 engine tests green; privacy-audited PASS (network use = the routed model download
     only).
-    - **Deploy / model hosting — int8 DONE, publish PENDING (2026-06-03).** The base conversion
-      is already **fp16** (~224 MB — coremltools' mlprogram default; the earlier "FP32" was a
-      mislabel). `scripts/quantize-embedder-int8.py` int8-quantizes it to **~113 MB** with
-      **fp16↔int8 cosine 0.99986** and both gated on-device tests still green — so int8 is the
-      ship artifact. Staged at `/tmp/hark-coreml/int8`. **Remaining (needs the user's HF account):**
-      run `scripts/publish-embedder-hf.sh <namespace>/<repo>` to push the int8 `.mlpackage` +
-      tokenizer + model card (`scripts/embedder-model-card.md`) to a Hark-owned HF repo, then pin
-      `repo` + `revision` (the published commit SHA) in `EmbedderModels.swift`. The production
-      download glob is verified correct (swift-transformers' `fnmatch` flags=0 → `*` crosses `/`,
-      so `MultilingualE5Small.mlpackage/*` fetches the nested package). Optional later: cache the
+    - **Deploy / model hosting — DONE (2026-06-03).** The base conversion is already **fp16**
+      (~224 MB); `scripts/quantize-embedder-int8.py` int8-quantizes it to **~113 MB**
+      (fp16↔int8 cosine 0.99986, both gated on-device tests green). Published to
+      **`tuanda2912/hark-multilingual-e5-small-coreml`** (public, MIT) via
+      `scripts/publish-embedder-hf.sh`; `EmbedderModels.swift` pins that repo + revision
+      `0a386d4…`. **Production first-run path validated end-to-end (no env override):** a clean
+      run downloaded from HF (24 s), ANE-compiled (6 s), and both the cross-lingual + full
+      retrieve tests passed; the second run hit the cache (no re-download). Built-in vault RAG is
+      now shippable. Considered + rejected reusing `tamikisg/multilingual-e5-small-coreml` — its
+      output is a pre-pooled `[1,384]` with a fixed 256 seq + unstated pooling, incompatible with
+      our `last_hidden_state` + flexible-512 + masked-mean-pool loader. Optional later: cache the
       compiled `.mlmodelc` under `HarkPaths` to skip recompiles.
   - **4b status — DONE + on-device validated (2026-06-03).** Heading-aware `RagChunker`,
     `RagIndex` (brute-force cosine over `vectors.bin` + `meta.jsonl` + `manifest.json`),
