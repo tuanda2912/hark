@@ -83,6 +83,13 @@ actor EngineSession {
     /// Used only by the post-stop pass.
     private var diarizer: Diarizer?
 
+    /// Vault-RAG index coordinator (Phase 6 slice 4b, ADR-0032/0033). nil until the
+    /// embedder + index finish loading; nil-tolerant — a missing indexer degrades
+    /// ONLY `rag.retrieve` (→ RAG_UNAVAILABLE) and never blocks capture/transcription.
+    /// Indexing runs entirely in the background inside this actor; the live audio
+    /// path never touches it.
+    private var ragIndexer: RagIndexer?
+
     // ─── Session-scoped state (reset per capture.start) ────────────────
     private var sessionId: String?
     private var sessionStartDate: Date?
@@ -247,6 +254,23 @@ actor EngineSession {
         self.diarizer = diarizer
     }
 
+    /// Inject the vault-RAG indexer once the embedder + index are ready (slice 4b).
+    /// Optional capability: capture/transcription work whether or not this is ever
+    /// attached. The indexer is created with a status sink that hops back here to
+    /// broadcast `rag.index_status`, so attaching it is all the session needs.
+    func attachRagIndexer(_ indexer: RagIndexer) {
+        self.ragIndexer = indexer
+    }
+
+    /// Broadcast a `rag.index_status` frame (slice 4b). Called from the indexer's
+    /// `@Sendable` status sink via a `Task { await session.emitRagIndexStatus(...) }`
+    /// hop — the SAME actor-hop pattern `emitModelProgress` uses. Additive, fire-
+    /// and-forget: it never gates readiness or capture.
+    func emitRagIndexStatus(state: String, indexedCount: Int, total: Int?) {
+        broadcast(WireEnvelope(type: "rag.index_status", payload: RagIndexStatusPayload(
+            state: state, indexedCount: indexedCount, total: total)))
+    }
+
     /// Broadcast a `meta.model_progress` frame and retain it as the latest
     /// snapshot for mid-download replay (see `lastModelProgress`). Called from
     /// the model loaders' off-actor `@Sendable` progress callbacks via a
@@ -335,6 +359,8 @@ actor EngineSession {
             dispatchSpeakerRename(client, id: header.id, data: data)
         case "summary.write":
             dispatchSummaryWrite(client, id: header.id, data: data)
+        case "rag.retrieve":
+            await dispatchRagRetrieve(client, id: header.id, data: data)
         case "meta.heartbeat":
             // Client heartbeat — ignored beyond noting liveness. NIO's
             // protocol ping/pong is the actual liveness signal.
@@ -736,6 +762,82 @@ actor EngineSession {
             result.fileURL.path, result.committed ? "yes" : "no").utf8))
 
         sendAck(client, id: id)
+    }
+
+    // ─── Vault RAG retrieval (Phase 6 slice 4b, ADR-0032/0033) ──────────────
+
+    /// Top-K vault retrieval: decode → embed the query (`.query`) → cosine search →
+    /// reply with `rag.results`. Mirrors the decode/dispatch/reply shape of the
+    /// other handlers. The reply is correlated to the request `id` (like `ack`), so
+    /// the UI can await a specific retrieve. Privacy: chunk text is returned ONLY
+    /// to the local UI over loopback — never networked, never logged (rule #1/#2).
+    ///
+    /// Errors:
+    ///   - PROTOCOL_MISMATCH — bad payload.
+    ///   - RAG_UNAVAILABLE — the embedder/index isn't loaded (recoverable: the model
+    ///     may still be warming up, or this build failed the embedder load — only
+    ///     RAG is affected, the user can retry).
+    private func dispatchRagRetrieve(_ client: WebSocketClient, id: String?, data: Data) async {
+        let cmd: RagRetrieveCommand
+        do {
+            cmd = try decodeInbound(data, payloadType: RagRetrieveCommand.self)
+        } catch {
+            sendError(client, id: id, code: "PROTOCOL_MISMATCH",
+                      message: "bad rag.retrieve payload", recoverable: false)
+            return
+        }
+
+        guard let indexer = ragIndexer else {
+            sendError(client, id: id, code: "RAG_UNAVAILABLE",
+                      message: "vault search isn't ready yet (embedder still loading or unavailable)",
+                      recoverable: true)
+            return
+        }
+
+        let query = cmd.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            sendError(client, id: id, code: "PROTOCOL_MISMATCH",
+                      message: "rag.retrieve query is empty", recoverable: true)
+            return
+        }
+        // Clamp k to a sane band — a default of 8, never below 1, never above 50
+        // (a UI asking for thousands would just waste the wire). The brute-force
+        // search is fine at any k; this guards the payload size.
+        let k = min(50, max(1, cmd.k ?? 8))
+
+        // Offset-only (decision 2026-06-03): `retrieve` ranks the textless vector
+        // index, then reads each hit's snippet LIVE from the vault at the stored
+        // offsets, skipping any note that's been deleted or edited since indexing.
+        // The wire shape below is UNCHANGED — only the SOURCE of `text` (vault read
+        // vs persisted cache) changed.
+        let hits: [RagRetrievedChunk]
+        do {
+            hits = try await indexer.retrieve(query: query, k: k)
+        } catch RagIndexer.RagError.unavailable {
+            sendError(client, id: id, code: "RAG_UNAVAILABLE",
+                      message: "vault search isn't ready yet (embedder unavailable)",
+                      recoverable: true)
+            return
+        } catch {
+            sendError(client, id: id, code: "INTERNAL",
+                      message: "vault search failed", recoverable: true)
+            return
+        }
+
+        let chunks = hits.map { hit in
+            RagResultChunk(
+                text: hit.text,
+                notePath: hit.notePath,
+                headingPath: hit.headingPath,
+                charStart: hit.charStart,
+                charEnd: hit.charEnd,
+                score: Double(hit.score))
+        }
+        // Privacy: log the COUNT only — never the query or the returned text.
+        FileHandle.standardError.write(Data(String(
+            format: "harkd: rag.retrieve k=%d → %d hit(s)\n", k, chunks.count).utf8))
+        sendOnly(client, envelope: WireEnvelope(
+            type: "rag.results", payload: RagResultsPayload(chunks: chunks), id: id))
     }
 
     // ─── Capture wiring ─────────────────────────────────────────────────

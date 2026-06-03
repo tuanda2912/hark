@@ -330,6 +330,67 @@ struct WarningPayload: Encodable {
     let severity: String
 }
 
+// ─── Vault RAG (Phase 6 slice 4b, ADR-0032/0033) ──────────────────────────
+//
+// Engine-side retrieval over the local vault vector index. `rag.retrieve` is a
+// UI→engine REQUEST (decoded below); `rag.results` is the engine's reply (this
+// payload, correlated by the request `id`); `rag.index_status` is an unsolicited
+// engine→UI event so 4c can show index-build state. The TS side + UI consumption
+// is slice 4c — these are the exact field names that mirror must match.
+
+/// `rag.results` — reply payload to a `rag.retrieve`. `chunks` is the top-K hits,
+/// score-descending. All fields non-optional, so the synthesized `encode(to:)`
+/// suffices; `.convertToSnakeCase` maps `notePath`→`note_path`, `headingPath`→
+/// `heading_path`, `charStart`→`char_start`, `charEnd`→`char_end`. `text` and
+/// `score` are single-word, unchanged. Privacy: `text` is vault content returned
+/// only to the local UI over the loopback socket — never networked (rule #1/#2).
+struct RagResultsPayload: Encodable {
+    let chunks: [RagResultChunk]
+}
+
+/// One retrieval hit on the wire. Mirrors `RagChunkMeta` minus the chunkId/
+/// contentHash (internal index bookkeeping the UI doesn't need), plus the cosine
+/// `score`. The UI uses `note_path` + `char_start`/`char_end` for a jump-to-source
+/// affordance and `heading_path` as a breadcrumb above the snippet.
+struct RagResultChunk: Encodable {
+    let text: String
+    let notePath: String       // → note_path
+    let headingPath: String    // → heading_path
+    let charStart: Int         // → char_start
+    let charEnd: Int           // → char_end
+    let score: Double
+}
+
+/// `rag.index_status` — unsolicited engine→UI event emitted on index build
+/// start / progress / done so 4c can render an index-state indicator.
+/// `state` is one of the three literal VALUES below (a value, not a key, so
+/// `.convertToSnakeCase` leaves it alone). `indexedCount` is how many notes have
+/// been (re)indexed so far this build; `total` is the cold-build denominator (the
+/// count of `.md` files to index) or nil for an incremental single-file update
+/// where no total is meaningful. `indexedCount`→`indexed_count`; `total` stays.
+///
+/// `total` is nil-aware via an explicit `encode(to:)` so it serializes as JSON
+/// `null` (not a dropped key) — same reason as `SegmentPayload`: with
+/// `.convertToSnakeCase` the synthesized encoder would omit a nil value, and the
+/// UI distinguishes "no total" (incremental) from a forgotten field.
+struct RagIndexStatusPayload: Encodable {
+    /// "idle" | "building" | "ready"
+    let state: String
+    let indexedCount: Int
+    let total: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case state, indexedCount, total
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(state, forKey: .state)
+        try c.encode(indexedCount, forKey: .indexedCount)
+        if let v = total { try c.encode(v, forKey: .total) } else { try c.encodeNil(forKey: .total) }
+    }
+}
+
 struct ErrorPayload: Encodable {
     let code: String
     let message: String
@@ -414,4 +475,19 @@ struct SpeakerRenameCommand: Decodable {
 struct SummaryWriteCommand: Decodable {
     let sessionId: String          // ← session_id
     let summary: String
+}
+
+/// `rag.retrieve` (UI → engine, slice 4b). The UI asks the engine to embed `query`
+/// as an e5 `.query` and return the top-`k` vault chunks by cosine. `scope`
+/// reserves room for future scoping ("vault" = everything, or a sub-path); v1
+/// searches the whole index regardless, but we accept + carry the field so 4c can
+/// send it without a contract change. `k` is optional (defaults applied in the
+/// handler); a malformed/huge `k` is clamped engine-side.
+///
+/// `query` content passes through verbatim (it's a value, not a key); `k`/`scope`
+/// are single-word, unchanged by `.convertFromSnakeCase`.
+struct RagRetrieveCommand: Decodable {
+    let query: String
+    let k: Int?
+    let scope: String?
 }

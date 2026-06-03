@@ -56,7 +56,18 @@ renderer gets a scope toggle + citations.**
   are identical, so it's a backend swap behind the same retrieval interface.
 - **Index storage: app-data** (`~/Library/Application Support/Hark/index/` — `vectors.bin` +
   `meta.jsonl` + `manifest.json`), a **rebuildable cache** — never the vault. The vault is sacred
-  + externally synced; the indexer **reads it, writes only app-data**.
+  + externally synced; the indexer **reads it, writes only app-data**. **Offset-only (decision
+  2026-06-03):** `meta.jsonl` holds **pointers/offsets ONLY** — `chunk_id`, `note_path`,
+  `heading_path`, `char_start`, `char_end`, `content_hash` — and **never the raw note text**.
+  Rationale: raw note text is never persisted outside the vault, so **deleting a note from the
+  vault removes its content** (nothing lingers in the cache). At retrieve time the engine **reads
+  the snippet live from the vault** at the stored `[char_start, char_end)` offsets, **skipping any
+  chunk whose source file is missing (deleted) or changed-since-index** (live whole-file hash ≠ the
+  note's recorded hash → stale offsets aren't trusted), so results stay honest. This retrieve-time
+  vault read is **read-only** (a single read per distinct note per query, zero writes). Removing the
+  `text` field changed the on-disk format → `schema_version` bumped (1 → 2); a pre-existing v1
+  index rebuilds on first launch. The `rag.results` wire shape is unchanged (still `{ text, … }`) —
+  only the SOURCE of `text` changed (vault read vs cache).
 - **Freshness:** an engine-side **FSEvents watcher, ~30 s debounced**, **content-hash-gated** so an
   atomic-save that only bumps mtime is skipped; on a real change, re-chunk/re-embed only that file;
   on delete, drop its chunks. `manifest.json` carries the embedding-model version → a model change
@@ -93,6 +104,9 @@ renderer gets a scope toggle + citations.**
 **Positive** — fully local indexing (vault never egresses to embed); ANE-fast; app bundle stays
 clean (no new native node module, single static engine binary); engine stays network-free; only
 redacted top-K leaves, local LLM = zero egress; citations finally light up; clean scale-up path.
+**Offset-only** strengthens rule #2/#4: the cache holds no vault prose, so deleting a note erases
+its content everywhere (no stale copy in app-data), and a half-stale cache can never surface text
+that no longer matches the vault — the live read + hash gate drops it instead.
 
 **Negative / accepted** — the most engine work of the three options: a new CoreML embedder + a
 WordPiece tokenizer dependency + new `rag.*` wire frames + the index/watcher subsystem. The

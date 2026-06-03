@@ -28,4 +28,16 @@ public enum HarkPaths {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
+
+    /// `~/Library/Application Support/Hark/index/`. Created if missing.
+    /// The vault-RAG vector index (vectors.bin + meta.jsonl + manifest.json,
+    /// slice 4b, ADR-0032/0033) is REBUILDABLE app data derived from the vault —
+    /// so it lives here in app-support, NEVER in the vault itself (hard rule #2,
+    /// and the vault is read-only to the indexer, rule #4). Wiping this dir just
+    /// triggers a cold re-index; it loses nothing the vault doesn't still hold.
+    public static func indexDir() throws -> URL {
+        let dir = try appSupportDir().appendingPathComponent("index", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
 }
