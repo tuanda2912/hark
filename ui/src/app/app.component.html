@@ -388,6 +388,7 @@
         [scope]="askScope()"
         [sources]="askSources()"
         [indexStatus]="ragIndexStatus()"
+        [externalBackend]="retrievalIsExternal()"
         (ask)="onAsk($event)"
         (scopeChange)="setAskScope($event)"
         (dismiss)="toggleRightPanel()"

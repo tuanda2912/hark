@@ -32,7 +32,23 @@ export interface Prefs {
     readonly syncAudio: boolean;
     readonly syncSpeakers: boolean;
   };
+  /** Vault-retrieval backend (ADR-0033/0034). Optional; absent ⇒ built-in
+   *  (the engine handles retrieval). Set to external to query a user-run
+   *  LOCAL service. Mirrors `Prefs.rag` in src/main/prefs.ts. */
+  readonly rag?: {
+    readonly backend: 'builtin' | 'external';
+    readonly external?: {
+      readonly transport: 'http' | 'mcp';
+      readonly endpoint: string;
+      readonly toolName?: string;
+    };
+  };
 }
+
+/** Retrieval transport for an external backend (mirrors main `RagTransport`). */
+export type RagTransport = 'http' | 'mcp';
+/** Which retrieval backend answers vault questions. */
+export type RagBackend = 'builtin' | 'external';
 
 /** Mirrors the `hark:load-prefs` response shape in main/preload.ts. */
 export interface PrefsResult {
@@ -92,6 +108,21 @@ export class PreferencesService {
   readonly syncAudio: Signal<boolean> = this._syncAudio.asReadonly();
   readonly syncSpeakers: Signal<boolean> = this._syncSpeakers.asReadonly();
 
+  // ─── Vault-retrieval backend (ADR-0033/0034) ────────────────────────
+  // Which backend answers VAULT-scope Ask questions: 'builtin' (the engine's
+  // local index, default) or 'external' (a user-run LOCAL retrieval service).
+  // The external endpoint/transport/toolName are only meaningful when backend
+  // is 'external'; they're retained across a toggle so switching back and forth
+  // doesn't lose the typed-in endpoint. Persisted as the `rag` prefs block.
+  private readonly _ragBackend = signal<RagBackend>('builtin');
+  private readonly _ragTransport = signal<RagTransport>('mcp');
+  private readonly _ragEndpoint = signal<string>('');
+  private readonly _ragToolName = signal<string>('');
+  readonly ragBackend: Signal<RagBackend> = this._ragBackend.asReadonly();
+  readonly ragTransport: Signal<RagTransport> = this._ragTransport.asReadonly();
+  readonly ragEndpoint: Signal<string> = this._ragEndpoint.asReadonly();
+  readonly ragToolName: Signal<string> = this._ragToolName.asReadonly();
+
   /** True once the initial load() has resolved (or fallen back). Lets the
    *  UI avoid persisting placeholder defaults before disk is read. */
   private readonly _loaded = signal(false);
@@ -123,6 +154,16 @@ export class PreferencesService {
       this._rememberSpeakers.set(!!pv?.rememberSpeakers);
       this._syncAudio.set(!!pv?.syncAudio);
       this._syncSpeakers.set(!!pv?.syncSpeakers);
+      // RAG backend (ADR-0033/0034). A missing block (old main / fresh install /
+      // default) reads as built-in. The external sub-block is only applied when
+      // present; transport defaults to 'mcp' if a stored value is unexpected.
+      const rag = res.prefs.rag;
+      this._ragBackend.set(rag?.backend === 'external' ? 'external' : 'builtin');
+      if (rag?.external) {
+        this._ragTransport.set(rag.external.transport === 'http' ? 'http' : 'mcp');
+        this._ragEndpoint.set(rag.external.endpoint ?? '');
+        this._ragToolName.set(rag.external.toolName ?? '');
+      }
       this._vaultPath.set(res.vaultPath);
     } catch {
       // Leave defaults in place — load failures must not break the app.
@@ -163,6 +204,42 @@ export class PreferencesService {
     this.save();
   }
 
+  /**
+   * Update the vault-retrieval backend selection and persist (ADR-0033/0034).
+   * Pass only the field(s) that changed; the rest stay put (so toggling backend
+   * keeps the typed-in endpoint). Endpoint/toolName are trimmed. The snapshot
+   * builder turns this into the `rag` prefs block; an 'external' backend with an
+   * empty endpoint sanitizes back to built-in main-side (a half-config can't
+   * silently route retrieval at a blank URL).
+   */
+  setRag(opts: {
+    backend?: RagBackend;
+    transport?: RagTransport;
+    endpoint?: string;
+    toolName?: string;
+  }): void {
+    if (opts.backend !== undefined) this._ragBackend.set(opts.backend);
+    if (opts.transport !== undefined) this._ragTransport.set(opts.transport);
+    if (opts.endpoint !== undefined) this._ragEndpoint.set(opts.endpoint.trim());
+    if (opts.toolName !== undefined) this._ragToolName.set(opts.toolName.trim());
+    this.save();
+  }
+
+  /** Build the `rag` prefs block from the current signals. Built-in ⇒
+   *  `{ backend: 'builtin' }` (main drops it → reads as the default); external ⇒
+   *  the full block. Always included in the snapshot so switching back to
+   *  built-in actually clears a prior external config. */
+  private ragSnapshot(): Prefs['rag'] {
+    if (this._ragBackend() !== 'external') return { backend: 'builtin' };
+    const external: { transport: RagTransport; endpoint: string; toolName?: string } = {
+      transport: this._ragTransport(),
+      endpoint: this._ragEndpoint(),
+    };
+    const tool = this._ragToolName();
+    if (tool.length > 0) external.toolName = tool;
+    return { backend: 'external', external };
+  }
+
   /** Push the current snapshot back to main. Fire-and-forget; no-op outside
    *  Electron. We don't persist before the initial load resolves, so a slow
    *  disk read can't be clobbered by placeholder defaults. */
@@ -201,6 +278,7 @@ export class PreferencesService {
         syncAudio: this._syncAudio(),
         syncSpeakers: this._syncSpeakers(),
       },
+      rag: this.ragSnapshot(),
     };
   }
 }

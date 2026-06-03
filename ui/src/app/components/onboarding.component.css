@@ -319,6 +319,62 @@
   color: var(--text-3);
 }
 
+/* ─── Vault-search backend choice cards (screen 4) ─── */
+/* Selectable option cards acting as radios — the same surface/border language
+   as the permission cards, with a leading radio dot and an accent ring when
+   chosen. Token-only. */
+.ob-choice-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--r-panel);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, box-shadow 120ms ease,
+    background 120ms ease;
+}
+.ob-choice-card:hover {
+  border-color: var(--border-2);
+}
+.ob-choice-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ob-choice-card:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.ob-choice-radio {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid var(--border-2);
+  background: var(--bg-2);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ob-choice-card.is-selected .ob-choice-radio {
+  border-color: var(--accent);
+  /* Filled center dot via a token-colored radial fill (no extra element). */
+  background:
+    radial-gradient(circle at center, var(--accent) 0 4px, transparent 5px),
+    var(--surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-choice-card,
+  .ob-choice-radio {
+    transition: none;
+  }
+}
+
 /* Disabled buttons inside the panel read as inert without losing token
    color identity. */
 .ob-panel .btn:disabled {

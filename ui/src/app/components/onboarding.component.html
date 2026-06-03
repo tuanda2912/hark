@@ -399,6 +399,62 @@
             <strong class="text-text-2">never</strong> sees your key.
           </div>
         </div>
+
+        <!-- Vault-search backend (ADR-0033/0034). A light first-run choice;
+             the detailed external setup (transport / endpoint / tool) lives in
+             Settings → Vault search. Binds to the same persisted state. -->
+        <div>
+          <label class="ob-field-label">Where should Hark search your notes?</label>
+          <div
+            class="flex flex-col gap-2.5"
+            style="margin-top: 8px"
+            role="radiogroup"
+            aria-label="Vault-search backend"
+          >
+            <!-- Built-in (default) -->
+            <button
+              type="button"
+              class="ob-choice-card"
+              [class.is-selected]="ragBackend() === 'builtin'"
+              role="radio"
+              [attr.aria-checked]="ragBackend() === 'builtin'"
+              (click)="setRagBackend('builtin')"
+            >
+              <span class="ob-choice-radio" aria-hidden="true"></span>
+              <span class="flex flex-col" style="gap: 2px; text-align: left">
+                <span class="text-text font-medium" style="font-size: 13.5px">
+                  Built-in
+                  <span class="ob-note" style="margin-left: 4px">· recommended</span>
+                </span>
+                <span class="text-text-2" style="font-size: 12px; line-height: 1.5">
+                  Works out of the box. Your notes are indexed and searched
+                  entirely on this Mac.
+                </span>
+              </span>
+            </button>
+
+            <!-- External (connect your own) -->
+            <button
+              type="button"
+              class="ob-choice-card"
+              [class.is-selected]="ragBackend() === 'external'"
+              role="radio"
+              [attr.aria-checked]="ragBackend() === 'external'"
+              (click)="setRagBackend('external')"
+            >
+              <span class="ob-choice-radio" aria-hidden="true"></span>
+              <span class="flex flex-col" style="gap: 2px; text-align: left">
+                <span class="text-text font-medium" style="font-size: 13.5px">
+                  Connect my own
+                </span>
+                <span class="text-text-2" style="font-size: 12px; line-height: 1.5">
+                  Use your own local retrieval service (e.g. an MCP server). Add
+                  the loopback endpoint in Settings → Vault search.
+                </span>
+              </span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="flex-1"></div>

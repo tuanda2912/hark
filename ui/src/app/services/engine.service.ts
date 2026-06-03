@@ -34,6 +34,7 @@ import {
   RagResultChunk,
   RagResultsPayload,
   RagIndexStatusPayload,
+  RagConnectionResult,
   DisplayedSegment,
   ConnectionState,
   CaptureState,
@@ -121,6 +122,24 @@ declare global {
         /** Read the local cloud-activity log (metadata only — never content)
          *  for Settings → Privacy. */
         getCloudLog(): Promise<CloudCallLogEntry[]>;
+      };
+      /**
+       * EXTERNAL vault-retrieval backend bridge (ADR-0033/0034). Present only as
+       * a typed surface — actually used only when the user picked an external
+       * backend (prefs.rag.backend === 'external'); the built-in backend
+       * retrieves in the engine over this WebSocket instead. LOOPBACK-only;
+       * main enforces the guard. Absent outside Electron.
+       */
+      rag?: {
+        /** Retrieve top-K vault chunks via the external backend. Same chunk
+         *  shape as the built-in engine path. Rejects on a content-free error
+         *  (unreachable / non-loopback / malformed). */
+        retrieve(
+          query: string,
+          opts?: { k?: number; scope?: string },
+        ): Promise<readonly RagResultChunk[]>;
+        /** Probe the configured external backend (Settings "Test connection"). */
+        testConnection(): Promise<RagConnectionResult>;
       };
     };
   }

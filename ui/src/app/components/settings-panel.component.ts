@@ -30,8 +30,10 @@ import {
 } from '@angular/core';
 import { EngineService } from '../services/engine.service';
 import { PreferencesService } from '../services/preferences.service';
+import type { RagBackend, RagTransport } from '../services/preferences.service';
 import { LlmService } from '../services/llm.service';
 import { LANGUAGE_CHOICES } from '../services/engine.types';
+import type { RagConnectionResult } from '../services/engine.types';
 import type { LlmProviderId } from '../services/llm.types';
 
 @Component({
@@ -264,6 +266,98 @@ export class SettingsPanelComponent {
       hour: '2-digit',
       minute: '2-digit',
     });
+  }
+
+  // ─── Vault search / Knowledge (ADR-0033/0034) ───────────────────────
+  //
+  // Picks WHICH backend answers vault-scope Ask questions: 'builtin' (the
+  // engine's on-device index — default, nothing to run, local-indexing
+  // GUARANTEED) or 'external' (a user-run LOCAL retrieval service — e.g. an
+  // MCP server reusable by other MCP clients; local indexing is then the
+  // user's own assurance, not Hark's guarantee). Both bind straight through
+  // PreferencesService.setRag(); the external endpoint/transport/toolName are
+  // retained across a toggle so switching back and forth keeps the typed-in
+  // values.
+  //
+  // The external endpoint MUST be loopback (main refuses anything else) — the
+  // copy states this as a privacy guarantee. "Test connection" calls
+  // window.hark.rag.testConnection() (main owns the loopback HTTP/MCP probe);
+  // the renderer never makes a network call. Guarded for window.hark?.rag so a
+  // bare ng serve (no preload) degrades gracefully instead of throwing.
+  readonly ragBackend = this.prefs.ragBackend;
+  readonly ragTransport = this.prefs.ragTransport;
+  readonly ragEndpoint = this.prefs.ragEndpoint;
+  readonly ragToolName = this.prefs.ragToolName;
+
+  /** Verdict of the most recent external-backend probe, or null. Cleared
+   *  whenever the config changes so a stale "Connected" can't linger. */
+  readonly ragTestResult = signal<RagConnectionResult | null>(null);
+  /** True while a testConnection() probe is in flight (drives the spinner). */
+  readonly ragTesting = signal(false);
+
+  /** True when the external test-connection bridge exists (i.e. running inside
+   *  Electron with the preload). Outside Electron the button is disabled with
+   *  an honest "connect inside the app" note. */
+  readonly ragBridgeAvailable = signal(
+    typeof window !== 'undefined' && !!window.hark?.rag,
+  );
+
+  /** Test is meaningful only for the external backend WITH an endpoint set,
+   *  and only when the bridge is present. */
+  readonly canTestRag = computed(
+    () =>
+      this.ragBridgeAvailable() &&
+      this.ragBackend() === 'external' &&
+      this.ragEndpoint().length > 0 &&
+      !this.ragTesting(),
+  );
+
+  onRagBackendChange(value: string): void {
+    // Anything unexpected collapses to the safe, out-of-box default.
+    const backend: RagBackend = value === 'external' ? 'external' : 'builtin';
+    this.prefs.setRag({ backend });
+    // Switching backend invalidates a prior probe verdict.
+    this.ragTestResult.set(null);
+  }
+
+  onRagTransportChange(value: string): void {
+    const transport: RagTransport = value === 'http' ? 'http' : 'mcp';
+    this.prefs.setRag({ transport });
+    this.ragTestResult.set(null);
+  }
+
+  /** Persist the endpoint (trimmed in setRag) on blur/change. */
+  onRagEndpointChange(value: string): void {
+    this.prefs.setRag({ endpoint: value });
+    this.ragTestResult.set(null);
+  }
+
+  /** Persist the MCP tool name (trimmed in setRag) on blur/change. */
+  onRagToolNameChange(value: string): void {
+    this.prefs.setRag({ toolName: value });
+    this.ragTestResult.set(null);
+  }
+
+  /** Probe the configured external backend via main's loopback client. The
+   *  renderer makes NO network call — main owns the HTTP/MCP fetch + the
+   *  loopback guard. No-op-safe when the bridge is absent or nothing's set. */
+  async testRagConnection(): Promise<void> {
+    const rag = window.hark?.rag;
+    if (!rag || !this.canTestRag()) return;
+    this.ragTesting.set(true);
+    this.ragTestResult.set(null);
+    try {
+      this.ragTestResult.set(await rag.testConnection());
+    } catch (err) {
+      // The bridge rejects with a content-free error on unreachable /
+      // non-loopback / malformed — surface a generic verdict (never content).
+      this.ragTestResult.set({
+        ok: false,
+        detail: err instanceof Error ? err.message : 'Connection failed',
+      });
+    } finally {
+      this.ragTesting.set(false);
+    }
   }
 
   // ─── Vault ──────────────────────────────────────────────────────────

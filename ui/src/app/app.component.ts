@@ -24,6 +24,7 @@ import { Subscription } from 'rxjs';
 import { EngineService } from './services/engine.service';
 import { PreferencesService } from './services/preferences.service';
 import { LlmService } from './services/llm.service';
+import { RetrievalService } from './services/retrieval.service';
 import {
   LANGUAGE_CHOICES,
   DisplayedSegment,
@@ -75,6 +76,12 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly engine = inject(EngineService);
   private readonly prefs = inject(PreferencesService);
   private readonly llm = inject(LlmService);
+  private readonly retrieval = inject(RetrievalService);
+
+  /** True when vault Ask is routed to the EXTERNAL retrieval backend (ADR-0033/
+   *  0034) — drives the Ask panel's index indicator (external shows a backend
+   *  label instead of the engine's build/ready state). */
+  readonly retrievalIsExternal = this.retrieval.isExternal;
 
   /** True once an LLM provider is configured (ADR-0029). Gates the Ask panel:
    *  with no model it shows its honest "set up a model" empty state and the
@@ -436,10 +443,13 @@ export class AppComponent implements OnInit, OnDestroy {
   private async askVault(q: string): Promise<void> {
     let chunks: readonly RagResultChunk[];
     try {
-      chunks = await this.engine.retrieve(q, { scope: 'vault', k: 6 });
+      // RetrievalService routes to the built-in engine index OR the external
+      // backend per the user's choice (ADR-0033) — both return the same shape.
+      chunks = await this.retrieval.retrieve(q, { scope: 'vault', k: 6 });
     } catch (err) {
-      // RAG_UNAVAILABLE (index/embedder not loaded), a timeout, or a closed
-      // socket — surface it inline rather than as a global banner.
+      // RAG_UNAVAILABLE (built-in index/embedder not ready), a timeout, a closed
+      // socket, or an unreachable/misconfigured external backend — surface it
+      // inline rather than as a global banner.
       this.askAnswer.set(
         `Couldn't search your vault: ${
           err instanceof Error ? err.message : 'retrieval failed'

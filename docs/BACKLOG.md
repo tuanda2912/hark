@@ -90,12 +90,13 @@ is being built **provider-agnostic now**; the integration lands later.
   - **Obsidian 2nd-brain (HYBRID):** the user's external tool syncs Obsidian → the vault folder
     (Markdown); Hark **reads** it and owns the local index (writes only app-data). Obsidian can
     point at the vault directly (`[[wikilinks]]` parsing is a separate backlog item).
-  - **Build plan (ADR-0033 backend split):** (1) `RetrievalBackend` interface + selector +
-    onboarding/Settings choice (default built-in); (2) **built-in backend** — finish 4a (run the
-    shipped coremltools recipe for `multilingual-e5-small`, publish the `.mlpackage`, on-device
-    test) + 4b (index + watcher + `rag.retrieve`/`rag.index_status`); (3) **external backend** —
-    loopback MCP/HTTP client in main + connection/index-status check + loopback guard; (4) shared
-    answer path — backend → redact → `llm.ask` → answer + citations + Ask-panel scope toggle.
+  - **Build plan (ADR-0033 backend split) — ALL FOUR DONE (2026-06-03):** (1) ✅ `RetrievalBackend`
+    selector + onboarding/Settings choice (default built-in); (2) ✅ **built-in backend** (4a+4b+4c
+    below); (3) ✅ **external backend** — loopback MCP/HTTP client in main + connection check +
+    loopback guard; (4) ✅ shared answer path — backend → redact → `llm.ask` → answer + citations +
+    Ask-panel scope toggle. Built-in vault RAG is end-to-end usable today; external is selectable +
+    configurable in Settings. **Remaining before SHIPPING built-in:** publish the FP16
+    `.mlpackage` (deploy TODO under 4a status).
   - **4a status — DONE + on-device validated (2026-06-03).** Engine `TextEmbedder` (CoreML, ANE)
     + loader (+ `HARK_EMBEDDER_LOCAL_DIR` dev override) + curated registry + `swift-transformers`
     1.3.3. The `multilingual-e5-small` CoreML conversion (`scripts/convert-embedder-coreml.py`)
@@ -134,6 +135,27 @@ is being built **provider-agnostic now**; the integration lands later.
       an in-app note view) — the chunk already carries `note_path` + offsets. Also: inline `[n]`
       renders as plain text in the answer prose; a later pass can split the prose and render real
       chips inline.
+  - **External backend — DONE (2026-06-03), ADR-0034.** Pluggable retrieval is complete: a
+    `RetrievalService` (renderer) routes vault Ask to the built-in engine index OR a user-run
+    LOCAL service per `prefs.rag.backend`. Main's `src/main/rag/` is a hand-rolled (no SDK, raw
+    `fetch`) loopback client with two transports — plain HTTP (`POST {query,k,scope}`→`{chunks}`)
+    and minimal MCP-over-HTTP (`initialize`→`tools/call`, JSON or SSE). Loopback guard before every
+    fetch + `redirect:'error'` (SSRF). Settings → "Vault search" picks backend + transport +
+    endpoint + tool name + Test connection; onboarding has a built-in/external choice. 12-check
+    transport smoke + privacy-audited PASS (7/7).
+    - *Deferred (external backend):* (1) **live index-status for external** — the Ask-panel
+      indicator shows a static "Using your external backend" label (we don't poll the external
+      index state); a future `rag.index_status`-equivalent over the bridge could surface
+      building/ready. (2) **MCP client is minimal** — initialize + tools/call + tools/list only
+      (no resources/prompts/notifications/OAuth, no mandatory multi-event SSE streaming); adopt
+      `@modelcontextprotocol/sdk` (new ADR) if a real server outgrows it. (3) **session reuse** —
+      the MCP client re-`initialize`s per retrieve (fine at Q&A frequency; cache the session if it
+      becomes hot). (4) external chunks carry no char offsets ⇒ no jump-to-source-by-offset.
+  - *Renderer/main RAG unit tests (pick up):* the engine side is unit-tested (Swift) + the
+    external transports have a Node smoke (`/tmp`, not committed), but the renderer
+    (`RetrievalService`, `EngineService.retrieve` correlation) + the main `rag/` transports have no
+    committed test runner. Stand up vitest (or `node --test` over the compiled main) and lock the
+    loopback guard + `redirect:'error'` + correlation/timeout in (privacy-auditor LOW note).
 - **Cloud-call log + PII redaction — SHIPPED (Slice 2).** Every cloud call redacts PII first +
   logs metadata-only; surfaced in Settings → Privacy "Cloud activity". Local calls need neither.
   (NER name redaction + a redaction toggle remain deferred — see the summary entry.)

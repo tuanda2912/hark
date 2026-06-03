@@ -76,3 +76,62 @@
 .setting-toggle.is-on .setting-knob {
   transform: translateX(16px);
 }
+
+/* ─── RAG backend segmented control ─── */
+.rag-segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+}
+.rag-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.rag-seg-btn:hover {
+  color: var(--text);
+}
+.rag-seg-btn.is-active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+.rag-seg-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* "recommended" tag on the Built-in option. */
+.rag-seg-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ─── Test-connection spinner ─── */
+.rag-spinner {
+  border: 2px solid var(--border-2);
+  border-top-color: var(--accent);
+  animation: rag-spin 600ms linear infinite;
+}
+@keyframes rag-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

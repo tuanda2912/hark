@@ -81,6 +81,19 @@ export class OnboardingComponent implements OnInit {
     this.prefs.setPrivacy({ rememberSpeakers: !this.rememberSpeakers() });
   }
 
+  // ─── Vault-search backend (ADR-0033/0034) ───────────────────────────
+  // A concise first-run choice: where should Hark search the vault when you
+  // Ask across all notes — Hark's built-in on-device index (default, nothing
+  // to run) or your own LOCAL retrieval service (configured in detail later in
+  // Settings → Vault search). Binds to the SAME persisted state Settings
+  // reads/writes; default 'builtin'. Picking external here only records the
+  // intent — the endpoint/transport live in Settings to keep onboarding light.
+  readonly ragBackend = this.prefs.ragBackend;
+
+  setRagBackend(backend: 'builtin' | 'external'): void {
+    this.prefs.setRag({ backend });
+  }
+
   /** Live Microphone permission status for the real badge on screen 2.
    *  'unknown' until the first read resolves (or outside Electron). */
   readonly micStatus = signal<MicStatus>('unknown');

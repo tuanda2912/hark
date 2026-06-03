@@ -243,6 +243,17 @@ export interface RagIndexStatusPayload {
   readonly total: number | null;
 }
 
+/** Verdict of an EXTERNAL retrieval-backend connection probe (ADR-0033/0034),
+ *  surfaced by `window.hark.rag.testConnection()` for Settings. Content-free
+ *  one-liner; `count` is hits/tools seen when known. Mirrors main's
+ *  `RagConnectionResult`. (Only the external backend has a connection to test —
+ *  the built-in backend retrieves in the engine over this same socket.) */
+export interface RagConnectionResult {
+  readonly ok: boolean;
+  readonly detail: string;
+  readonly count?: number;
+}
+
 // ─── UI → Engine command shapes ──────────────────────────────────────
 
 export interface CaptureStartCommand {

@@ -538,6 +538,168 @@
         </div>
       </section>
 
+      <!-- ─── Vault search / Knowledge (ADR-0033/0034) ─── -->
+      <section class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+            Vault search
+          </h3>
+          <p class="text-xs text-text-3">
+            How Hark finds relevant notes when you Ask across your whole vault.
+            Either way, only the redacted matches plus your question are sent to
+            a model — and a local model sends nothing off this Mac.
+          </p>
+        </div>
+
+        <!-- Backend choice — segmented (Built-in vs External). -->
+        <div
+          class="rag-segmented"
+          role="radiogroup"
+          aria-label="Vault-search backend"
+        >
+          <button
+            type="button"
+            class="rag-seg-btn"
+            [class.is-active]="ragBackend() === 'builtin'"
+            role="radio"
+            [attr.aria-checked]="ragBackend() === 'builtin'"
+            (click)="onRagBackendChange('builtin')"
+          >
+            Built-in
+            <span class="rag-seg-tag">recommended</span>
+          </button>
+          <button
+            type="button"
+            class="rag-seg-btn"
+            [class.is-active]="ragBackend() === 'external'"
+            role="radio"
+            [attr.aria-checked]="ragBackend() === 'external'"
+            (click)="onRagBackendChange('external')"
+          >
+            External
+          </button>
+        </div>
+
+        <!-- Per-choice explainer — honest local-indexing framing. -->
+        @if (ragBackend() === 'builtin') {
+          <p class="text-xs text-text-3 leading-relaxed">
+            Hark's on-device index. Works out of the box, nothing to run, and
+            indexing is <span class="text-text-2">guaranteed local</span> —
+            your notes are embedded and searched entirely on this Mac.
+          </p>
+        } @else {
+          <p class="text-xs text-text-3 leading-relaxed">
+            Connect your own local retrieval service — for example an MCP server,
+            reusable by other MCP clients. The endpoint must be
+            <span class="text-text-2">loopback</span> (localhost / 127.0.0.1) —
+            Hark refuses anything else, so vault content never touches the
+            network. Local indexing is then
+            <span class="text-text-2">your own assurance</span>, not Hark's
+            guarantee. Hark's on-device embedder model isn't needed.
+          </p>
+
+          <!-- Transport — MCP (reusable) vs plain HTTP. -->
+          <div class="flex items-center justify-between gap-4">
+            <label class="flex flex-col" for="rag-transport">
+              <span class="text-sm text-text">Transport</span>
+              <span class="text-xs text-text-3">
+                MCP over HTTP (reusable) or a plain local HTTP endpoint.
+              </span>
+            </label>
+            <select
+              id="rag-transport"
+              class="px-2 py-1 rounded-input border border-border-2 bg-surface text-text text-sm cursor-pointer"
+              [value]="ragTransport()"
+              (change)="onRagTransportChange($any($event.target).value)"
+            >
+              <option value="mcp">MCP over HTTP</option>
+              <option value="http">Plain HTTP</option>
+            </select>
+          </div>
+
+          <!-- Endpoint -->
+          <div class="flex flex-col gap-1">
+            <label class="text-sm text-text" for="rag-endpoint">Endpoint</label>
+            <input
+              id="rag-endpoint"
+              type="text"
+              class="px-2 py-1.5 rounded-input border border-border-2 bg-surface text-text text-sm font-mono"
+              [value]="ragEndpoint()"
+              placeholder="http://127.0.0.1:7777/mcp"
+              (change)="onRagEndpointChange($any($event.target).value)"
+              (blur)="onRagEndpointChange($any($event.target).value)"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <span class="text-xs text-text-3">
+              @if (ragTransport() === 'http') {
+                A local server that accepts
+                <span class="font-mono text-text-3">POST {{ '{query, k, scope}' }}</span>
+                and replies <span class="font-mono text-text-3">{{ '{chunks: [...]}' }}</span>.
+              } @else {
+                Your MCP server's Streamable-HTTP URL. Must be loopback.
+              }
+            </span>
+          </div>
+
+          <!-- Tool name — MCP only. -->
+          @if (ragTransport() === 'mcp') {
+            <div class="flex flex-col gap-1">
+              <label class="text-sm text-text" for="rag-tool">Tool name</label>
+              <input
+                id="rag-tool"
+                type="text"
+                class="px-2 py-1.5 rounded-input border border-border-2 bg-surface text-text text-sm font-mono"
+                [value]="ragToolName()"
+                placeholder="search"
+                (change)="onRagToolNameChange($any($event.target).value)"
+                (blur)="onRagToolNameChange($any($event.target).value)"
+                spellcheck="false"
+                autocomplete="off"
+              />
+              <span class="text-xs text-text-3">
+                The MCP tool Hark calls to search your notes (default
+                <span class="font-mono text-text-3">search</span>).
+              </span>
+            </div>
+          }
+
+          <!-- Test connection — mirrors the Models probe affordance. -->
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              class="shrink-0 px-3 py-1 rounded-input border border-border-2 bg-surface hover:bg-surface-2 text-text text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              [disabled]="!canTestRag()"
+              (click)="testRagConnection()"
+            >
+              {{ ragTesting() ? 'Testing…' : 'Test connection' }}
+            </button>
+            @if (ragTesting()) {
+              <span
+                class="inline-block w-3.5 h-3.5 rounded-full rag-spinner"
+                aria-hidden="true"
+              ></span>
+            } @else if (ragTestResult(); as result) {
+              <span
+                class="inline-flex items-center gap-1.5 text-xs"
+                [style.color]="
+                  result.ok ? 'var(--status-success)' : 'var(--status-recording)'
+                "
+              >
+                <span aria-hidden="true">{{ result.ok ? '✓' : '✗' }}</span>
+                {{ result.detail }}
+              </span>
+            } @else if (!ragBridgeAvailable()) {
+              <span class="text-xs text-text-3">
+                Connect inside the Hark app to test.
+              </span>
+            } @else if (ragEndpoint().length === 0) {
+              <span class="text-xs text-text-3">Enter an endpoint to test.</span>
+            }
+          </div>
+        }
+      </section>
+
       <!-- ─── Vault ─── -->
       <section class="flex flex-col gap-2">
         <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">

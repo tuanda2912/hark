@@ -801,8 +801,13 @@ export class AskPanelComponent {
 
   /** Latest vault RAG index status from the engine, or null (unknown / RAG
    *  unavailable). Drives the index indicator shown beside the toggle when
-   *  `scope === 'vault'`. */
+   *  `scope === 'vault'` and the BUILT-IN backend is active. */
   readonly indexStatus = input<RagIndexStatusPayload | null>(null);
+
+  /** True when vault retrieval uses the EXTERNAL backend (ADR-0033/0034). The
+   *  index indicator then shows a static backend label (the engine's build/ready
+   *  state doesn't apply — the external index lives in the user's own service). */
+  readonly externalBackend = input<boolean>(false);
 
   /** A submitted question (only fires when `enabled`). The host reads the
    *  current `scope` to decide meeting- vs vault-grounded answering. */
@@ -833,15 +838,19 @@ export class AskPanelComponent {
       : 'Ask about this meeting…',
   );
 
-  /** The index `state` (or 'unknown' when no status frame has arrived / RAG is
-   *  unavailable) — drives the indicator dot's color class. */
-  protected readonly indexState = computed(
-    () => this.indexStatus()?.state ?? 'unknown',
+  /** The indicator dot's state class. External backend reads as 'ready' (the
+   *  user configured + tested it in Settings); otherwise the engine index state
+   *  (or 'unknown' before the first status frame). */
+  protected readonly indexState = computed(() =>
+    this.externalBackend() ? 'ready' : (this.indexStatus()?.state ?? 'unknown'),
   );
 
-  /** Terse, honest index-state label. No fake percentage: a building index
-   *  shows its count (and total when known); "ready" once searchable. */
+  /** Terse, honest index-state label. External backend shows a backend label
+   *  (its index lives in the user's own service — we don't poll it live). Else:
+   *  no fake percentage — a building index shows its count (and total when
+   *  known); "ready" once searchable. */
   protected readonly indexLabel = computed(() => {
+    if (this.externalBackend()) return 'Using your external knowledge backend';
     const s = this.indexStatus();
     if (!s) return 'Vault index status unknown';
     switch (s.state) {
