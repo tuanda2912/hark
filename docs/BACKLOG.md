@@ -70,7 +70,12 @@ is being built **provider-agnostic now**; the integration lands later.
   - *Deferred:* rich `[1][2]` **citations / source cards** are left empty (NOT faked) — they need
     retrieval / structured output, which arrives with the vault-RAG slice. Answer streaming also
     deferred (non-streaming v1, like summary).
-- **Vault-wide / 2nd-brain Q&A — RAG (Slice 4) — DESIGN-LOCKED (ADR-0032), build pending.**
+- **Vault-wide / 2nd-brain Q&A — RAG (Slice 4) — DESIGN-LOCKED (ADR-0032 + ADR-0033), build
+  pending. PLUGGABLE backend (ADR-0033):** the user chooses at onboarding — **built-in** Hark
+  (engine embedder + index per ADR-0032, out-of-box, default) **or external** (their own local
+  retrieval service, ideally a **loopback MCP server**, reusable by other MCP clients). Both feed
+  the same redact→LLM→citations path in main; the external endpoint must be loopback-only. Whoever
+  picks external skips Hark's CoreML model entirely.
   Cross-meeting questions over the whole vault. Cloud model NEVER sees the vault: **local** embed
   → **local** vector search (top-K) → only the redacted top-K chunks + question go to the model →
   answer + citations. Local model ⇒ zero egress. **Decisions (ADR-0032):** a curated set of LOCAL
@@ -85,10 +90,18 @@ is being built **provider-agnostic now**; the integration lands later.
   - **Obsidian 2nd-brain (HYBRID):** the user's external tool syncs Obsidian → the vault folder
     (Markdown); Hark **reads** it and owns the local index (writes only app-data). Obsidian can
     point at the vault directly (`[[wikilinks]]` parsing is a separate backlog item).
-  - **Build sub-slices:** 4a engine embedder (spike the `bge-small` CoreML conversion + WordPiece
-    tokenizer first — the key risk); 4b index + brute-force retrieval + watcher + wire frames;
-    4c main↔engine retrieval wiring + renderer scope toggle + citations. New dep `swift-transformers`
-    (tokenizer) → document under rule #6.
+  - **Build plan (ADR-0033 backend split):** (1) `RetrievalBackend` interface + selector +
+    onboarding/Settings choice (default built-in); (2) **built-in backend** — finish 4a (run the
+    shipped coremltools recipe for `multilingual-e5-small`, publish the `.mlpackage`, on-device
+    test) + 4b (index + watcher + `rag.retrieve`/`rag.index_status`); (3) **external backend** —
+    loopback MCP/HTTP client in main + connection/index-status check + loopback guard; (4) shared
+    answer path — backend → redact → `llm.ask` → answer + citations + Ask-panel scope toggle.
+  - **4a status (parked, UNCOMMITTED):** engine embedder *scaffolding* built + `swift build` passes
+    (`TextEmbedder` actor, loader w/ progress frames, curated registry, masked-pool + normalize,
+    pure-math tests; `swift-transformers` 1.3.3 added per rule #6). BLOCKED on the CoreML conversion
+    (no `coremltools` in the agent sandbox) — a conversion recipe was produced to run on the Mac.
+    `swift test` not yet run. Finish + privacy-audit (the new network-capable `swift-transformers`
+    dep in the engine) + commit when building the built-in backend.
 - **Cloud-call log + PII redaction — SHIPPED (Slice 2).** Every cloud call redacts PII first +
   logs metadata-only; surfaced in Settings → Privacy "Cloud activity". Local calls need neither.
   (NER name redaction + a redaction toggle remain deferred — see the summary entry.)
