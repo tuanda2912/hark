@@ -56,19 +56,25 @@
  *   2. ≤1040px — collapse labelled controls to icon-only: New meeting and
  *      Bookmark lose their text (`.ctl-label`), the trust lozenge becomes
  *      its cloud-off glyph alone. title/aria-label keep them identifiable.
- *   3. ≤900px (the floor) — last-resort safety net: allow the row to wrap
- *      so a stubborn overflow flows onto a second line instead of clipping
- *      a control off the right edge. Never reached in practice once labels
- *      collapse, but guarantees no control is ever unreachable.
+ *
+ * The bar is ALSO wrap-enabled at every width (below): if the content is too
+ * wide for one line — even after the degradation above, e.g. with the extra
+ * translate controls present — the overflow flows onto a SECOND LINE instead of
+ * clipping a control off the right edge. So a control is never unreachable at
+ * any window width; the degradation just keeps it on one line as long as it can.
  *
  * These key off WINDOW width (media queries), consistent with the grid
  * breakpoints below — the bar spans the whole window regardless of which
  * side panels are open. */
 .controls-bar {
   flex-shrink: 0;
-  /* Don't let the bar wrap until the explicit narrow safety net kicks in;
-   * above that, degradation keeps everything on one line. */
-  flex-wrap: nowrap;
+  /* Wrap-friendly: at comfortable widths everything fits on one line (no
+   * overflow → no wrap); when it can't, items wrap to a second line rather
+   * than disappear past the window edge. This is the guarantee that no
+   * control — Start/Stop, the language/translate pickers, the gear — is ever
+   * clipped off-screen. */
+  flex-wrap: wrap;
+  row-gap: var(--s-2);
 }
 
 @media (max-width: 1180px) {
@@ -88,13 +94,6 @@
   }
   .ctl-lozenge {
     gap: 0;
-  }
-}
-
-@media (max-width: 900px) {
-  .controls-bar {
-    flex-wrap: wrap;
-    row-gap: var(--s-2);
   }
 }
 
