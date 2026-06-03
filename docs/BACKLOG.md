@@ -73,8 +73,11 @@ is being built **provider-agnostic now**; the integration lands later.
 - **Vault-wide / 2nd-brain Q&A — RAG (Slice 4) — DESIGN-LOCKED (ADR-0032), build pending.**
   Cross-meeting questions over the whole vault. Cloud model NEVER sees the vault: **local** embed
   → **local** vector search (top-K) → only the redacted top-K chunks + question go to the model →
-  answer + citations. Local model ⇒ zero egress. **Decisions (ADR-0032):** `bge-small-en-v1.5`
-  384-dim **CoreML in the engine** (ANE, model-cache pattern); **brute-force in-memory cosine over
+  answer + citations. Local model ⇒ zero egress. **Decisions (ADR-0032):** a curated set of LOCAL
+  **CoreML embedders in the engine** (ANE, model-cache pattern), **defaulting to multilingual**
+  `multilingual-e5-small` (384-dim) for VI/TH/EN notes + an English `bge-small-en` option,
+  user-choosable in Settings, **local-only** (never a cloud embed endpoint) and **re-index on
+  change**; **brute-force in-memory cosine over
   a flat file** (NOT sqlite-vec for v1 — <80 ms at 50k chunks, no native dep; sqlite-vec is the
   >100k scale-up); index in **app-data** (not the vault); engine **FSEvents watcher (30 s +
   content-hash)**; heading-aware chunking with `notePath/headingPath/charRange` for citations; new

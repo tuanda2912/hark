@@ -19,15 +19,34 @@ two-thread research + design pass and a user sign-off on the embedder-runtime fo
 **The Swift engine owns the entire local-retrieval pipeline; Electron main owns the egress; the
 renderer gets a scope toggle + citations.**
 
-- **Embeddings: `bge-small-en-v1.5` (384-dim) as CoreML, in the engine (ANE).** Reuses the
-  existing WhisperKit/FluidAudio model-cache pattern (`HarkPaths.modelsDir()` →
-  `~/Library/Application Support/Hark/Models/`, first-run download + ANE compile, progress frames).
-  Chosen over **Node/ONNX (transformers.js)** — which would add a heavy native `onnxruntime-node`
-  module, breaking ADR-0021's clean "no native node addon / single static binary" signing story —
-  and over **local Ollama `/embeddings`**, which would require the user to install Ollama for vault
-  Q&A to work at all. Engine-CoreML keeps the app bundle clean (the model is downloaded *data*, not
-  a new Mach-O; the WordPiece tokenizer links statically), is ANE-fast, and keeps the engine
-  network-free (local inference).
+- **Embeddings: an on-device CoreML embedder in the engine (ANE), from a small curated set of
+  LOCAL models, defaulting to a MULTILINGUAL one** (refined 2026-06-03 — was a hardcoded
+  `bge-small-en-v1.5`). Reuses the WhisperKit/FluidAudio model-cache pattern
+  (`HarkPaths.modelsDir()` → `~/Library/Application Support/Hark/Models/`, first-run download + ANE
+  compile, progress frames). Chosen over **Node/ONNX (transformers.js)** — a heavy native
+  `onnxruntime-node` module that breaks ADR-0021's clean "no native node addon / single static
+  binary" signing story — and over **local Ollama `/embeddings`** as the default, which would
+  require the user to install Ollama for vault Q&A to work at all. Engine-CoreML keeps the app
+  bundle clean (the model is downloaded *data*, not a new Mach-O; tokenizers link statically), is
+  ANE-fast, and keeps the engine network-free.
+  - **Why multilingual default:** Hark's audience runs meetings/notes in Vietnamese / Thai /
+    English; an English-only embedder (`bge-small-en`) retrieves poorly on non-English notes. The
+    v1 default is therefore a **384-dim multilingual** model (`multilingual-e5-small`), keeping the
+    index schema fixed at 384-dim.
+  - **Curated set, user-choosable (local-only):** Settings exposes a small dropdown of Hark-shipped
+    local embedders — e.g. `multilingual-e5-small` (default, multilingual) and `bge-small-en-v1.5`
+    (English-optimized). All v1 options are **384-dim** so the index schema is constant. Each
+    curated model carries its tokenizer + a validated CoreML conversion — the set spans **WordPiece**
+    (bge / MiniLM) and **SentencePiece** (e5 / multilingual-e5), both supported by
+    `swift-transformers`. The embedder may NEVER be a *cloud* endpoint — indexing embeds the whole
+    vault, so a cloud embedder would egress all of it (the hard local-indexing invariant).
+  - **Changing the embedder ⇒ full re-index.** Vectors are embedder-specific; `manifest.json`
+    records the model id+version, and selecting a different embedder invalidates the index and
+    triggers a one-time rebuild (~<60 s / 1k notes). It is a "pick it, re-index if you change it"
+    setting, not a per-query toggle.
+  - **Deferred (later tier):** a power-user override to point embeddings at a **local**
+    Ollama/llama.cpp embedding endpoint (loopback-guarded so it can never egress) — open-ended
+    model choice without Hark shipping a conversion. Not v1.
 - **Vector store: brute-force in-memory cosine over a flat persisted file — NOT sqlite-vec for v1.**
   At personal scale (1k–50k chunks) that's ~1.5–77 MB RAM and **<80 ms/query** (vs the design's
   ≤200 ms budget) — *exact* KNN, zero new native dependency. sqlite-vec would pull a native
@@ -84,9 +103,11 @@ to the offline tokenizer + the sanctioned model-cache download.
 
 ## Build sub-slices
 
-1. **4a — engine embedder (spike-first):** obtain/convert `bge-small` CoreML, integrate the
-   WordPiece tokenizer, embed text → L2-normalized 384-dim, unit-tested (similar sentences close).
-   The foundational + riskiest piece (model conversion).
+1. **4a — engine embedder (spike-first):** obtain/convert the **default `multilingual-e5-small`**
+   CoreML (384-dim) + integrate its **SentencePiece** tokenizer, embed text → L2-normalized
+   384-dim, unit-tested (similar sentences close; a VI/TH/EN cross-language sanity check). Build
+   the loader so a second curated model (`bge-small-en`, WordPiece) can slot in behind the same
+   interface. The foundational + riskiest piece (model conversion + the SentencePiece tokenizer).
 2. **4b — index + retrieval:** chunker, flat-file vector store + brute-force search, FSEvents
    watcher (30 s + content-hash), the `rag.retrieve` + `rag.index_status` wire frames.
 3. **4c — main + renderer:** main wires `rag.retrieve` → `llm.ask` (redact chunks); renderer adds
