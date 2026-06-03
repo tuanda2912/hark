@@ -187,6 +187,31 @@ Phase 4 surfaces" carries the live detail; summary:
 - **Light theme** — the design has dark + light; we ship dark only so far.
 - **Wikilink `[[term]]` parsing** in the transcript — vault-linking, a later phase.
 
+## Translation (designed, deferred behind RAG — user 2026-06-03)
+
+Translation is already half-wired: `capture.start` carries a `translation` config
+(`enabled`/`mode`/`target_lang`), `segment.translation` exists, and `TranscriptLine` renders it —
+only the translation *engine* is missing. Two-tier (local = zero egress / cloud = HQ), like the
+rest. Three pieces, easiest first:
+
+- **End-of-meeting transcript translation (easy, high-value, pure reuse).** A post-stop
+  "Translate to [lang]" → `llm.translate(transcript, targetLang)` in main: a near-clone of
+  `summarize` (redact-for-cloud / full-for-local, a "translate to X" prompt, provider completion,
+  cloud-log) → show the translation + **Save-to-note** (engine appends a `## Transcript — <lang>`
+  section, exactly like the summary `summary.write` path). Works with any configured cloud/local
+  model. Minimal new code.
+- **Live → English (cheap, local).** WhisperKit has a built-in `task: .translate` that translates
+  any source-language audio → **English** text on-device (no extra model). Flip the session's
+  `DecodingOptions.task` to `.translate` when the user wants live English captions; the existing
+  `segment.translation` plumbing already displays it. Engine-side, zero egress. (Whisper only
+  translates *to English* — other targets need MT below.)
+- **Live → arbitrary language (the real lift).** Per-segment MT for any pair (English→Thai,
+  Thai→Vietnamese, …). Options: a small **local MT model (NLLB-200) as CoreML in the engine** (same
+  pattern as the RAG embedder, zero egress) **or Apple's on-device Translation framework** (lovely,
+  system-provided, but **macOS 15+** vs our 14.4 floor) **or** the LLM provider per segment (cloud
+  = lots of egress + cost + per-segment redaction → better as an optional HQ mode than the live
+  default). Its own slice + a model decision; ADR when built.
+
 ## i18n / model quality
 
 - **Vietnamese / non-English transcription quality.** Locked-`vi` vs auto-detect, then the
