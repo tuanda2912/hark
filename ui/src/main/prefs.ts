@@ -24,6 +24,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import type { LlmProviderId } from './llm/types';
 import { LLM_PROVIDER_IDS } from './llm/types';
+import type { RagTransport } from './rag/types';
 
 /**
  * Versioned prefs schema. Keep this minimal and only add fields that have
@@ -108,6 +109,28 @@ export interface Prefs {
     readonly provider: LlmProviderId;
     readonly model: string;
     readonly baseUrl?: string;
+  };
+  /**
+   * Vault-retrieval backend selection (ADR-0033/0034, Phase 6). Optional +
+   * back-compat: a *missing* block (old prefs.json, fresh install, or a user
+   * who picked the default) reads as **built-in** — the engine handles
+   * retrieval over the WebSocket (ADR-0032), nothing external to run. Only set
+   * to 'external' when the user connects their own LOCAL retrieval service in
+   * onboarding / Settings → Knowledge. NO secret lives here.
+   *
+   *  - backend:  'builtin' | 'external'.
+   *  - external: required when backend is 'external' — the LOOPBACK service:
+   *      - transport: 'http' (plain POST) | 'mcp' (MCP over Streamable HTTP).
+   *      - endpoint:  the loopback URL (loopback-guarded before any fetch).
+   *      - toolName:  MCP only — the search tool to call (default 'search').
+   */
+  readonly rag?: {
+    readonly backend: 'builtin' | 'external';
+    readonly external?: {
+      readonly transport: RagTransport;
+      readonly endpoint: string;
+      readonly toolName?: string;
+    };
   };
 }
 
@@ -210,6 +233,11 @@ export function savePrefs(input: unknown): void {
     // needed — setConfig always sends the complete {provider, model, baseUrl?}
     // triple, never a fragment. sanitizeLlm below is the final trust boundary.
     llm: 'llm' in patch ? patch['llm'] : existing.llm,
+    // Whole-value overlay like `llm`/`window`: a save that omits `rag` keeps the
+    // persisted backend choice; one that includes it replaces wholesale (the
+    // Settings/onboarding UI always sends the complete rag object). sanitizeRag
+    // below is the final trust boundary.
+    rag: 'rag' in patch ? patch['rag'] : existing.rag,
   };
 
   const clean = sanitize(merged);
@@ -284,6 +312,12 @@ function sanitize(input: unknown): Prefs {
   // is no key field here to validate.
   const llm = sanitizeLlm(o['llm']);
 
+  // Optional RAG backend (ADR-0033/0034). Carried through only when it's a
+  // valid 'external' config; anything else (absent, 'builtin', malformed)
+  // collapses to undefined ⇒ the field stays absent ⇒ reads as built-in (the
+  // safe out-of-box default).
+  const rag = sanitizeRag(o['rag']);
+
   const base: Prefs = {
     version: 1,
     audio: { mic, system, language },
@@ -291,7 +325,37 @@ function sanitize(input: unknown): Prefs {
     privacy,
   };
   const withWindow = window ? { ...base, window } : base;
-  return llm ? { ...withWindow, llm } : withWindow;
+  const withLlm = llm ? { ...withWindow, llm } : withWindow;
+  return rag ? { ...withLlm, rag } : withLlm;
+}
+
+/**
+ * Validate the optional RAG-backend slice (ADR-0033/0034). Returns undefined —
+ * dropping the field, so it reads as the built-in default — unless `backend` is
+ * explicitly 'external' AND the `external` block is well-formed: `transport` is
+ * 'http' | 'mcp' and `endpoint` is a non-empty string. `toolName`, when present,
+ * must be a string. A 'builtin' or malformed value yields undefined (built-in).
+ * This NEVER carries a secret — there is no key field in the RAG schema.
+ */
+function sanitizeRag(input: unknown): Prefs['rag'] | undefined {
+  if (!isRecord(input)) return undefined;
+  if (input['backend'] !== 'external') return undefined; // builtin / unknown ⇒ absent
+  const ext = input['external'];
+  if (!isRecord(ext)) return undefined;
+  const transport = ext['transport'];
+  const endpoint = ext['endpoint'];
+  if (transport !== 'http' && transport !== 'mcp') return undefined;
+  if (typeof endpoint !== 'string' || endpoint.trim().length === 0) return undefined;
+
+  const external: { transport: RagTransport; endpoint: string; toolName?: string } = {
+    transport,
+    endpoint: endpoint.trim(),
+  };
+  const toolName = ext['toolName'];
+  if (typeof toolName === 'string' && toolName.trim().length > 0) {
+    external.toolName = toolName.trim();
+  }
+  return { backend: 'external', external };
 }
 
 /**

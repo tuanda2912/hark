@@ -15,6 +15,8 @@ import { HarkTray, TrayState } from './tray';
 import { loadPrefs, savePrefs, getPrefsPath, Prefs } from './prefs';
 import * as llm from './llm';
 import type { LlmStatus, LlmTestResult, SummarizeResult, AskResult, CloudCallLogEntry } from './llm/types';
+import * as rag from './rag';
+import type { RetrievedChunk, RagConnectionResult } from './rag/types';
 
 // The user's vault lives OUTSIDE the repo and the app-support dir. Per
 // CLAUDE.md it is the only place transcripts/notes are written, so the
@@ -556,6 +558,29 @@ ipcMain.handle('hark:llm:ask', (_ev, raw: unknown): Promise<AskResult> => {
 // lengths/ids/status, never transcript or summary content.
 ipcMain.handle('hark:llm:get-cloud-log', (): CloudCallLogEntry[] => {
   return llm.getCloudLog();
+});
+
+// EXTERNAL vault-retrieval backend (ADR-0033/0034). Only invoked when the user
+// configured an external backend; the built-in backend retrieves in the engine
+// over the WebSocket. rag.retrieve enforces the LOOPBACK guard before any fetch
+// (a non-local endpoint is refused), dispatches to the http/mcp transport, and
+// returns the SAME chunk shape the engine path emits. The `raw` payload crosses
+// the bridge as untrusted structured-clone data; we coerce it. This is a
+// retrieval client, NOT an egress point — the downstream redact→LLM→log path
+// stays in llm.ask. Errors surface as a rejected promise (content-free message).
+ipcMain.handle('hark:rag:retrieve', (_ev, raw: unknown): Promise<RetrievedChunk[]> => {
+  const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const query = typeof o['query'] === 'string' ? o['query'] : '';
+  const k = typeof o['k'] === 'number' ? o['k'] : undefined;
+  const scope = typeof o['scope'] === 'string' ? o['scope'] : undefined;
+  return rag.retrieve(query, { k, scope });
+});
+
+// Probe the configured external backend (Settings "Test connection"). Resolves
+// a content-free verdict; never rejects (a bad config / unreachable host maps to
+// { ok:false, detail }).
+ipcMain.handle('hark:rag:test', (): Promise<RagConnectionResult> => {
+  return rag.testConnection();
 });
 
 // eslint-disable-next-line no-console

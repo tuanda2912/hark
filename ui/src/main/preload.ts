@@ -18,6 +18,7 @@ import type {
   AskResult,
   CloudCallLogEntry,
 } from './llm/types';
+import type { RetrievedChunk, RagConnectionResult } from './rag/types';
 
 /** State snapshot the renderer pushes to the tray. Mirrors TrayState in
  *  main/tray.ts and the Window.hark interface in engine.service.ts. */
@@ -218,6 +219,35 @@ contextBridge.exposeInMainWorld('hark', {
      *  transcript or summary content. */
     getCloudLog(): Promise<CloudCallLogEntry[]> {
       return ipcRenderer.invoke('hark:llm:get-cloud-log');
+    },
+  },
+
+  /**
+   * EXTERNAL vault-retrieval backend bridge (ADR-0033/0034). Only used when the
+   * user picked an external backend (prefs.rag.backend === 'external'); the
+   * built-in backend retrieves in the engine over the WebSocket instead. All
+   * retrieval is LOOPBACK-only — main enforces the guard and is the egress
+   * chokepoint; this bridge never reaches a remote host. Re-shaped to the
+   * whitelisted fields; main re-coerces again.
+   */
+  rag: {
+    /** Retrieve top-K vault chunks via the configured external backend.
+     *  Resolves the SAME chunk shape the built-in engine path emits, or rejects
+     *  with a content-free error (unreachable / non-loopback / malformed). */
+    retrieve(
+      query: string,
+      opts?: { k?: number; scope?: string },
+    ): Promise<RetrievedChunk[]> {
+      return ipcRenderer.invoke('hark:rag:retrieve', {
+        query: typeof query === 'string' ? query : '',
+        k: typeof opts?.k === 'number' ? opts.k : undefined,
+        scope: typeof opts?.scope === 'string' ? opts.scope : undefined,
+      });
+    },
+    /** Probe the configured external backend (Settings "Test connection").
+     *  Resolves a content-free verdict; never rejects. */
+    testConnection(): Promise<RagConnectionResult> {
+      return ipcRenderer.invoke('hark:rag:test');
     },
   },
 });
