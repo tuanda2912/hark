@@ -73,11 +73,13 @@ Use **Test connection** in Settings first — it should say OK.
       finalizes to be useful? (Local model speed depends on your Mac + model size.)
 - [ ] **Locked during capture:** the picker is disabled while recording (chosen
       before Start) — confirm.
-- [ ] **Auto-save on Stop (NEW):** with a target set, **Stop** → a toast shows
-      "Translating meeting → <lang>…" then "Saved <lang> translation to note", and
-      the saved meeting `.md` gains a `## Transcript — <lang>` section **without**
-      you opening the Translate panel. (Local model = nothing leaves the Mac;
-      cloud = the toast makes the send visible.)
+- [ ] **Auto-save on Stop (background, NEW):** with a target set, **Stop** → a
+      persistent banner shows **"Translating meeting → <lang> N%"** that climbs to
+      100% **while you keep using the app**, then **"<lang> translation ready"**.
+      The saved meeting `.md` then has a `## Transcript — <lang>` section (in the
+      target language) **without** opening the Translate panel. On a local model
+      a long meeting takes a while — that's expected; watch the % climb. (Local =
+      nothing leaves the Mac; cloud sends each chunk redacted.)
 - [ ] **No stranded partial (NEW, engine fix):** during/after a meeting with
       continuous speech, confirm an early line no longer gets stuck **untranslated
       at the bottom** of the transcript while later lines sit above it. (This was

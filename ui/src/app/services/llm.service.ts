@@ -225,6 +225,26 @@ export class LlmService {
     this.translating.set(false);
   }
 
+  /**
+   * Translate via main WITHOUT touching the `translating`/`translation` signals
+   * (those drive the manual Translate panel). For programmatic/batch callers —
+   * e.g. the post-meeting background job translating the transcript chunk by
+   * chunk — so a background run can't flicker the manual panel's state if it's
+   * open. Same egress governance as `translate` (main owns the cloud/local fork
+   * + redaction + log). Never throws; resolves `{ ok:false }` on any failure.
+   */
+  async translateQuiet(req: TranslateReq): Promise<TranslateResult> {
+    const llm = window.hark?.llm;
+    if (!llm) {
+      return { ok: false, detail: 'No model bridge available (running outside Electron).' };
+    }
+    try {
+      return await llm.translate(req);
+    } catch (err) {
+      return { ok: false, detail: err instanceof Error ? err.message : 'translate failed' };
+    }
+  }
+
   // ─── Live per-segment translation (ADR-0035, §3) ────────────────────
 
   /**

@@ -82,23 +82,33 @@ or a SwiftUI host. End-of-meeting arbitrary-target (the more common ask) is alre
 
 ## Implementation notes (as built)
 
-- **Auto-translate + save on Stop (added 2026-06-04).** Live per-segment
-  translation is a real-time PREVIEW; it is NOT itself persisted (the post-stop
-  re-segmentation discards the live `segment.translation` values). Instead, when
-  live translation was ACTIVE at stop (`LiveTranslationService.targetLang` is
-  set), the renderer auto-runs the §1 end-of-meeting translation on the CLEAN
-  post-stop transcript and saves it (`## Transcript — <lang>`) — so the user gets
-  the authoritative translation without re-doing it. This *supersedes* the
-  earlier "user runs §1 manually" note below. Rationale for re-translating the
-  clean transcript rather than stitching the live fragments: the post-stop
-  transcript is re-segmented/deduped/speaker-labeled, and stranded partials leave
-  gaps — re-running §1 yields a complete, consistent result. **Egress:** it
-  reuses §1's audited path verbatim (LOCAL = zero egress; CLOUD redacts + logs a
-  metadata-only `translate` entry). The one behavioral shift is that, with §3 on,
-  a CLOUD send now fires on Stop rather than on an explicit click — gated on the
-  user's explicit §3 opt-in and disclosed via a visible "Translating → <lang>…"
-  toast. Privacy audit: PASS (no new egress mechanism). Orchestrated on
-  `EngineService.meetingSaved$` in `AppComponent.maybeAutoTranslateOnStop`.
+- **Auto-translate + save on Stop — BACKGROUND, chunked (added 2026-06-04).**
+  Live per-segment translation is a real-time PREVIEW; it is NOT itself persisted
+  (the post-stop re-segmentation discards the live `segment.translation` values).
+  Instead, when live translation was ACTIVE at stop (`LiveTranslationService
+  .targetLang` set), the renderer auto-translates the CLEAN post-stop transcript
+  and saves it (`## Transcript — <lang>`) — so the user gets the authoritative
+  translation without re-doing it. This *supersedes* the "user runs §1 manually"
+  note below. Re-translating the clean transcript (not stitching the live
+  fragments, which are re-segmented away + leave gaps) yields a complete result.
+  - *Why a background JOB, not one §1 call:* a whole-transcript single shot on a
+    LOCAL model takes minutes with no feedback and all-or-nothing failure (and a
+    small model translates a giant prompt worse). `TranslationJobService` instead
+    splits the transcript into ~24-line chunks, translates them SEQUENTIALLY in
+    the background (non-blocking — the user keeps using the app), tracks a
+    progress %, and on completion persists the assembled result via
+    `EngineService.writeTranslation` (single vault writer + git commit). Jobs
+    queue by `session_id`, so a second meeting can't lose its translation. A
+    persistent banner shows `Translating → <lang> N%` → `ready`.
+  - **Egress:** each chunk reuses §1's audited path verbatim (LOCAL = zero
+    egress; CLOUD redacts each chunk + logs a metadata-only `translate` entry).
+    Chunks are COARSE (tens of lines), so a cloud run logs a handful of entries,
+    not hundreds. No new egress mechanism (the renderer calls
+    `LlmService.translateQuiet` → main; main is the chokepoint). With §3 on, a
+    CLOUD send now fires on Stop rather than on an explicit click — gated on the
+    explicit §3 opt-in and disclosed via the progress banner.
+  - Orchestrated on `EngineService.meetingSaved$` in
+    `AppComponent.maybeAutoTranslateOnStop` → `TranslationJobService.start`.
 - **Renderer-orchestrated, engine untouched.** A new `LiveTranslationService`
   (renderer) listens on `EngineService.segmentFinalized$` — fired ONLY on
   `segment.final`, never partials, never the post-stop `meeting.transcript` swap

@@ -481,29 +481,62 @@
     </div>
   }
 
-  <!-- Auto-translate-on-stop status (ADR-0035 §3). Shown when live translation
-       was active: a "translating…" state (so a cloud send is visible), then a
-       saved/error confirmation that auto-dismisses. Sits above the bookmark
-       toast slot so the two don't collide. -->
-  @if (autoTranslate(); as at) {
+  <!-- Background post-meeting translation status (ADR-0035 §3). Shown while a
+       job runs (with a live progress %) and when it finishes — so a long local
+       translation is visible + non-blocking. Sits above the bookmark toast slot
+       so the two don't collide. Persists (no auto-dismiss); the user dismisses a
+       finished/errored banner with × . -->
+  @if (translationJobState(); as tj) {
     <div
-      class="fixed bottom-6 left-1/2 -translate-x-1/2 inline-flex items-center gap-2 px-4 py-2 rounded-card bg-surface-2 border border-border-2 text-text text-sm shadow-lg"
+      class="fixed bottom-6 left-1/2 -translate-x-1/2 inline-flex items-center gap-3 px-4 py-2 rounded-card bg-surface-2 border border-border-2 text-text text-sm shadow-lg"
     >
-      @if (at.phase === 'translating') {
-        Translating meeting → {{ at.lang }}…
-      } @else if (at.phase === 'saved') {
+      @if (tj.phase === 'running') {
+        <span class="inline-flex items-center gap-2">
+          Translating meeting → {{ tj.lang }}
+          <span class="font-mono text-text-2">{{ translationJobPercent() }}%</span>
+        </span>
+        <!-- thin determinate progress bar -->
+        <span class="inline-block w-24 h-1 rounded-full bg-border-2 overflow-hidden" aria-hidden="true">
+          <span
+            class="block h-full bg-accent transition-[width] duration-300"
+            [style.width.%]="translationJobPercent()"
+          ></span>
+        </span>
+      } @else if (tj.phase === 'done') {
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
           stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
           class="text-success" aria-hidden="true">
           <path d="M20 6 9 17l-5-5" />
         </svg>
-        Saved {{ at.lang }} translation to note
+        {{ tj.lang }} translation ready — saved to the meeting note
+        <button
+          type="button"
+          class="ml-1 inline-flex items-center justify-center w-5 h-5 rounded-input text-text-2 hover:text-text hover:bg-surface cursor-pointer"
+          (click)="dismissTranslationJob()"
+          aria-label="Dismiss"
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
       } @else {
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
           stroke-width="2.2" stroke-linecap="round" class="text-recording" aria-hidden="true">
           <path d="M6 6l12 12M18 6L6 18" />
         </svg>
-        Couldn't translate → {{ at.lang }}: {{ at.detail }}
+        Couldn't translate → {{ tj.lang }}: {{ tj.detail }}
+        <button
+          type="button"
+          class="ml-1 inline-flex items-center justify-center w-5 h-5 rounded-input text-text-2 hover:text-text hover:bg-surface cursor-pointer"
+          (click)="dismissTranslationJob()"
+          aria-label="Dismiss"
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
       }
     </div>
   }
