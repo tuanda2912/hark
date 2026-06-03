@@ -1192,19 +1192,29 @@ actor EngineSession {
         // partials. See ADR-0009.
         let pruned = ledger.prune(beforeSessionTime: windowStartSessionTime)
         for p in pruned where !p.wasFinalized && !p.wasSuperseded {
-            // A superseded orphan is NOT closed with a synthetic final — it was
-            // already retracted in favour of the segment that grew past it
-            // (ADR-0018); a closing final would resurrect the fragment.
-            //
-            // ADR-0019: also skip orphans whose region is already behind the
-            // commit watermark. That span was finalized exactly once when it
-            // aged past the horizon; a closing final here would re-emit
-            // already-committed audio — the very duplicate this model removes.
-            if p.tStart <= committedUpTo { continue }
-            let orphanSeg = WindowSegment(
-                tStart: p.tStart, tEnd: p.tEnd, text: p.lastText, language: nil
-            )
-            emitSegment(uid: p.id, isFinal: true, seg: orphanSeg)
+            // A superseded orphan is NOT closed at all here — it was already
+            // retracted in favour of the segment that grew past it (ADR-0018);
+            // the `where` clause excludes it. The remaining orphans are
+            // non-finalized AND non-superseded: a `segment.partial` was shown
+            // for each, so the UI needs closure or it dangles forever (the
+            // "stranded partial" bug).
+            switch Self.prunedOrphanDisposition(orphanStart: p.tStart,
+                                                committedUpTo: committedUpTo) {
+            case .synthesizeFinal:
+                // Still ahead of the watermark — never committed. Promote the
+                // dangling partial to a final with its last-known text (ADR-0009).
+                let orphanSeg = WindowSegment(
+                    tStart: p.tStart, tEnd: p.tEnd, text: p.lastText, language: nil
+                )
+                emitSegment(uid: p.id, isFinal: true, seg: orphanSeg)
+            case .retract:
+                // ADR-0019: behind the watermark, so that span was already
+                // finalized exactly once. A synthetic final would re-emit
+                // committed audio (a visible duplicate). Instead RETRACT the
+                // dangling partial via `segment.superseded` (empty `superseded_by`)
+                // so the renderer drops it — no duplicate, no stranded partial.
+                emitOrphanRetraction(utteranceId: p.id)
+            }
         }
 
         // Drain + broadcast any supersessions detected during this reconcile
@@ -1428,6 +1438,43 @@ actor EngineSession {
         if start <= committedUpTo { return .skipAlreadyCommitted }
         if start <= commitHorizon { return .finalize }
         return .partial
+    }
+
+    // ─── Pruned-orphan disposition (ADR-0019 stranded-partial fix) ──────────
+
+    /// What to do with a NON-finalized, NON-superseded ledger entry that fell
+    /// out of the active window (pruned). A `segment.partial` was already shown
+    /// for its utterance_id, so the entry can't just be dropped — the renderer
+    /// would keep it as a partial forever (the "stranded partial" bug: an early
+    /// line sits in the live-tail block at the bottom of the screen while the
+    /// meeting has moved on). The disposition gives the UI closure either way.
+    enum PrunedOrphanDisposition: Equatable {
+        /// Its region is still AHEAD of the commit watermark — it was never
+        /// committed. Emit a synthetic `segment.final` with its last-known text
+        /// so the UI promotes the dangling partial to a final (ADR-0009).
+        case synthesizeFinal
+        /// Its region is already BEHIND the commit watermark — that span was
+        /// finalized exactly once when it aged past the horizon. A synthetic
+        /// final here would re-emit already-committed audio (the duplicate
+        /// ADR-0019 removes). Instead RETRACT the dangling partial: emit a
+        /// `segment.superseded` for its id so the renderer drops it from its
+        /// live map. No single successor exists (its span was absorbed into the
+        /// committed transcript under other ids), so the retraction carries an
+        /// EMPTY `supersededBy` — see `SegmentSupersededPayload`.
+        case retract
+    }
+
+    /// PURE disposition for a pruned orphan (non-finalized, non-superseded).
+    /// `orphanStart` is the entry's `tStart`; `committedUpTo` is the watermark.
+    /// Mirrors `commitDecision`'s exactly-once boundary: `start <= committedUpTo`
+    /// means the region was already committed (→ retract), otherwise it was
+    /// still hot and never committed (→ synthesize a closing final).
+    ///
+    /// No actor state, no I/O — unit-tested in CommitWatermarkTests so the live
+    /// prune loop and the tests share one definition of "close this orphan."
+    static func prunedOrphanDisposition(orphanStart: Double,
+                                        committedUpTo: Double) -> PrunedOrphanDisposition {
+        orphanStart <= committedUpTo ? .retract : .synthesizeFinal
     }
 
     /// TIME-GATED collapse of re-emitted utterances. Input is already deduped by
@@ -2285,6 +2332,32 @@ actor EngineSession {
                                        utteranceId: ev.oldId,
                                        supersededBy: ev.newId)))
         }
+    }
+
+    /// Retract a dangling partial that can't be closed with a synthetic final.
+    /// Used for pruned orphans whose region is already behind the commit
+    /// watermark (ADR-0019): a synthetic final would re-emit committed audio, so
+    /// instead we tell the UI to DROP the utterance via `segment.superseded`.
+    /// There is no single successor (its span was absorbed into the committed
+    /// transcript under other ids), so `supersededBy` is EMPTY — the renderer's
+    /// handler only deletes the id and ignores `superseded_by`, so an empty
+    /// value is the honest "retracted, no single successor" signal.
+    ///
+    /// Idempotent across the supersession path: we record the id in
+    /// `supersededIds` (the at-stop vault filter set) just like
+    /// `drainAndEmitSupersessions`, and we no-op if it was already retracted —
+    /// so a later real supersession of the same id can't double-emit, and a
+    /// real supersession that already fired won't be re-broadcast here.
+    @discardableResult
+    private func emitOrphanRetraction(utteranceId: String) -> Bool {
+        guard supersededIds.insert(utteranceId).inserted else { return false }
+        FileHandle.standardError.write(Data(
+            "harkd: retracted stale orphan \(utteranceId) (behind watermark)\n".utf8))
+        broadcast(WireEnvelope(type: "segment.superseded",
+                               payload: SegmentSupersededPayload(
+                                   utteranceId: utteranceId,
+                                   supersededBy: "")))
+        return true
     }
 
     private func sendAck(_ client: WebSocketClient, id: String?) {

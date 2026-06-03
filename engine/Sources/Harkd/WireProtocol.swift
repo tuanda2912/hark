@@ -228,6 +228,17 @@ struct BookmarkCreatedPayload: Encodable {
 /// `.convertToSnakeCase` strategy — both fields are non-optional, so the
 /// synthesized `encode(to:)` is sufficient (no explicit nil handling needed,
 /// unlike `SegmentPayload`).
+///
+/// `supersededBy` (→ `superseded_by`) carries the newer utterance_id that
+/// replaced this one (ADR-0018) — EXCEPT when it is the EMPTY STRING `""`,
+/// which means "retracted as a stale orphan whose span was already committed
+/// under other ids — no single successor" (ADR-0019 stranded-partial fix).
+/// The engine emits the empty form when a non-finalized, non-superseded ledger
+/// entry is pruned behind the commit watermark: a synthetic `segment.final`
+/// there would re-emit already-committed audio, so we retract the dangling
+/// partial instead. The UI's handler only deletes `utterance_id` and ignores
+/// `superseded_by`, so empty is safe — MUST stay in lockstep with the TS
+/// `SegmentSupersededPayload` doc.
 struct SegmentSupersededPayload: Encodable {
     let utteranceId: String
     let supersededBy: String

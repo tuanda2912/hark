@@ -97,6 +97,16 @@ export interface SegmentPayload {
  * (ADR-0009 mints a fresh utterance_id on re-segmentation; this frame
  * retracts the older fragment). Consumer semantics: drop `utterance_id`
  * from the displayed/retained set — it has been replaced by `superseded_by`.
+ *
+ * `superseded_by` is the newer utterance_id that replaced this one (ADR-0018)
+ * — EXCEPT when it is the EMPTY STRING `""`, which means "retracted as a stale
+ * orphan whose span was already committed under other ids — no single
+ * successor" (ADR-0019 stranded-partial fix: a dangling partial behind the
+ * commit watermark, pruned from the engine's ledger, can't be closed with a
+ * synthetic final without re-emitting committed audio, so the engine retracts
+ * it). The handler only deletes `utterance_id` and ignores `superseded_by`, so
+ * empty is handled identically — MUST stay in lockstep with the Swift
+ * `SegmentSupersededPayload` doc.
  */
 export interface SegmentSupersededPayload {
   readonly utterance_id: string;

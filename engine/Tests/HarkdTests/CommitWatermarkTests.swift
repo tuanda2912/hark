@@ -678,6 +678,165 @@ final class CommitWatermarkTests: XCTestCase {
         XCTAssertEqual(committedUpTo, 50.0)
     }
 
+    // MARK: - THE stranded-partial regression (ADR-0019 prune-orphan fix)
+    //
+    // The reconcile loop prunes ledger entries that fall behind the sliding
+    // window. For a NON-finalized, NON-superseded orphan a `segment.partial`
+    // was already shown, so it needs CLOSURE or the renderer keeps it as a
+    // partial forever (the user-reported bug: an early line strands in the
+    // live-tail block at the bottom of the screen while the meeting is at 2:13).
+    //
+    // The closure is split by the watermark (`prunedOrphanDisposition`):
+    //   - AHEAD of the watermark (never committed)  → synthetic `segment.final`.
+    //   - BEHIND the watermark (already committed once) → RETRACT via
+    //     `segment.superseded` (empty `superseded_by`) — a synthetic final there
+    //     would re-emit committed audio (the ADR-0019 duplicate). These tests
+    //     drive the REAL `UtteranceLedger.prune` + the REAL
+    //     `EngineSession.prunedOrphanDisposition`, so the live prune loop and the
+    //     regression share one definition of "close this orphan."
+
+    /// One closure the prune loop produced, for assertions.
+    private enum OrphanClosure: Equatable {
+        case synthFinal(id: String, text: String)
+        case retract(id: String)
+    }
+
+    /// Faithful reimplementation of the FIXED prune-orphan closure in
+    /// `runTranscription` (the loop at ~line 1193): prune below `windowStart`,
+    /// then for each non-finalized, non-superseded orphan apply the pure
+    /// disposition. Drives the REAL ledger so the prune filters
+    /// (finalized/superseded) and the REAL decision are both exercised.
+    private func runPruneClosure(ledger: UtteranceLedger,
+                                 windowStart: Double,
+                                 committedUpTo: Double) -> [OrphanClosure] {
+        var closures: [OrphanClosure] = []
+        let pruned = ledger.prune(beforeSessionTime: windowStart)
+        for p in pruned where !p.wasFinalized && !p.wasSuperseded {
+            switch EngineSession.prunedOrphanDisposition(orphanStart: p.tStart,
+                                                         committedUpTo: committedUpTo) {
+            case .synthesizeFinal:
+                closures.append(.synthFinal(id: p.id, text: p.lastText))
+            case .retract:
+                closures.append(.retract(id: p.id))
+            }
+        }
+        return closures
+    }
+
+    /// THE defining test: a non-finalized, non-superseded entry whose region is
+    /// already BEHIND the commit watermark gets pruned → it must be RETRACTED
+    /// (a `segment.superseded` for its id), NOT closed with a synthetic final.
+    ///
+    /// FAIL-BEFORE: the old code did `if p.tStart <= committedUpTo { continue }`
+    /// — emitting NEITHER a final NOR a retraction, so the renderer's partial
+    /// for that id dangled forever (the stranded-partial bug).
+    /// PASS-AFTER: the disposition returns `.retract`, so the UI drops the id.
+    func testPrunedOrphanBehindWatermarkIsRetractedNotFinalized() {
+        let ledger = UtteranceLedger()
+        // The watermark is at 60 s: everything up to 60 was committed once. A
+        // straddle long sentence (committed earlier) over-advanced it past an
+        // early utterance that was only ever shown as a partial.
+        let committedUpTo = 60.0
+
+        // The stranded early partial at ~9 s: minted + text-updated by the live
+        // loop exactly as `runTranscription` does, never finalized, never
+        // superseded. Its region (9..12) is now far behind the watermark (60).
+        let strandedId = ledger.resolve(tStart: 9.0, tEnd: 12.0,
+                                        text: "an early line that strands at the bottom")
+        _ = ledger.updateText("an early line that strands at the bottom",
+                              utteranceId: strandedId)
+        XCTAssertFalse(ledger.isFinalized(utteranceId: strandedId),
+            "precondition: the orphan was only ever a partial")
+
+        // The window has slid forward to ~50 s; the orphan's tEnd (12) is below
+        // the window's left edge, so the live prune drops it.
+        let closures = runPruneClosure(ledger: ledger,
+                                       windowStart: 50.0,
+                                       committedUpTo: committedUpTo)
+
+        XCTAssertEqual(closures, [.retract(id: strandedId)],
+            "an orphan behind the watermark is RETRACTED so the UI drops it")
+        // And explicitly: NO synthetic final for it (no duplicate of committed audio).
+        XCTAssertFalse(closures.contains { if case .synthFinal = $0 { return true }; return false },
+            "a behind-watermark orphan must NOT get a synthetic final (ADR-0019 no-dup)")
+    }
+
+    /// The complementary case: an orphan AHEAD of the watermark (never
+    /// committed) still gets a synthetic `segment.final` — the ADR-0009 closure
+    /// for a dangling hot-region partial that aged out without finalizing. This
+    /// pins that the fix did NOT regress the normal orphan-final path.
+    func testPrunedOrphanAheadOfWatermarkStillSynthesizesFinal() {
+        let ledger = UtteranceLedger()
+        let committedUpTo = 10.0  // watermark behind the orphan's region.
+
+        // A hot-region partial at ~14 s that ages out of the window before it
+        // was ever committed (e.g. window slid past it on a quiet stretch).
+        let hotId = ledger.resolve(tStart: 14.0, tEnd: 16.0, text: "a hot partial that aged out")
+        _ = ledger.updateText("a hot partial that aged out", utteranceId: hotId)
+
+        let closures = runPruneClosure(ledger: ledger,
+                                       windowStart: 18.0,   // 16 < 18 → pruned
+                                       committedUpTo: committedUpTo)
+
+        XCTAssertEqual(closures, [.synthFinal(id: hotId, text: "a hot partial that aged out")],
+            "an orphan ahead of the watermark is closed with a synthetic final (ADR-0009)")
+        XCTAssertFalse(closures.contains { if case .retract = $0 { return true }; return false },
+            "an ahead-of-watermark orphan must NOT be retracted")
+    }
+
+    /// The prune loop must not touch finalized or superseded entries (the
+    /// `where` clause filters them) — neither a retraction nor a synthetic
+    /// final fires for them. Drives the REAL ledger's prune flags.
+    func testPruneClosureSkipsFinalizedAndSupersededOrphans() {
+        let ledger = UtteranceLedger()
+        let committedUpTo = 60.0
+
+        // Finalized live, then aged out — no closure (it already has a final).
+        let finalId = ledger.resolve(tStart: 5.0, tEnd: 7.0, text: "already final")
+        _ = ledger.updateText("already final", utteranceId: finalId)
+        ledger.markFinalized(utteranceId: finalId)
+
+        // Superseded by a grown re-segmentation, then aged out — no closure (it
+        // was already retracted in favour of the survivor; a final would
+        // resurrect the fragment, ADR-0018).
+        let shortId = ledger.resolve(tStart: 20.0, tEnd: 22.0, text: "hello there")
+        _ = ledger.updateText("hello there", utteranceId: shortId)
+        let grownId = ledger.resolve(tStart: 20.0, tEnd: 30.0, text: "hello there general kenobi")
+        _ = ledger.updateText("hello there general kenobi", utteranceId: grownId)
+        XCTAssertEqual(ledger.drainSupersessions().count, 1, "the short fragment is superseded")
+        ledger.markFinalized(utteranceId: grownId)  // survivor finalized.
+
+        // A genuine stranded orphan behind the watermark — the ONLY closure.
+        let strandedId = ledger.resolve(tStart: 8.0, tEnd: 10.0, text: "the stranded one")
+        _ = ledger.updateText("the stranded one", utteranceId: strandedId)
+
+        // Window slides past all of them (max tEnd is 30 → cutoff 31 prunes all).
+        let closures = runPruneClosure(ledger: ledger,
+                                       windowStart: 31.0,
+                                       committedUpTo: committedUpTo)
+
+        XCTAssertEqual(closures, [.retract(id: strandedId)],
+            "only the non-finalized, non-superseded orphan behind the watermark is closed (retracted)")
+    }
+
+    /// The watermark boundary for the disposition mirrors `commitDecision`:
+    /// `start <= committedUpTo` → retract (already committed), strictly-above →
+    /// synthesize a final. Pin the exact boundary.
+    func testPrunedOrphanDispositionBoundaries() {
+        // start == watermark → already committed → retract.
+        XCTAssertEqual(
+            EngineSession.prunedOrphanDisposition(orphanStart: 10.0, committedUpTo: 10.0),
+            .retract)
+        // start below the watermark → retract.
+        XCTAssertEqual(
+            EngineSession.prunedOrphanDisposition(orphanStart: 4.0, committedUpTo: 10.0),
+            .retract)
+        // start just above the watermark → never committed → synthesize final.
+        XCTAssertEqual(
+            EngineSession.prunedOrphanDisposition(orphanStart: 10.01, committedUpTo: 10.0),
+            .synthesizeFinal)
+    }
+
     // MARK: - Decision-function unit checks (boundaries)
 
     /// The straddle rule is `start <= commitHorizon` and the exactly-once guard
