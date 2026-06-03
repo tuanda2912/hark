@@ -70,21 +70,25 @@ is being built **provider-agnostic now**; the integration lands later.
   - *Deferred:* rich `[1][2]` **citations / source cards** are left empty (NOT faked) — they need
     retrieval / structured output, which arrives with the vault-RAG slice. Answer streaming also
     deferred (non-streaming v1, like summary).
-- **Vault-wide / 2nd-brain Q&A — RAG (Slice 4, deferred).** Cross-meeting questions over the
-  whole vault. Cloud model NEVER sees the vault: **local** embed → **local** vector search
-  (top-K) → only the redacted top-K chunks + question go to the model → answer + citations.
-  Local model ⇒ zero egress. Design's `07-data-flows.md` = BGE-small CoreML + SQLite-vec.
-  - **Obsidian 2nd-brain (user direction, 2026-06-02):** Obsidian is the 2nd brain; Hark's vault
-    is already Obsidian-native Markdown (`[[wikilinks]]` parsing is a separate backlog item), so
-    Obsidian can point at it directly. **Chosen shape — HYBRID (directional, ADR at build time):**
-    the user's **external tool fetches/syncs Obsidian into the vault folder** (Markdown); **Hark
-    builds + owns the LOCAL vector index** over that folder and does retrieval. Keeps retrieval
-    local/private + integrated, while ingestion stays the external tool's job. *Pick up:* Hark
-    needs a local indexer (chunk + embed via on-device model) + vector store (SQLite-vec) + a
-    file-watcher to keep the index fresh as the tool drops/updates notes; ADR the indexer +
-    embedding-model choice + chunking when we build Slice 4.
-- **Cloud-call log + PII redaction** (the design's "PII redacted · View log"). Itemize every
-  cloud call and redact PII before sending; local calls need neither. Lands with Slice 2.
+- **Vault-wide / 2nd-brain Q&A — RAG (Slice 4) — DESIGN-LOCKED (ADR-0032), build pending.**
+  Cross-meeting questions over the whole vault. Cloud model NEVER sees the vault: **local** embed
+  → **local** vector search (top-K) → only the redacted top-K chunks + question go to the model →
+  answer + citations. Local model ⇒ zero egress. **Decisions (ADR-0032):** `bge-small-en-v1.5`
+  384-dim **CoreML in the engine** (ANE, model-cache pattern); **brute-force in-memory cosine over
+  a flat file** (NOT sqlite-vec for v1 — <80 ms at 50k chunks, no native dep; sqlite-vec is the
+  >100k scale-up); index in **app-data** (not the vault); engine **FSEvents watcher (30 s +
+  content-hash)**; heading-aware chunking with `notePath/headingPath/charRange` for citations; new
+  `rag.retrieve` + `rag.index_status` wire frames; renderer scope toggle (this-meeting | vault).
+  - **Obsidian 2nd-brain (HYBRID):** the user's external tool syncs Obsidian → the vault folder
+    (Markdown); Hark **reads** it and owns the local index (writes only app-data). Obsidian can
+    point at the vault directly (`[[wikilinks]]` parsing is a separate backlog item).
+  - **Build sub-slices:** 4a engine embedder (spike the `bge-small` CoreML conversion + WordPiece
+    tokenizer first — the key risk); 4b index + brute-force retrieval + watcher + wire frames;
+    4c main↔engine retrieval wiring + renderer scope toggle + citations. New dep `swift-transformers`
+    (tokenizer) → document under rule #6.
+- **Cloud-call log + PII redaction — SHIPPED (Slice 2).** Every cloud call redacts PII first +
+  logs metadata-only; surfaced in Settings → Privacy "Cloud activity". Local calls need neither.
+  (NER name redaction + a redaction toggle remain deferred — see the summary entry.)
 
 ## Speaker / diarization (Phase 5.1)
 
