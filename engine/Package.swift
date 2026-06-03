@@ -71,6 +71,17 @@ let package = Package(
         .package(
             url: "https://github.com/huggingface/swift-transformers.git",
             exact: "1.3.3"
+        ),
+        // swift-crypto — SHA-256 for the vault-RAG index (slice 4b): chunk
+        // content hashes + the per-file change-gate hash. ALREADY in the graph
+        // (transitive via swift-transformers/Hub → swift-crypto 4.5.0); declaring
+        // it here makes the `Crypto` product an EXPLICIT, owned dependency rather
+        // than a fragile transitive one. No new network fetch (the pin already
+        // exists in Package.resolved); Crypto opens no socket, so rule #6 doesn't
+        // apply. SemVer range, Apple-maintained.
+        .package(
+            url: "https://github.com/apple/swift-crypto.git",
+            from: "3.0.0"
         )
     ],
     targets: [
@@ -135,7 +146,9 @@ let package = Package(
                 // `Tokenizers` = AutoTokenizer/Unigram/Bert; `Hub` = HubApi/Repo
                 // for the one-time, HarkPaths-rooted model+tokenizer download.
                 .product(name: "Tokenizers", package: "swift-transformers"),
-                .product(name: "Hub", package: "swift-transformers")
+                .product(name: "Hub", package: "swift-transformers"),
+                // SHA-256 for the vault-RAG index chunk + file hashes (slice 4b).
+                .product(name: "Crypto", package: "swift-crypto")
             ],
             path: "Sources/Harkd"
         ),
