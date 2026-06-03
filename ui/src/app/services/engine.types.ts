@@ -379,12 +379,33 @@ export interface RagRetrieveCommand {
   };
 }
 
+/**
+ * Persist a generated transcript TRANSLATION into the saved meeting note
+ * (BACKLOG translation §1). Mirrors `SummaryWriteCommand`: the translation is
+ * produced in Electron main (the egress chokepoint) and the engine only
+ * PERSISTS it — appending a `## Transcript — <lang>` section to the meeting
+ * markdown for `session_id` and making the local git-commit (vault writes stay
+ * single-owner, CLAUDE.md #4). `lang` is the human language name used in the
+ * heading (e.g. "Thai"); a re-translate to the same `lang` REPLACES that
+ * section (idempotent), while a different `lang` adds a separate section. The
+ * engine replies `ack` on success, `error` on failure (existing channel).
+ */
+export interface TranslationWriteCommand {
+  readonly type: 'translation.write';
+  readonly payload: {
+    readonly session_id: string;
+    readonly lang: string;
+    readonly translation: string;
+  };
+}
+
 export type EngineCommand =
   | CaptureStartCommand
   | CaptureStopCommand
   | BookmarkCreateCommand
   | SpeakerRenameCommand
   | SummaryWriteCommand
+  | TranslationWriteCommand
   | RagRetrieveCommand;
 
 // ─── Renderer-side derived types ─────────────────────────────────────

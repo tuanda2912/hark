@@ -17,6 +17,8 @@ import type {
   SummarizeResult,
   AskReq,
   AskResult,
+  TranslateReq,
+  TranslateResult,
   RedactionCounts,
   CloudCallLogEntry,
 } from './types';
@@ -313,6 +315,131 @@ export async function summarize(req: SummarizeReq): Promise<SummarizeResult> {
     const detail = err instanceof Error ? err.message : 'Summary failed';
     logCloudCall({
       action: 'summary',
+      config,
+      egress,
+      inChars: userText.length,
+      outChars: 0,
+      redactionTotal: counts.total,
+      status: 'error',
+      detail,
+    });
+    return { ok: false, detail };
+  }
+}
+
+// ─── End-of-meeting transcript translation (BACKLOG translation §1) ─────────
+
+/** Upper bound on a translation. A translation is ~the length of the input, so
+ *  this is generous headroom for a typical meeting; a very long transcript may
+ *  hit it (single-shot v1 — chunked translation is the documented follow-up). */
+const TRANSLATE_MAX_TOKENS = 8_192;
+
+/**
+ * System prompt for whole-transcript translation. The target language is
+ * interpolated (so it's NOT prompt-cached across languages — fine, translation
+ * is infrequent). Instructs a faithful, structure-preserving, line-for-line
+ * translation (NOT a summary), and to pass redaction placeholders through
+ * verbatim. Content-free.
+ */
+function translateSystemPrompt(targetLang: string): string {
+  return [
+    `You are a translator. Translate the meeting transcript the user provides into ${targetLang}.`,
+    'Preserve the structure EXACTLY: keep every speaker label and timestamp line as-is (e.g.',
+    '"Speaker 1 00:12:") and translate ONLY the spoken text after it. Do NOT summarize, omit,',
+    'merge, reorder, or add anything — translate faithfully and completely, line for line. If a',
+    'line is already in the target language, keep it. Some entities may appear as redaction',
+    'placeholders such as [name], [email], [phone], [amount], [url], or [number]; preserve them',
+    'verbatim — never translate, expand, or guess them.',
+  ].join('\n');
+}
+
+/**
+ * Translate a whole meeting transcript into `targetLang` (BACKLOG translation
+ * §1). A near-clone of `summarize`'s egress discipline:
+ *   - LOCAL (loopback) → send the FULL transcript, NO redaction (zero egress).
+ *   - CLOUD → REDACT the transcript first (redact(transcript, knownNames)) and
+ *     send only the redacted text.
+ * One METADATA-ONLY cloud-log entry (action:'translate'); the transcript and the
+ * translation are NEVER logged — only their lengths. On error a content-free,
+ * status-derived `{ ok:false, detail }`.
+ */
+export async function translate(req: TranslateReq): Promise<TranslateResult> {
+  const transcript = typeof req?.transcript === 'string' ? req.transcript : '';
+  const targetLang = typeof req?.targetLang === 'string' ? req.targetLang.trim() : '';
+  const knownNames = Array.isArray(req?.knownNames)
+    ? req.knownNames.filter((n): n is string => typeof n === 'string')
+    : [];
+
+  if (transcript.length === 0) {
+    return { ok: false, detail: 'Nothing to translate' };
+  }
+  if (targetLang.length === 0) {
+    return { ok: false, detail: 'No target language selected' };
+  }
+
+  const config = readConfig();
+  if (!config) {
+    return { ok: false, detail: 'No provider configured' };
+  }
+
+  const egress: 'cloud' | 'local' = isLocalEgress(config) ? 'local' : 'cloud';
+
+  let key: string | undefined;
+  try {
+    key = keystore.getKey(config.provider) ?? undefined;
+  } catch (err) {
+    const detail =
+      err instanceof KeyStorageUnavailableError
+        ? 'Key storage unavailable'
+        : 'Could not read stored key';
+    logCloudCall({
+      action: 'translate',
+      config,
+      egress,
+      inChars: 0,
+      outChars: 0,
+      redactionTotal: 0,
+      status: 'error',
+      detail,
+    });
+    return { ok: false, detail };
+  }
+
+  // Fork: redact for cloud, pass through for local (zero egress).
+  const { text: userText, counts } =
+    egress === 'cloud'
+      ? redact(transcript, knownNames)
+      : { text: transcript, counts: freshZeroCounts() };
+
+  const provider = makeProvider(config, key);
+
+  try {
+    const { text: translation } = await provider.complete({
+      system: translateSystemPrompt(targetLang),
+      user: userText,
+      maxTokens: TRANSLATE_MAX_TOKENS,
+    });
+    logCloudCall({
+      action: 'translate',
+      config,
+      egress,
+      inChars: userText.length,
+      outChars: translation.length,
+      redactionTotal: counts.total,
+      status: 'ok',
+    });
+    return {
+      ok: true,
+      translation,
+      targetLang,
+      model: config.model,
+      egress,
+      redaction: counts,
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : 'Translation failed';
+    logCloudCall({
+      action: 'translate',
       config,
       egress,
       inChars: userText.length,

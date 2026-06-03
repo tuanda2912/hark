@@ -231,6 +231,109 @@ struct VaultWriter: Sendable {
         return out
     }
 
+    /// APPEND-OR-REPLACE a `## Transcript — <lang>` section in an already-written
+    /// meeting file and (best-effort) git-commit the change. The translation is
+    /// generated in the Electron main process (the egress chokepoint, ADR-0029) and
+    /// handed in as plain markdown — this method only persists it; no model is ever
+    /// called here. Centralizes the vault write + git-commit in the one owner (hard
+    /// rule #4), exactly like `appendSummary`.
+    ///
+    /// IDEMPOTENT PER LANGUAGE: if the file already carries a `## Transcript — <lang>`
+    /// section for THIS exact `lang` (re-translate), its body is REPLACED in place;
+    /// otherwise a new section is appended after the existing content. A DIFFERENT
+    /// `lang` gets its OWN section — both coexist. Never duplicates a heading. The
+    /// merge itself is the PURE, unit-tested `mergeTranslationSection` (so the live
+    /// path and the tests share one definition); this method only does read → merge →
+    /// atomicWrite → commit, writing to the EXISTING `fileURL` (overwrite, hard rule
+    /// #4 — the meeting's OWN file, never another, never a new one).
+    ///
+    /// - Throws: only on the FILE I/O (read of the existing file / atomic write).
+    ///   Git failures are swallowed and reported via `Result.committed == false` —
+    ///   same best-effort-commit contract as `appendSummary`: the `.md` is the durable
+    ///   artefact, so a missing commit must not fail the translation save.
+    func appendTranslation(
+        to fileURL: URL,
+        lang: String,
+        translation: String,
+        commitMessage: String
+    ) throws -> Result {
+        let existing = try String(contentsOf: fileURL, encoding: .utf8)
+        let merged = Self.mergeTranslationSection(into: existing, lang: lang, translation: translation)
+        try atomicWrite(merged, to: fileURL)
+        let slug = fileURL.deletingPathExtension().lastPathComponent
+        let committed = gitCommit(fileURL: fileURL, slug: slug, message: commitMessage)
+        return Result(fileURL: fileURL, slug: slug, committed: committed)
+    }
+
+    /// PURE append-or-replace of a `## Transcript — <lang>` section in a meeting
+    /// markdown body. No I/O, no state — unit-tested directly so the live
+    /// `appendTranslation` path and the regression suite share one definition of
+    /// "merge the translation." Parameterized clone of `mergeSummarySection`: the only
+    /// difference is the heading is `## Transcript — <lang>`, matched EXACTLY including
+    /// the language — so `## Transcript — Thai` and `## Transcript — French` are
+    /// independent sections that coexist, and a re-translate to the SAME `lang`
+    /// replaces only that lang's section.
+    ///
+    ///   - If the section is ABSENT: append a new one after the existing content
+    ///     (trimming trailing blank lines first, then one blank line, the heading, a
+    ///     blank line, the body) so the file ends with exactly one trailing newline.
+    ///   - If the section is PRESENT: REPLACE its body (everything from the heading up
+    ///     to the NEXT `## ` heading at column 0, or end-of-file) with the new body,
+    ///     leaving everything before the heading and any following sections untouched.
+    ///     This is what makes a re-translate idempotent — no duplicate heading, no
+    ///     stacked bodies — while a DIFFERENT `lang` (a different exact heading) is
+    ///     simply absent and appends its own section.
+    ///
+    /// `translation` is the markdown body only (no heading); it's trimmed of
+    /// surrounding whitespace and rendered under a freshly-emitted heading.
+    static func mergeTranslationSection(into existing: String, lang: String, translation: String) -> String {
+        let heading = "## Transcript — \(lang)"
+        let body = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+        let section = "\(heading)\n\n\(body)\n"
+
+        let lines = existing.components(separatedBy: "\n")
+        // Find the `## Transcript — <lang>` heading line (exact match on the trimmed
+        // line, so a different language's heading, a `### …` subheading, or a quoted
+        // heading in the body doesn't match — only THIS lang's section is touched).
+        guard let headingIdx = lines.firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespaces) == heading
+        }) else {
+            // ABSENT → append. Drop trailing blank lines from the existing content,
+            // then separate with one blank line so the section reads cleanly.
+            var trimmed = existing
+            while trimmed.hasSuffix("\n") { trimmed.removeLast() }
+            if trimmed.isEmpty { return section }
+            return trimmed + "\n\n" + section
+        }
+
+        // PRESENT → replace the section body. The section runs from the heading up
+        // to (but not including) the next top-level `## ` heading, or end-of-file.
+        var endIdx = lines.count
+        if headingIdx + 1 < lines.count {
+            for i in (headingIdx + 1)..<lines.count where lines[i].hasPrefix("## ") {
+                endIdx = i
+                break
+            }
+        }
+
+        let before = lines[..<headingIdx]            // content above the section
+        let after = lines[endIdx...]                 // following sections, if any
+
+        var out = before.joined(separator: "\n")
+        // Keep exactly one blank line between prior content and the section.
+        if !out.isEmpty {
+            while out.hasSuffix("\n") { out.removeLast() }
+            out += "\n\n"
+        }
+        out += section
+        if !after.isEmpty {
+            // `section` already ends in "\n"; add one blank line before the next
+            // section, then re-join the tail verbatim.
+            out += "\n" + after.joined(separator: "\n")
+        }
+        return out
+    }
+
     // ─── Markdown rendering (ADR-0015 §1, design doc 07) ────────────────────
 
     // `internal` (not `private`) so the rename re-render path's regression tests

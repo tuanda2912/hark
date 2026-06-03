@@ -303,8 +303,11 @@ actor EngineSession {
             // Static build capability: this build ships offline diarization.
             // meta.hello describes what the build can do, not per-session
             // diarizer-load state — the model-load failure path degrades at
-            // runtime rather than removing the capability. Translation is not
-            // built yet, so it stays off the list — keep this honest.
+            // runtime rather than removing the capability. NOTE: end-of-meeting
+            // transcript translation exists, but it's generated in Electron main
+            // (the egress chokepoint) and the engine only PERSISTS it
+            // (translation.write); LIVE in-meeting translation isn't built, so no
+            // "translation" capability is advertised — keep this honest.
             capabilities: ["diarization"]
         ))
         sendOnly(client, envelope: hello)
@@ -359,6 +362,8 @@ actor EngineSession {
             dispatchSpeakerRename(client, id: header.id, data: data)
         case "summary.write":
             dispatchSummaryWrite(client, id: header.id, data: data)
+        case "translation.write":
+            dispatchTranslationWrite(client, id: header.id, data: data)
         case "rag.retrieve":
             await dispatchRagRetrieve(client, id: header.id, data: data)
         case "meta.heartbeat":
@@ -759,6 +764,74 @@ actor EngineSession {
         // Privacy: log path + commit status only — never the summary text (rule #2/#3).
         FileHandle.standardError.write(Data(String(
             format: "harkd: summary written — %@  (committed=%@)\n",
+            result.fileURL.path, result.committed ? "yes" : "no").utf8))
+
+        sendAck(client, id: id)
+    }
+
+    // ─── Translation persistence (egress chokepoint, ADR-0029) ──────────────
+
+    /// Persist a whole-transcript translation into the most-recently-saved meeting's
+    /// OWN vault markdown under a `## Transcript — <lang>` section and git-commit it.
+    /// The translation text is generated in the Electron main process (the cloud/local
+    /// egress chokepoint, ADR-0029) and handed to the engine — the engine NEVER calls a
+    /// model here; it only writes. Centralizing the vault write + git-commit in the one
+    /// owner is the whole point (hard rule #4), exactly mirroring `summary.write`.
+    ///
+    /// A re-translate to the SAME `lang` replaces that section in place (idempotent); a
+    /// DIFFERENT `lang` appends its own section, so multiple languages coexist — the
+    /// merge is the PURE `VaultWriter.mergeTranslationSection`.
+    ///
+    /// Same MVP scope + ack/error shape as `summary.write`: only the single most-recent
+    /// meeting is writable (located by the retained `lastSavedMeeting` snapshot's
+    /// `sessionId`); a plain `ack` on success, `MEETING_NOT_FOUND` when the session id
+    /// doesn't match the retained meeting, `WRITE_FAILED` when the `.md` write itself
+    /// fails. A failed git commit alone is NOT a failure — the `.md` is the durable
+    /// artefact (VaultWriter's best-effort-commit semantics).
+    private func dispatchTranslationWrite(_ client: WebSocketClient, id: String?, data: Data) {
+        let cmd: TranslationWriteCommand
+        do {
+            cmd = try decodeInbound(data, payloadType: TranslationWriteCommand.self)
+        } catch {
+            sendError(client, id: id, code: "PROTOCOL_MISMATCH",
+                      message: "bad translation.write payload", recoverable: false)
+            return
+        }
+
+        // Reuse the SAME retained snapshot mechanism summary.write uses: only the most-
+        // recently-saved meeting is translatable, and only ITS file is touched
+        // (hard rule #4 — never another file, never a new one).
+        guard let snapshot = lastSavedMeeting, snapshot.sessionId == cmd.sessionId else {
+            sendError(client, id: id, code: "MEETING_NOT_FOUND",
+                      message: "can only write a translation for the most recently saved meeting",
+                      recoverable: true)
+            return
+        }
+
+        let slug = snapshot.vaultPath.deletingPathExtension().lastPathComponent
+        let writer = VaultWriter()
+        let result: VaultWriter.Result
+        do {
+            result = try writer.appendTranslation(
+                to: snapshot.vaultPath,
+                lang: cmd.lang,
+                translation: cmd.translation,
+                commitMessage: "docs(meeting): \(cmd.lang) translation for \(slug)")
+        } catch {
+            // The `.md` read-modify-write failed (read / atomic write). This is the
+            // durable part — a failed write means the translation did NOT land, so it's
+            // a hard error. (A failed git COMMIT alone is best-effort, surfaced as
+            // committed=false below, NOT an error — same as the meeting write.)
+            FileHandle.standardError.write(Data(
+                "harkd: translation write failed (\(type(of: error))); file unchanged\n".utf8))
+            sendError(client, id: id, code: "WRITE_FAILED",
+                      message: "could not write the meeting translation to the vault", recoverable: true)
+            return
+        }
+
+        // Privacy: log path + commit status only — never the translation text (rule #2/#3).
+        FileHandle.standardError.write(Data(String(
+            format: "harkd: translation written — %@  (committed=%@)\n",
             result.fileURL.path, result.committed ? "yes" : "no").utf8))
 
         sendAck(client, id: id)

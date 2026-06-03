@@ -136,6 +136,36 @@ export type AskResult =
     }
   | { ok: false; detail: string };
 
+// ─── End-of-meeting transcript translation (Phase 6) ────────────────────────
+//
+// Same egress model as summarize/ask: the renderer hands main the transcript
+// TEXT + a target language NAME + the applied speaker names; main redacts for a
+// CLOUD send (or sends as-is for LOCAL, zero egress), translates, and returns
+// the text + an egress/redaction receipt. Keep in lockstep with main's
+// TranslateReq / TranslateResult.
+
+/** What the renderer sends main to translate the whole transcript. */
+export interface TranslateReq {
+  /** The transcript as readable lines (e.g. "Speaker 1 00:12: …"). */
+  transcript: string;
+  /** Human language name to translate INTO (e.g. "Thai", "Vietnamese"). */
+  targetLang: string;
+  /** Applied speaker display-names for known-name → label collapse (cloud). */
+  knownNames?: string[];
+}
+
+/** Result of a `translate()` call (mirrors `SummarizeResult`). */
+export type TranslateResult =
+  | {
+      ok: true;
+      translation: string;
+      targetLang: string;
+      model: string;
+      egress: 'cloud' | 'local';
+      redaction: RedactionCounts;
+    }
+  | { ok: false; detail: string };
+
 /**
  * One row of the local cloud-activity log (ADR-0031). Metadata ONLY — the
  * transcript content is never logged. Both cloud and local actions are

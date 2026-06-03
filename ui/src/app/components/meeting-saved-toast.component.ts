@@ -244,6 +244,24 @@ interface RosterRow {
       .btn-summarize svg {
         flex-shrink: 0;
       }
+
+      /* Translate — sibling of Summarize, same icon + label treatment and
+         model-config accent state. */
+      .btn-translate {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .btn-translate.is-ready {
+        border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+        color: var(--accent);
+      }
+      .btn-translate.is-ready:hover {
+        background: var(--accent-soft);
+      }
+      .btn-translate svg {
+        flex-shrink: 0;
+      }
     `,
   ],
   template: `
@@ -341,6 +359,31 @@ interface RosterRow {
             Summarize…
           }
         </button>
+        <!-- Translate — sends the transcript TEXT to the configured model
+             (cloud or local) via main to translate into a chosen language;
+             never needs audio. When a model is configured this opens the
+             Translate panel; with none it routes to Settings. -->
+        <button
+          type="button"
+          class="btn btn-translate"
+          [class.is-ready]="modelConfigured()"
+          (click)="onTranslate()"
+          [title]="modelConfigured()
+            ? 'Translate this meeting with your model'
+            : 'Set up a model in Settings to translate'"
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+            stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 5h7M9 3v2c0 4-2.5 7-5 8M5 9c0 2 2.5 4 6 4" />
+            <path d="M13 19l4-9 4 9M14.5 16h5" />
+          </svg>
+          @if (modelConfigured()) {
+            Translate
+          } @else {
+            Translate…
+          }
+        </button>
         <!-- Verify-by-ear path — only when the meeting kept its audio
              (audio_path non-null). Opens the Post-Meeting Review screen to
              play the recording and tag speakers by listening. When audio
@@ -389,8 +432,11 @@ export class MeetingSavedToastComponent {
   /** User asked to summarize this meeting AND a model is configured — host
    *  opens the Summary panel for this session. */
   readonly summarize = output<void>();
-  /** User asked to summarize but no model is configured — host opens Settings
-   *  (mirrors the Ask panel's "set up a model" routing). */
+  /** User asked to translate this meeting AND a model is configured — host
+   *  opens the Translate panel for this session. */
+  readonly translate = output<void>();
+  /** User asked to summarize/translate but no model is configured — host opens
+   *  Settings (mirrors the Ask panel's "set up a model" routing). */
   readonly openSettings = output<void>();
 
   /**
@@ -495,6 +541,13 @@ export class MeetingSavedToastComponent {
    *  pattern as the Ask panel's empty-state CTA). */
   protected onSummarize(): void {
     if (this.modelConfigured()) this.summarize.emit();
+    else this.openSettings.emit();
+  }
+
+  /** Translate affordance. Same model-config routing as Summarize: with a model
+   *  open the Translate panel; without one route to Settings. */
+  protected onTranslate(): void {
+    if (this.modelConfigured()) this.translate.emit();
     else this.openSettings.emit();
   }
 

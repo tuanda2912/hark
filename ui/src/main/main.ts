@@ -14,7 +14,7 @@ import { spawnHarkd, HarkdHandle } from './harkd-spawn';
 import { HarkTray, TrayState } from './tray';
 import { loadPrefs, savePrefs, getPrefsPath, Prefs } from './prefs';
 import * as llm from './llm';
-import type { LlmStatus, LlmTestResult, SummarizeResult, AskResult, CloudCallLogEntry } from './llm/types';
+import type { LlmStatus, LlmTestResult, SummarizeResult, AskResult, TranslateResult, CloudCallLogEntry } from './llm/types';
 import * as rag from './rag';
 import type { RetrievedChunk, RagConnectionResult } from './rag/types';
 
@@ -526,6 +526,19 @@ ipcMain.handle('hark:llm:summarize', (_ev, raw: unknown): Promise<SummarizeResul
     ? o['knownNames'].filter((n): n is string => typeof n === 'string')
     : undefined;
   return llm.summarize({ transcript, knownNames });
+});
+
+// Translate the whole transcript (BACKLOG translation §1). Same egress model as
+// summarize — CLOUD redacts the transcript, LOCAL sends as-is (zero egress);
+// METADATA-ONLY cloud-log (action:'translate'). Untrusted payload coerced here.
+ipcMain.handle('hark:llm:translate', (_ev, raw: unknown): Promise<TranslateResult> => {
+  const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const transcript = typeof o['transcript'] === 'string' ? o['transcript'] : '';
+  const targetLang = typeof o['targetLang'] === 'string' ? o['targetLang'] : '';
+  const knownNames = Array.isArray(o['knownNames'])
+    ? o['knownNames'].filter((n): n is string => typeof n === 'string')
+    : undefined;
+  return llm.translate({ transcript, targetLang, knownNames });
 });
 
 // Answer a question about THIS meeting (Slice 3 — Phase 6). Like summarize,

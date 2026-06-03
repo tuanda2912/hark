@@ -167,6 +167,41 @@ export type AskResult =
     }
   | { ok: false; detail: string };
 
+// ─── End-of-meeting transcript translation (Phase 6, BACKLOG translation §1) ──
+//
+// Same egress + redaction discipline as summarize: CLOUD gets a REDACTED
+// transcript + a "translate to <lang>" prompt; LOCAL (loopback) gets the full
+// transcript, zero egress. One metadata-only cloud-log entry (action:'translate').
+// `targetLang` is a human language NAME the model understands and the vault
+// heading uses (e.g. "Thai", "Vietnamese", "English") — never sensitive.
+
+/** A translate request from the renderer: the assembled transcript TEXT, the
+ *  target language name, and the roster's applied display-names so the redactor
+ *  can collapse them to `[name]` for a CLOUD send. Text only — never audio. */
+export interface TranslateReq {
+  transcript: string;
+  /** Human language name to translate INTO (e.g. "Thai"). */
+  targetLang: string;
+  knownNames?: string[];
+}
+
+/**
+ * Result of a translate call. Mirrors SummarizeResult: on success the
+ * `translation` text + the egress kind + a redaction receipt (the transcript's
+ * per-category counts on cloud; all-zero on local) + the echoed `targetLang`.
+ * On failure a short, content-free `detail`.
+ */
+export type TranslateResult =
+  | {
+      ok: true;
+      translation: string;
+      targetLang: string;
+      model: string;
+      egress: 'cloud' | 'local';
+      redaction: RedactionCounts;
+    }
+  | { ok: false; detail: string };
+
 /**
  * One entry in the local cloud-call activity log (ADR-0031 §4). METADATA
  * ONLY — there is deliberately NO transcript/summary/question/answer field.

@@ -50,6 +50,7 @@ import { EyebrowComponent } from './components/eyebrow.component';
 import { SpeakerTaggingComponent } from './components/speaker-tagging.component';
 import { PostMeetingReviewComponent } from './components/post-meeting-review.component';
 import { SummaryPanelComponent } from './components/summary-panel.component';
+import { TranslatePanelComponent } from './components/translate-panel.component';
 
 @Component({
   selector: 'hark-root',
@@ -67,6 +68,7 @@ import { SummaryPanelComponent } from './components/summary-panel.component';
     SpeakerTaggingComponent,
     PostMeetingReviewComponent,
     SummaryPanelComponent,
+    TranslatePanelComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
@@ -374,6 +376,45 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly _summaryGuard = effect(() => {
     if (this.summaryOpen() && this.engine.lastMeetingSaved() === null) {
       this.summaryOpen.set(false);
+    }
+  });
+
+  // ─── Translate panel (end-of-meeting transcript translation) ────────
+  //
+  // Mirrors the Summary panel: a modal opened from the saved-confirmation
+  // card's "Translate" affordance. It assembles the transcript text + applied
+  // speaker names from EngineService and calls main's LLM bridge via LlmService
+  // (NO direct network), then writes the translation back through the engine
+  // (translation.write) on "Save to note". Unlike Summary it does NOT
+  // auto-run — the user picks a target language first. With no model configured
+  // the card routes to Settings instead of opening this.
+  readonly translationOpen = signal(false);
+
+  /** The translate panel's target — the most-recently-saved meeting's session
+   *  id (same source as `summarySessionId`), read live so it stays correct if a
+   *  newer meeting lands while open. */
+  readonly translationSessionId = computed(
+    () => this.engine.lastMeetingSaved()?.session_id ?? null,
+  );
+
+  /** Open the Translate panel for the saved meeting. Guarded: a saved meeting
+   *  must exist (the card — hence the trigger — only renders then). */
+  openTranslation(): void {
+    if (this.engine.lastMeetingSaved() === null) return;
+    this.translationOpen.set(true);
+  }
+
+  /** Esc / backdrop / × / Close inside the panel — unmount it. */
+  closeTranslation(): void {
+    this.translationOpen.set(false);
+  }
+
+  /** Auto-close the translate panel if its meeting goes away (New meeting /
+   *  Start clears lastMeetingSaved()). Belt-and-braces alongside the template
+   *  guard. */
+  private readonly _translationGuard = effect(() => {
+    if (this.translationOpen() && this.engine.lastMeetingSaved() === null) {
+      this.translationOpen.set(false);
     }
   });
 

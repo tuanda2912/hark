@@ -16,6 +16,8 @@ import type {
   SummarizeResult,
   AskReq,
   AskResult,
+  TranslateReq,
+  TranslateResult,
   CloudCallLogEntry,
 } from './llm/types';
 import type { RetrievedChunk, RagConnectionResult } from './rag/types';
@@ -185,6 +187,21 @@ contextBridge.exposeInMainWorld('hark', {
     summarize(req: SummarizeReq): Promise<SummarizeResult> {
       return ipcRenderer.invoke('hark:llm:summarize', {
         transcript: typeof req?.transcript === 'string' ? req.transcript : '',
+        knownNames: Array.isArray(req?.knownNames)
+          ? req.knownNames.filter((n): n is string => typeof n === 'string')
+          : undefined,
+      });
+    },
+
+    /** Translate the whole transcript to `targetLang` (BACKLOG translation §1).
+     *  Same egress model as summarize: CLOUD redacts the transcript first, LOCAL
+     *  sends it as-is (zero egress). Re-shaped to whitelisted fields; main
+     *  re-coerces. Resolves a TranslateResult (translation + content-free
+     *  receipt, or { ok:false, detail }). */
+    translate(req: TranslateReq): Promise<TranslateResult> {
+      return ipcRenderer.invoke('hark:llm:translate', {
+        transcript: typeof req?.transcript === 'string' ? req.transcript : '',
+        targetLang: typeof req?.targetLang === 'string' ? req.targetLang : '',
         knownNames: Array.isArray(req?.knownNames)
           ? req.knownNames.filter((n): n is string => typeof n === 'string')
           : undefined,

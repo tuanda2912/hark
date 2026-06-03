@@ -49,6 +49,8 @@ import type {
   SummarizeResult,
   AskReq,
   AskResult,
+  TranslateReq,
+  TranslateResult,
   CloudCallLogEntry,
 } from './llm.types';
 
@@ -111,6 +113,13 @@ declare global {
          * log. The renderer never makes a network call and never sees the key.
          */
         summarize(req: SummarizeReq): Promise<SummarizeResult>;
+        /**
+         * Translate the whole transcript to a target language (BACKLOG
+         * translation §1). Same egress model as summarize: main redacts for a
+         * cloud send, sends as-is for a local (loopback) model. The renderer
+         * never makes a network call and never sees the key.
+         */
+        translate(req: TranslateReq): Promise<TranslateResult>;
         /**
          * Answer a question about THIS meeting from its transcript TEXT
          * (Phase 6 slice 3). Same egress model as `summarize`: main owns the
@@ -407,6 +416,21 @@ export class EngineService {
   writeSummary(sessionId: string, summary: string): void {
     if (!sessionId || summary.trim().length === 0) return;
     this.send({ type: 'summary.write', payload: { session_id: sessionId, summary } });
+  }
+
+  /**
+   * Persist a transcript translation into the saved meeting note (BACKLOG
+   * translation §1). Mirrors `writeSummary`: sent over the same socket; the
+   * engine appends a `## Transcript — <lang>` section to `session_id`'s markdown
+   * and git-commits, then acks. No-op for empty content. Failure arrives as an
+   * `error` frame on the existing `errors$` / `lastError` channel.
+   */
+  writeTranslation(sessionId: string, lang: string, translation: string): void {
+    if (!sessionId || !lang.trim() || translation.trim().length === 0) return;
+    this.send({
+      type: 'translation.write',
+      payload: { session_id: sessionId, lang, translation },
+    });
   }
 
   /**

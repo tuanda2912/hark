@@ -477,6 +477,27 @@ struct SummaryWriteCommand: Decodable {
     let summary: String
 }
 
+/// Persist a whole-transcript TRANSLATION back into the vault markdown (UI → engine).
+/// Like `summary.write`, the translation itself is generated in the Electron main
+/// process (the cloud/local egress chokepoint, ADR-0029); the ENGINE only persists the
+/// text it's handed — it never calls a model. This keeps every vault write + git-commit
+/// in the one owner (hard rule #4), exactly like `summary.write` / `speaker.rename`.
+///
+/// `sessionId` scopes the write to the most-recently-saved meeting (the same MVP
+/// limitation as `summary.write`); `lang` is a human language NAME (e.g. "Thai",
+/// "Vietnamese") used verbatim in the section heading `## Transcript — <lang>`, and
+/// `translation` is the markdown body dropped under it. A re-translate to the SAME
+/// `lang` REPLACES that section; a DIFFERENT `lang` adds a SEPARATE one (so multiple
+/// languages coexist). `session_id` arrives snake_case and is folded to `sessionId`
+/// by `decodeInbound`'s `.convertFromSnakeCase` — `lang` / `translation` are single-
+/// word, unchanged. As with the rename / summary commands, the STRING values are
+/// values, not keys, so the decoder passes their content through verbatim.
+struct TranslationWriteCommand: Decodable {
+    let sessionId: String          // ← session_id
+    let lang: String
+    let translation: String
+}
+
 /// `rag.retrieve` (UI → engine, slice 4b). The UI asks the engine to embed `query`
 /// as an e5 `.query` and return the top-`k` vault chunks by cosine. `scope`
 /// reserves room for future scoping ("vault" = everything, or a sub-path); v1

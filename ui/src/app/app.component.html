@@ -432,6 +432,7 @@
         (reveal)="revealVault()"
         (review)="openReview()"
         (summarize)="openSummary()"
+        (translate)="openTranslation()"
         (openSettings)="openSettings()"
       />
     </div>
@@ -446,6 +447,19 @@
   @if (summaryOpen()) {
     @if (summarySessionId(); as session) {
       <hark-summary-panel [sessionId]="session" (close)="closeSummary()" />
+    }
+  }
+
+  <!-- Translate panel (end-of-meeting transcript translation). Opened from the
+       saved card's "Translate" affordance when a model is configured. Mounted
+       only while open AND a saved meeting with a session id exists; it
+       assembles the transcript text + known names, the user picks a target
+       language and translates via main's LLM bridge (no direct network), and
+       the result is written back through the engine on Save. Closes on Esc /
+       backdrop / × / Close. -->
+  @if (translationOpen()) {
+    @if (translationSessionId(); as session) {
+      <hark-translate-panel [sessionId]="session" (close)="closeTranslation()" />
     }
   }
 

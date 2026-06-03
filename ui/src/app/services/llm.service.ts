@@ -23,6 +23,8 @@ import type {
   SummarizeResult,
   AskReq,
   AskResult,
+  TranslateReq,
+  TranslateResult,
   CloudCallLogEntry,
 } from './llm.types';
 
@@ -169,6 +171,56 @@ export class LlmService {
   resetSummary(): void {
     this.summary.set(null);
     this.summarizing.set(false);
+  }
+
+  // ─── Translate (end-of-meeting transcript translation) ──────────────
+
+  /** True while a `translate()` call is in flight. Drives the panel's
+   *  "Translating…" state. */
+  readonly translating = signal(false);
+  /** The most recent translate result (success or failure), or null before the
+   *  first call / after a reset. */
+  readonly translation = signal<TranslateResult | null>(null);
+
+  /**
+   * Translate the whole transcript to `req.targetLang` via main (no direct
+   * network — main owns the cloud/local fork + redaction + cloud-call log).
+   * Mirrors `summarize`: stores the result in `translation`, toggles
+   * `translating`, never throws (resolves `{ ok:false }` so the panel only ever
+   * renders a result). No-op (a failure result) outside Electron.
+   */
+  async translate(req: TranslateReq): Promise<TranslateResult> {
+    const llm = window.hark?.llm;
+    if (!llm) {
+      const result: TranslateResult = {
+        ok: false,
+        detail: 'No model bridge available (running outside Electron).',
+      };
+      this.translation.set(result);
+      return result;
+    }
+    this.translating.set(true);
+    this.translation.set(null);
+    try {
+      const result = await llm.translate(req);
+      this.translation.set(result);
+      return result;
+    } catch (err) {
+      const result: TranslateResult = {
+        ok: false,
+        detail: err instanceof Error ? err.message : 'translate failed',
+      };
+      this.translation.set(result);
+      return result;
+    } finally {
+      this.translating.set(false);
+    }
+  }
+
+  /** Reset the translate state — used when the panel opens fresh. */
+  resetTranslation(): void {
+    this.translation.set(null);
+    this.translating.set(false);
   }
 
   // ─── Ask: this-meeting Q&A (Phase 6 slice 3) ────────────────────────

@@ -269,12 +269,16 @@ Translation is already half-wired: `capture.start` carries a `translation` confi
 only the translation *engine* is missing. Two-tier (local = zero egress / cloud = HQ), like the
 rest. Three pieces, easiest first:
 
-- **End-of-meeting transcript translation (easy, high-value, pure reuse).** A post-stop
-  "Translate to [lang]" → `llm.translate(transcript, targetLang)` in main: a near-clone of
-  `summarize` (redact-for-cloud / full-for-local, a "translate to X" prompt, provider completion,
-  cloud-log) → show the translation + **Save-to-note** (engine appends a `## Transcript — <lang>`
-  section, exactly like the summary `summary.write` path). Works with any configured cloud/local
-  model. Minimal new code.
+- **End-of-meeting transcript translation — DONE (2026-06-03).** A post-stop "Translate" on the
+  saved card → `TranslatePanel` (target-language picker) → `llm.translate(transcript, targetLang)`
+  in main (near-clone of `summarize`: redact-for-cloud / full-for-local, a "translate to X" prompt,
+  provider completion, metadata-only cloud-log action `translate`) → translation + egress receipt +
+  **Save-to-note** via the engine (`translation.write` → `VaultWriter.appendTranslation`, appends a
+  `## Transcript — <lang>` section, idempotent per-language, git-commit). Works with any configured
+  cloud/local model; local ⇒ zero egress. 179 engine tests green (11 new); privacy-audited.
+  - *Single-shot v1 (pick up):* one provider call with an 8192-token output cap — a very long
+    transcript may truncate. Chunk the transcript (by speaker-turn / size), translate each, and
+    reassemble for arbitrarily long meetings.
 - **Live → English (cheap, local).** WhisperKit has a built-in `task: .translate` that translates
   any source-language audio → **English** text on-device (no extra model). Flip the session's
   `DecodingOptions.task` to `.translate` when the user wants live English captions; the existing
