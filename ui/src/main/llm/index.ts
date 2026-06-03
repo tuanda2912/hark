@@ -19,6 +19,8 @@ import type {
   AskResult,
   TranslateReq,
   TranslateResult,
+  TranslateSegmentReq,
+  TranslateSegmentResult,
   RedactionCounts,
   CloudCallLogEntry,
 } from './types';
@@ -240,6 +242,9 @@ function isLocalEgress(config: LlmConfig): boolean {
  * guarantees no request/response body leaks into logs or the thrown detail.
  */
 export async function summarize(req: SummarizeReq): Promise<SummarizeResult> {
+  // Commit any pending live-translation roll-up first, so its aggregate entry
+  // is ordered BEFORE this action's entry in the chronological log.
+  flushLiveTranslate();
   // Coerce untrusted IPC input.
   const transcript = typeof req?.transcript === 'string' ? req.transcript : '';
   const knownNames = Array.isArray(req?.knownNames)
@@ -364,6 +369,8 @@ function translateSystemPrompt(targetLang: string): string {
  * status-derived `{ ok:false, detail }`.
  */
 export async function translate(req: TranslateReq): Promise<TranslateResult> {
+  // Commit any pending live-translation roll-up first (chronological log order).
+  flushLiveTranslate();
   const transcript = typeof req?.transcript === 'string' ? req.transcript : '';
   const targetLang = typeof req?.targetLang === 'string' ? req.targetLang.trim() : '';
   const knownNames = Array.isArray(req?.knownNames)
@@ -447,6 +454,206 @@ export async function translate(req: TranslateReq): Promise<TranslateResult> {
       redactionTotal: counts.total,
       status: 'error',
       detail,
+    });
+    return { ok: false, detail };
+  }
+}
+
+// ─── Live per-segment translation (ADR-0035, translation §3) ───────────────
+
+/** A single caption line is short; cap the translation generously but small
+ *  (vs the whole-transcript 8k) — headroom for one long sentence, not a target. */
+const SEGMENT_TRANSLATE_MAX_TOKENS = 512;
+
+/**
+ * System prompt for translating ONE finalized caption line — no speaker labels,
+ * no structure to preserve, just the spoken text. The target is interpolated
+ * (so it's not prompt-cached across languages — fine, live translation is
+ * bursty per meeting). Demands ONLY the translation back (no preamble / notes /
+ * quotes / romanization) so it drops straight under the original line.
+ * Content-free.
+ */
+function segmentTranslateSystemPrompt(targetLang: string): string {
+  return [
+    `You are a live translator. Translate the single line the user provides into ${targetLang}.`,
+    'Output ONLY the translation — no preamble, no notes, no quotation marks, no romanization.',
+    'If the line is already in the target language, return it unchanged. Some entities may appear',
+    'as redaction placeholders such as [name], [email], [phone], [amount], [url], or [number];',
+    'preserve them verbatim — never translate, expand, or guess them.',
+  ].join('\n');
+}
+
+/**
+ * In-memory roll-up of live per-segment translation egress, flushed to ONE
+ * cloud-log entry (action:'translate-live'). Per-LINE logging would flood the
+ * 500-entry cloud-log cap (evicting the summary/qa records that matter) and
+ * churn the JSON file on every finalized line during a meeting. A change in
+ * (egress, provider, model) flushes the prior roll-up first, so no row mixes
+ * providers. METADATA ONLY — never the line text.
+ */
+interface LiveTranslateAgg {
+  config: LlmConfig;
+  egress: 'cloud' | 'local';
+  segments: number;
+  inChars: number;
+  outChars: number;
+  redactionTotal: number;
+  errors: number;
+}
+let liveAgg: LiveTranslateAgg | null = null;
+
+/** Auto-flush the roll-up once this many lines accumulate: bounds the in-memory
+ *  tally and limits how many lines a crash mid-meeting drops from the
+ *  (metadata-only) audit trail. */
+const LIVE_TRANSLATE_FLUSH_AFTER = 50;
+
+/** Accumulate one line's egress into the roll-up. Pure bookkeeping — no I/O
+ *  except the threshold flush. Errors are counted so the flushed entry's status
+ *  reflects them. */
+function recordLiveTranslate(args: {
+  config: LlmConfig;
+  egress: 'cloud' | 'local';
+  inChars: number;
+  outChars: number;
+  redactionTotal: number;
+  ok: boolean;
+}): void {
+  if (
+    liveAgg &&
+    (liveAgg.egress !== args.egress ||
+      liveAgg.config.provider !== args.config.provider ||
+      liveAgg.config.model !== args.config.model)
+  ) {
+    flushLiveTranslate();
+  }
+  if (!liveAgg) {
+    liveAgg = {
+      config: args.config,
+      egress: args.egress,
+      segments: 0,
+      inChars: 0,
+      outChars: 0,
+      redactionTotal: 0,
+      errors: 0,
+    };
+  }
+  liveAgg.segments += 1;
+  liveAgg.inChars += args.inChars;
+  liveAgg.outChars += args.outChars;
+  liveAgg.redactionTotal += args.redactionTotal;
+  if (!args.ok) liveAgg.errors += 1;
+  if (liveAgg.segments >= LIVE_TRANSLATE_FLUSH_AFTER) flushLiveTranslate();
+}
+
+/**
+ * Commit the live-translation roll-up to ONE metadata-only cloud-log entry and
+ * reset it. Idempotent — a no-op when nothing is pending. Called: when the
+ * provider/model/egress changes, on the size threshold, when the renderer
+ * signals live translation stopped (capture stop / toggle off), before any
+ * OTHER LLM action (so the log stays chronological), and on app quit. METADATA
+ * ONLY: the lines are never stored — only summed lengths + the redaction total +
+ * a content-free line COUNT in `detail`.
+ */
+export function flushLiveTranslate(): void {
+  const agg = liveAgg;
+  if (!agg) return;
+  liveAgg = null;
+  logCloudCall({
+    action: 'translate-live',
+    config: agg.config,
+    egress: agg.egress,
+    inChars: agg.inChars,
+    outChars: agg.outChars,
+    redactionTotal: agg.redactionTotal,
+    status: agg.errors > 0 ? 'error' : 'ok',
+    detail: `${agg.segments} line(s)` + (agg.errors > 0 ? `, ${agg.errors} failed` : ''),
+  });
+}
+
+/**
+ * Translate ONE finalized caption line into `targetLang` (ADR-0035, §3). The
+ * egress fork mirrors `translate`:
+ *   - LOCAL (loopback OpenAI-compatible) → send the line AS-IS, NO redaction
+ *     (zero egress — the RECOMMENDED setup for live translation).
+ *   - CLOUD (Anthropic / remote) → REDACT the line first (each finalized line is
+ *     content leaving the machine) and send only the redacted text.
+ *
+ * Does NOT append a cloud-log entry per call — that would flood the log on a
+ * long meeting; instead it accumulates into an AGGREGATE roll-up
+ * (`recordLiveTranslate`) flushed as one `translate-live` entry. On error a
+ * content-free `{ ok:false, detail }` (the error is counted into the roll-up).
+ * The renderer fires this per finalized segment ONLY when the user opted into
+ * live arbitrary-target translation.
+ *
+ * PRIVACY: the line and its translation are NEVER logged — only their lengths
+ * feed the roll-up. The provider layer guarantees no body leaks into logs or
+ * the thrown detail.
+ */
+export async function translateSegment(
+  req: TranslateSegmentReq,
+): Promise<TranslateSegmentResult> {
+  const text = typeof req?.text === 'string' ? req.text : '';
+  const targetLang = typeof req?.targetLang === 'string' ? req.targetLang.trim() : '';
+  const knownNames = Array.isArray(req?.knownNames)
+    ? req.knownNames.filter((n): n is string => typeof n === 'string')
+    : [];
+
+  if (text.trim().length === 0) {
+    return { ok: false, detail: 'Nothing to translate' };
+  }
+  if (targetLang.length === 0) {
+    return { ok: false, detail: 'No target language selected' };
+  }
+
+  const config = readConfig();
+  if (!config) {
+    return { ok: false, detail: 'No provider configured' };
+  }
+
+  const egress: 'cloud' | 'local' = isLocalEgress(config) ? 'local' : 'cloud';
+
+  let key: string | undefined;
+  try {
+    key = keystore.getKey(config.provider) ?? undefined;
+  } catch (err) {
+    const detail =
+      err instanceof KeyStorageUnavailableError
+        ? 'Key storage unavailable'
+        : 'Could not read stored key';
+    recordLiveTranslate({ config, egress, inChars: 0, outChars: 0, redactionTotal: 0, ok: false });
+    return { ok: false, detail };
+  }
+
+  // Fork: redact for cloud, pass through for local (zero egress).
+  const { text: userText, counts } =
+    egress === 'cloud' ? redact(text, knownNames) : { text, counts: freshZeroCounts() };
+
+  const provider = makeProvider(config, key);
+
+  try {
+    const { text: translation } = await provider.complete({
+      system: segmentTranslateSystemPrompt(targetLang),
+      user: userText,
+      maxTokens: SEGMENT_TRANSLATE_MAX_TOKENS,
+    });
+    recordLiveTranslate({
+      config,
+      egress,
+      inChars: userText.length,
+      outChars: translation.length,
+      redactionTotal: counts.total,
+      ok: true,
+    });
+    return { ok: true, translation, egress, redaction: counts };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : 'Translation failed';
+    recordLiveTranslate({
+      config,
+      egress,
+      inChars: userText.length,
+      outChars: 0,
+      redactionTotal: counts.total,
+      ok: false,
     });
     return { ok: false, detail };
   }
@@ -546,6 +753,8 @@ function freshZeroCounts(): RedactionCounts {
  * layer guarantees no request/response body leaks into logs or thrown detail.
  */
 export async function ask(req: AskReq): Promise<AskResult> {
+  // Commit any pending live-translation roll-up first (chronological log order).
+  flushLiveTranslate();
   // Coerce untrusted IPC input.
   const question = typeof req?.question === 'string' ? req.question : '';
   const scope: 'meeting' | 'vault' = req?.scope === 'vault' ? 'vault' : 'meeting';

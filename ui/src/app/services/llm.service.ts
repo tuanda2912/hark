@@ -25,6 +25,8 @@ import type {
   AskResult,
   TranslateReq,
   TranslateResult,
+  TranslateSegmentReq,
+  TranslateSegmentResult,
   CloudCallLogEntry,
 } from './llm.types';
 
@@ -221,6 +223,42 @@ export class LlmService {
   resetTranslation(): void {
     this.translation.set(null);
     this.translating.set(false);
+  }
+
+  // ─── Live per-segment translation (ADR-0035, §3) ────────────────────
+
+  /**
+   * Translate ONE finalized caption line to an arbitrary target via main
+   * (ADR-0035, §3 — live translation). Fired per finalized segment by
+   * LiveTranslationService when the user opted in. Main owns the cloud/local
+   * fork (cloud redacts the line, local sends as-is/zero-egress) and the
+   * AGGREGATED cloud-log entry. Returns a result (never throws — resolves
+   * `{ ok:false }` on any failure) so the orchestrator can quietly skip a line
+   * that didn't translate. No service signal: live translation state lives in
+   * LiveTranslationService + the per-segment `translation` field. No-op (a
+   * failure result) outside Electron.
+   */
+  async translateSegment(req: TranslateSegmentReq): Promise<TranslateSegmentResult> {
+    const llm = window.hark?.llm;
+    if (!llm) {
+      return { ok: false, detail: 'No model bridge available (running outside Electron).' };
+    }
+    try {
+      return await llm.translateSegment(req);
+    } catch (err) {
+      return {
+        ok: false,
+        detail: err instanceof Error ? err.message : 'translate failed',
+      };
+    }
+  }
+
+  /** Commit main's pending live-translation roll-up to its single aggregated
+   *  cloud-log entry. Called when live translation stops (capture stop / toggle
+   *  off) so the metadata-only audit entry lands promptly. Fire-and-forget;
+   *  guarded for `window.hark?.llm` — a no-op outside Electron. */
+  flushLiveTranslate(): void {
+    window.hark?.llm?.flushLiveTranslate();
   }
 
   // ─── Ask: this-meeting Q&A (Phase 6 slice 3) ────────────────────────

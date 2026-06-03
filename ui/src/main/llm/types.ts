@@ -202,6 +202,49 @@ export type TranslateResult =
     }
   | { ok: false; detail: string };
 
+// ─── Live per-segment translation (ADR-0035, translation §3) ──────────────
+//
+// Live translation to an ARBITRARY (non-English) target. As each FINALIZED
+// segment lands, the renderer sends ITS text here to be translated and shown
+// under the original (bilingual live view). Whisper's on-device `.translate`
+// only does English (§2); arbitrary targets go through the configured LLM —
+// reusing the SAME egress discipline as summarize/translate:
+//   - LOCAL (loopback) → send the line as-is, zero egress (the RECOMMENDED setup
+//     for live translation).
+//   - CLOUD → REDACT the line first (each finalized line is content leaving the
+//     machine), and it's an OPT-IN, egress-disclosed mode.
+// Logging is AGGREGATED, not per-call: hundreds of lines per meeting would
+// flood the 500-entry cloud-log + churn disk. See `recordLiveTranslate` /
+// `flushLiveTranslate` in index.ts — one rolled-up `translate-live` entry.
+
+/** A single-segment translate request: the finalized line's TEXT, the target
+ *  language NAME (e.g. "Vietnamese"), and the roster's applied display-names so
+ *  the redactor can collapse them on a CLOUD send. Live segments are
+ *  speaker-unlabeled (diarization is post-stop), so `knownNames` is usually
+ *  empty — redaction still runs its pattern detectors. Text only — never audio. */
+export interface TranslateSegmentReq {
+  text: string;
+  /** Human language name to translate INTO (e.g. "Thai"). */
+  targetLang: string;
+  knownNames?: string[];
+}
+
+/**
+ * Result of a single-segment translate. Mirrors TranslateResult but lighter —
+ * no echoed targetLang/model (the caller knows the target; the egress kind is
+ * what matters for the live indicator). On success the `translation` text + the
+ * egress kind + a redaction receipt (the line's per-category counts on cloud;
+ * all-zero on local). On failure a short, content-free `detail`.
+ */
+export type TranslateSegmentResult =
+  | {
+      ok: true;
+      translation: string;
+      egress: 'cloud' | 'local';
+      redaction: RedactionCounts;
+    }
+  | { ok: false; detail: string };
+
 /**
  * One entry in the local cloud-call activity log (ADR-0031 §4). METADATA
  * ONLY — there is deliberately NO transcript/summary/question/answer field.
@@ -212,7 +255,9 @@ export type TranslateResult =
  */
 export interface CloudCallLogEntry {
   ts: string;
-  /** The action that triggered the call: 'summary' (Slice 2) or 'qa' (Slice 3). */
+  /** The action that triggered the call: 'summary', 'qa', 'qa-vault',
+   *  'translate' (whole transcript), or 'translate-live' (the AGGREGATED
+   *  per-segment live-translation roll-up — one entry covers N finalized lines). */
   action: string;
   provider: string;
   model: string;

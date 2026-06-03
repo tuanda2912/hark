@@ -51,6 +51,8 @@ import type {
   AskResult,
   TranslateReq,
   TranslateResult,
+  TranslateSegmentReq,
+  TranslateSegmentResult,
   CloudCallLogEntry,
 } from './llm.types';
 
@@ -128,6 +130,17 @@ declare global {
          * sees the key, and persists nothing.
          */
         ask(req: AskReq): Promise<AskResult>;
+        /**
+         * Translate ONE finalized caption line to an arbitrary target (ADR-0035,
+         * §3 — live translation). Fired per finalized segment when the user
+         * opted in. Same egress model as the other calls: CLOUD redacts the line
+         * first, LOCAL (loopback) sends it as-is (zero egress). Egress is
+         * AGGREGATED into one metadata-only cloud-log entry — never one per line.
+         */
+        translateSegment(req: TranslateSegmentReq): Promise<TranslateSegmentResult>;
+        /** Commit the pending live-translation roll-up to its single aggregated
+         *  cloud-log entry (called when live translation stops). Fire-and-forget. */
+        flushLiveTranslate(): void;
         /** Read the local cloud-activity log (metadata only — never content)
          *  for Settings → Privacy. */
         getCloudLog(): Promise<CloudCallLogEntry[]>;
@@ -220,6 +233,17 @@ export class EngineService {
   readonly bookmarkCreated$ = new Subject<BookmarkCreatedPayload>();
   /** Fired once per meeting when the engine reports a vault write complete. */
   readonly meetingSaved$ = new Subject<MeetingSavedPayload>();
+
+  /**
+   * Fired each time a `segment.final` lands during a LIVE capture — the hook
+   * LiveTranslationService listens on to translate finalized lines to an
+   * arbitrary target (ADR-0035, §3). Deliberately NOT fired by the post-stop
+   * `meeting.transcript` swap (those clean labeled lines are §1's job, not live
+   * per-segment translation), so the orchestrator only ever sees genuine live
+   * finals. Emits the merged DisplayedSegment so a listener has the
+   * utteranceId + text + speaker without re-reading the map.
+   */
+  readonly segmentFinalized$ = new Subject<DisplayedSegment>();
 
   /**
    * The most recent `meeting.saved` payload, retained so a component that
@@ -824,7 +848,7 @@ export class EngineService {
     // Replace-by-utterance-id semantics — matches harkd's contract.
     // A `segment.final` with the same utterance_id as a prior partial
     // mutates the row in place and flips its isFinal flag.
-    this.segmentsMap.set(p.utterance_id, {
+    const seg: DisplayedSegment = {
       utteranceId: p.utterance_id,
       segmentId: p.segment_id,
       tStart: p.t_start,
@@ -834,7 +858,31 @@ export class EngineService {
       speaker: p.speaker,
       translation: p.translation,
       isFinal,
-    });
+    };
+    this.segmentsMap.set(p.utterance_id, seg);
+    this._segmentsTick.update((v) => v + 1);
+    // Live per-segment translation hook (ADR-0035, §3): notify listeners ONLY
+    // on a final (never partials — bounds the LLM call count). The orchestrator
+    // dedupes by utteranceId and writes any translation back via
+    // setSegmentTranslation(). Emitted after the map update so a synchronous
+    // listener reading segments() sees this line.
+    if (isFinal) this.segmentFinalized$.next(seg);
+  }
+
+  /**
+   * Set the live translation for a displayed segment by utterance id (ADR-0035,
+   * §3). Called by LiveTranslationService when a per-segment translation comes
+   * back from main. A NO-OP if the segment is gone (superseded, or the view was
+   * cleared / swapped for the post-stop labeled transcript) — so a late
+   * translation for a retracted line can't resurrect it. Bumps the tick so the
+   * `segments()` computed re-evaluates and the line re-renders with its
+   * translation under the original. Never networks — main produced the text.
+   */
+  setSegmentTranslation(utteranceId: string, translation: string): void {
+    const seg = this.segmentsMap.get(utteranceId);
+    if (!seg) return;
+    if (seg.translation === translation) return;
+    this.segmentsMap.set(utteranceId, { ...seg, translation });
     this._segmentsTick.update((v) => v + 1);
   }
 }

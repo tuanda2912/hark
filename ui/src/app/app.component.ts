@@ -26,6 +26,10 @@ import { PreferencesService } from './services/preferences.service';
 import { LlmService } from './services/llm.service';
 import { RetrievalService } from './services/retrieval.service';
 import {
+  LiveTranslationService,
+  LIVE_TRANSLATE_TARGETS,
+} from './services/live-translation.service';
+import {
   LANGUAGE_CHOICES,
   DisplayedSegment,
   MeetingSavedPayload,
@@ -79,6 +83,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly prefs = inject(PreferencesService);
   private readonly llm = inject(LlmService);
   private readonly retrieval = inject(RetrievalService);
+  private readonly live = inject(LiveTranslationService);
 
   /** True when vault Ask is routed to the EXTERNAL retrieval backend (ADR-0033/
    *  0034) — drives the Ask panel's index indicator (external shows a backend
@@ -236,6 +241,51 @@ export class AppComponent implements OnInit, OnDestroy {
    *  spoken language shows up as English captions (and the saved transcript is
    *  English). Locked at capture.start, like the source/language selectors. */
   readonly liveTranslate = signal(false);
+
+  // ─── Live translate → arbitrary target (ADR-0035, translation §3) ────
+  //
+  // For NON-English live targets there's no on-device model (NLLB deferred), so
+  // each FINALIZED line goes through the configured LLM via LiveTranslationService
+  // (the renderer makes no network call — main is the egress chokepoint). A LOCAL
+  // model = zero egress (recommended); a CLOUD model sends each finalized line
+  // (redacted), so the picker discloses that. Mutually exclusive with → EN (§2)
+  // and, like it, locked while capturing (chosen before Start).
+
+  /** Offered live targets (non-English; English is the §2 on-device path). */
+  readonly liveTargets = LIVE_TRANSLATE_TARGETS;
+  /** Selected live target NAME, or null when off. */
+  readonly liveTarget = this.live.targetLang;
+  /** True when live arbitrary-target translation is on. */
+  readonly liveTranslateArbitrary = this.live.enabled;
+  /** Whether the configured model would send each line to the cloud (vs a local
+   *  loopback model = zero egress). Drives the honesty hint + tooltip. */
+  readonly liveUsesCloud = this.live.usesCloud;
+
+  /**
+   * The user picked a live target (or "off"). Sets it on LiveTranslationService
+   * and, because §2 (→ EN) and §3 are mutually exclusive, turns → EN OFF when a
+   * target is chosen. A no-op selection ("") clears the target (and commits the
+   * cloud-log roll-up). Locked during capture via the template `disabled`.
+   */
+  onLiveTargetChange(name: string): void {
+    const next = name && name.length > 0 ? name : null;
+    if (next) this.liveTranslate.set(false);
+    this.live.setTargetLang(next);
+  }
+
+  /** Tooltip for the live-target picker — honest about egress for the current
+   *  model. */
+  liveTargetTitle(): string {
+    if (!this.modelConfigured()) {
+      return 'Configure a model in Settings to translate live to other languages.';
+    }
+    if (this.liveTranslateArbitrary()) {
+      return this.liveUsesCloud()
+        ? 'Live translation on: each finalized line is sent to your cloud model (redacted) as it lands. Switch to a local model to keep it on-device.'
+        : 'Live translation on: translated on your local model — nothing leaves your Mac.';
+    }
+    return 'Translate live captions into another language using your configured model. A local model keeps everything on-device; a cloud model sends each finalized line (redacted). Mutually exclusive with → EN.';
+  }
 
   /** Settings modal visibility. Toggled by the gear button + ⌘, . */
   readonly settingsOpen = signal(false);
@@ -792,9 +842,13 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   /** Toggle live → English translation (§2). Locked while capturing (the decode
-   *  task is fixed at capture.start). */
+   *  task is fixed at capture.start). Turning it ON clears any §3 arbitrary-target
+   *  selection — the two live-translation modes are mutually exclusive. */
   toggleLiveTranslate(): void {
-    if (!this.isCapturing()) this.liveTranslate.update((v) => !v);
+    if (this.isCapturing()) return;
+    const next = !this.liveTranslate();
+    this.liveTranslate.set(next);
+    if (next) this.live.setTargetLang(null);
   }
 
   /** Re-evaluate whether to keep following the tail from the user's scroll

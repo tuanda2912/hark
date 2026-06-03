@@ -14,7 +14,7 @@ import { spawnHarkd, HarkdHandle } from './harkd-spawn';
 import { HarkTray, TrayState } from './tray';
 import { loadPrefs, savePrefs, getPrefsPath, Prefs } from './prefs';
 import * as llm from './llm';
-import type { LlmStatus, LlmTestResult, SummarizeResult, AskResult, TranslateResult, CloudCallLogEntry } from './llm/types';
+import type { LlmStatus, LlmTestResult, SummarizeResult, AskResult, TranslateResult, TranslateSegmentResult, CloudCallLogEntry } from './llm/types';
 import * as rag from './rag';
 import type { RetrievedChunk, RagConnectionResult } from './rag/types';
 
@@ -567,6 +567,31 @@ ipcMain.handle('hark:llm:ask', (_ev, raw: unknown): Promise<AskResult> => {
   return llm.ask({ question, scope, transcript, context, knownNames });
 });
 
+// Translate ONE finalized caption line to an arbitrary target (ADR-0035, §3 —
+// live translation). Fired by the renderer per finalized segment ONLY when the
+// user opted into live arbitrary-target translation. Same egress model as
+// translate — CLOUD redacts the line first, LOCAL sends as-is (zero egress, the
+// recommended setup). Does NOT log per call: egress is AGGREGATED into one
+// 'translate-live' cloud-log entry (see llm.flushLiveTranslate) so a long
+// meeting can't flood the log. Untrusted payload coerced here.
+ipcMain.handle('hark:llm:translate-segment', (_ev, raw: unknown): Promise<TranslateSegmentResult> => {
+  const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const text = typeof o['text'] === 'string' ? o['text'] : '';
+  const targetLang = typeof o['targetLang'] === 'string' ? o['targetLang'] : '';
+  const knownNames = Array.isArray(o['knownNames'])
+    ? o['knownNames'].filter((n): n is string => typeof n === 'string')
+    : undefined;
+  return llm.translateSegment({ text, targetLang, knownNames });
+});
+
+// Commit the pending live-translation roll-up to its single aggregated cloud-log
+// entry. Fire-and-forget (no reply); the renderer calls it when live translation
+// stops (capture stop / toggle off) so the audit entry lands promptly instead of
+// waiting for the size threshold or the next LLM action.
+ipcMain.on('hark:llm:flush-live-translate', () => {
+  llm.flushLiveTranslate();
+});
+
 // Read the local cloud-call activity log (Settings → Privacy). METADATA ONLY —
 // lengths/ids/status, never transcript or summary content.
 ipcMain.handle('hark:llm:get-cloud-log', (): CloudCallLogEntry[] => {
@@ -628,6 +653,10 @@ app.on('before-quit', async (ev) => {
   // A real quit is underway — make sure the window's close handler stops
   // intercepting (it checks isQuitting) and tear down harkd + the tray.
   isQuitting = true;
+  // Commit any pending live-translation roll-up so a quit mid-meeting still
+  // records its (metadata-only) aggregate egress entry. No-op when nothing's
+  // pending; never throws (the log append swallows its own errors).
+  llm.flushLiveTranslate();
   // Persist the final bounds now: the window may be hidden (so its `close`
   // event won't fire on quit) or about to be destroyed. Safe to call with a
   // live window; no-ops once destroyed.

@@ -166,6 +166,39 @@ export type TranslateResult =
     }
   | { ok: false; detail: string };
 
+// ─── Live per-segment translation (ADR-0035, translation §3) ─────────────────
+//
+// Live translation to an ARBITRARY (non-English) target. As each FINALIZED
+// caption segment lands, the renderer sends ITS text to main to translate via
+// the configured LLM (Whisper's on-device `.translate` only does English — §2),
+// and shows the result UNDER the original line (bilingual live view). Same
+// egress model as the other LLM calls: CLOUD redacts each line first + the
+// egress is AGGREGATED into one metadata-only log entry; LOCAL (loopback) sends
+// as-is (zero egress — the recommended setup). Keep in lockstep with main's
+// TranslateSegmentReq / TranslateSegmentResult.
+
+/** What the renderer sends main to translate ONE finalized line: the line TEXT,
+ *  the target language NAME (e.g. "Vietnamese"), and the applied speaker names
+ *  for the redactor (usually empty live — diarization is post-stop). */
+export interface TranslateSegmentReq {
+  text: string;
+  /** Human language name to translate INTO (e.g. "Thai"). */
+  targetLang: string;
+  knownNames?: string[];
+}
+
+/** Result of a `translateSegment()` call. Lighter than TranslateResult — no
+ *  echoed targetLang/model (the caller knows the target; the egress kind is what
+ *  the live indicator needs). On failure a short, content-free `detail`. */
+export type TranslateSegmentResult =
+  | {
+      ok: true;
+      translation: string;
+      egress: 'cloud' | 'local';
+      redaction: RedactionCounts;
+    }
+  | { ok: false; detail: string };
+
 /**
  * One row of the local cloud-activity log (ADR-0031). Metadata ONLY — the
  * transcript content is never logged. Both cloud and local actions are

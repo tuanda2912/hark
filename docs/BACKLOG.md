@@ -290,17 +290,26 @@ rest. Three pieces, easiest first:
   view (that would be 2× inference per window + threading a translation field through the ledger).
   - *Bilingual original+English (pick up):* if users want the source text AND English side-by-side,
     run a second `.transcribe` pass and fill `segment.translation` — its own slice (2× RTF).
-- **Live → arbitrary language (the real lift) — DESIGN-PROPOSED ([ADR-0035](decisions/0035-live-translation-arbitrary-target.md)), build pending sign-off.**
-  Per-segment MT for any pair (English→Thai, Thai→Vietnamese, …). ADR-0035 weighs three options and
-  **recommends Option C: opt-in per-segment translation of FINALIZED segments via the
-  already-configured LLM** (renderer → main, reusing §1's egress governance; **local model ⇒ zero
-  egress**; cloud = disclosed per-segment egress, so opt-in + local recommended), filling
-  `segment.translation` for the bilingual live view. **Deferred:** (A) **NLLB-200 CoreML in the
-  engine** — zero egress + 200 langs but **~3.2 GB** + seq2seq latency; (B) **Apple Translation
-  framework** — free/on-device/macOS-14.4 BUT a **purely SwiftUI API** (no standalone
-  `TranslationSession`), architecturally incompatible with the headless NIO engine + Electron UI.
-  End-of-meeting → any language is already covered by §1. See ADR-0035 for the test plan (what
-  Claude can test headless vs what needs an on-device run).
+- **Live → arbitrary language (the real lift) — IMPLEMENTED via Option C ([ADR-0035](decisions/0035-live-translation-arbitrary-target.md)), 2026-06-03; on-device confirmation pending.**
+  Per-segment translation for any pair (Thai→Vietnamese, …) of FINALIZED segments via the
+  already-configured LLM. A new renderer `LiveTranslationService` listens on
+  `EngineService.segmentFinalized$` (finals only — never partials, never the post-stop transcript
+  swap), calls main's new `llm.translateSegment`, and writes back via `setSegmentTranslation` →
+  fills `segment.translation` for the bilingual live view. **Reuses §1's egress governance:** cloud
+  redacts each line first, **local (loopback) model ⇒ zero egress**. A non-English target **picker**
+  next to `→ EN` (mutually exclusive with it, locked during capture); discloses egress inline
+  (`↑ cloud · redacted` vs `on-device`). Per-segment cloud egress is **aggregated** into ONE
+  metadata-only `translate-live` cloud-log entry (not one row per line — would flood the 500-cap +
+  churn disk). No engine change, no model shipped. **Automated gates green** (build + privacy-audit
+  PASS); **needs the user:** live non-English audio → confirm translated captions + latency feel +
+  a local-model zero-egress run. **Deferred alternatives:** (A) **NLLB-200 CoreML in the engine** —
+  zero egress + 200 langs but **~3.2 GB** + seq2seq latency; (B) **Apple Translation framework** —
+  free/on-device/macOS-14.4 BUT a **purely SwiftUI API** (no standalone `TranslationSession`),
+  architecturally incompatible with the headless NIO engine + Electron UI. End-of-meeting → any
+  language is already covered by §1.
+  - *Future enhancements:* persist live per-segment translations (today the saved transcript stays
+    the original — use §1 for a translated copy); allow mid-meeting toggling (the service already
+    supports it — only the UI locks it during capture for §2-consistency).
 
 ## i18n / model quality
 

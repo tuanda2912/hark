@@ -18,6 +18,8 @@ import type {
   AskResult,
   TranslateReq,
   TranslateResult,
+  TranslateSegmentReq,
+  TranslateSegmentResult,
   CloudCallLogEntry,
 } from './llm/types';
 import type { RetrievedChunk, RagConnectionResult } from './rag/types';
@@ -229,6 +231,29 @@ contextBridge.exposeInMainWorld('hark', {
           ? req.knownNames.filter((n): n is string => typeof n === 'string')
           : undefined,
       });
+    },
+
+    /** Translate ONE finalized caption line to an arbitrary target (ADR-0035,
+     *  §3 — live translation). Fired per finalized segment when the user opted
+     *  in. CLOUD redacts the line first; LOCAL (loopback) sends it as-is (zero
+     *  egress — the recommended setup). Re-shaped to whitelisted fields; main
+     *  re-coerces. Resolves a TranslateSegmentResult (translation + content-free
+     *  egress/redaction receipt, or { ok:false, detail }). */
+    translateSegment(req: TranslateSegmentReq): Promise<TranslateSegmentResult> {
+      return ipcRenderer.invoke('hark:llm:translate-segment', {
+        text: typeof req?.text === 'string' ? req.text : '',
+        targetLang: typeof req?.targetLang === 'string' ? req.targetLang : '',
+        knownNames: Array.isArray(req?.knownNames)
+          ? req.knownNames.filter((n): n is string => typeof n === 'string')
+          : undefined,
+      });
+    },
+
+    /** Commit the pending live-translation roll-up to its single aggregated
+     *  cloud-log entry (the renderer calls this when live translation stops, so
+     *  the metadata-only audit entry lands promptly). Fire-and-forget. */
+    flushLiveTranslate(): void {
+      ipcRenderer.send('hark:llm:flush-live-translate');
     },
 
     /** Read the local cloud-call activity log (Settings → Privacy). Resolves

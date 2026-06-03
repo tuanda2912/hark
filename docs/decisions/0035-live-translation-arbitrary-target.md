@@ -1,7 +1,7 @@
 # ADR-0035: Live translation to an arbitrary target language — per-segment LLM (opt-in), defer local MT model + Apple Translation
 
 - **Date:** 2026-06-03
-- **Status:** Proposed (recommendation pending sign-off — no code yet)
+- **Status:** Accepted — Option C implemented (automated gates green; on-device confirmation pending)
 - **Deciders:** Dang Anh Tuan
 
 ## Context
@@ -80,6 +80,50 @@ Rationale: §3 is a secondary, advanced feature; Option C ships it with the LEAS
 the audited egress path, honors local-first (local model = zero egress), and avoids a 3.2 GB model
 or a SwiftUI host. End-of-meeting arbitrary-target (the more common ask) is already covered by §1.
 
+## Implementation notes (as built)
+
+- **Renderer-orchestrated, engine untouched.** A new `LiveTranslationService`
+  (renderer) listens on `EngineService.segmentFinalized$` — fired ONLY on
+  `segment.final`, never partials, never the post-stop `meeting.transcript` swap
+  — and for each finalized line calls main's new `llm.translateSegment`, then
+  writes the result back via `EngineService.setSegmentTranslation` (fills
+  `segment.translation`, shown under the original by `TranscriptLine`). The Swift
+  engine has NO change: it still emits only the original text. No new model is
+  shipped (contrast Option A's NLLB).
+- **Egress chokepoint reuse.** `translateSegment` forks identically to
+  `summarize`/`translate`: LOCAL (loopback) → send the line as-is, zero egress;
+  CLOUD → `redact(line, knownNames)` first. `knownNames` is empty live
+  (diarization is post-stop), so the regex detectors do the scrubbing. Privacy
+  audit: PASS (matches the previously-audited path line-for-line).
+- **Aggregated cloud-log (not per-line).** Live translation can fire hundreds of
+  times per meeting; one cloud-log row per line would flood the 500-entry cap
+  (evicting summary/qa records) and churn the JSON file on every line. So
+  per-segment egress is **rolled up in memory** (`recordLiveTranslate`) and
+  flushed as ONE metadata-only `translate-live` entry (`flushLiveTranslate`) —
+  summed in/out chars + redaction total + a line COUNT in `detail`, never
+  content. Flushed on: provider/model/egress change, a 50-line threshold, the
+  renderer's stop signal (capture stop / toggle off), before any other LLM
+  action (chronological ordering), and `before-quit`.
+  - *Accepted gap (LOW):* a hard crash between flushes drops ≤~49 lines' worth of
+    *metadata* from the local egress ledger — the egress already happened over
+    the wire; only the local accounting is lost. No content is ever at risk.
+- **Per-line cloud egress is the accepted cost.** A cloud model means one
+  redacted round-trip per finalized line (volume + cost). This is OPT-IN and
+  egress-disclosed: the picker shows `↑ cloud · redacted` vs `on-device` and the
+  tooltip states it plainly; a LOCAL model is recommended and surfaced. Never a
+  silent default.
+- **Mutual exclusion + UI lock.** §3 (a non-English target picker) is mutually
+  exclusive with §2 (`→ EN`, on-device) — choosing one clears the other — and is
+  locked during capture (chosen before Start), matching §2 for consistency. The
+  lock is a UX choice, NOT a privacy requirement (every line sent goes through
+  the same redact-on-cloud fork regardless); `LiveTranslationService` is
+  deliberately *capable* of mid-meeting toggling, so enabling that later is a
+  template change, not a service change.
+- **English excluded from the §3 picker.** English is the §2 on-device path
+  (free, zero-egress, strictly better); the §3 list is non-English only. Lines
+  the engine detects as already in the target language are skipped (the model
+  would just echo them).
+
 ## Consequences
 
 **Positive** — no new model/dependency/process; reuses the provider + egress governance + the
@@ -88,24 +132,28 @@ existing translation wire/UI; local model ⇒ zero egress; works immediately wit
 finalized-only, local recommended); latency on cloud; live arbitrary translations aren't persisted
 (use §1). Quality is the LLM's (generally strong) rather than a dedicated MT model.
 
-## Test plan (for the eventual implementation — this ADR ships NO code)
+## Test plan / results
 
-**I (Claude) can test, automated/headless:**
-- The main per-segment `translate` path (unit/build typecheck; it's a near-clone of `llm.translate`).
-- Egress discipline via the **privacy-auditor** (cloud redacts each segment, metadata-only log,
-  local zero-egress) — same gate §1 passed.
-- The renderer orchestration logic (finalized-only gating, filling `segment.translation`) — build +
-  logic review; a non-Electron unit check if a runner exists.
-- Full `npm run build` + the engine test suite (no engine change expected for Option C).
+**Automated gates — DONE (green):**
+- `npm run build` — renderer AOT typecheck + main `tsc` both compile clean.
+- **privacy-auditor: PASS** — `translateSegment`'s egress fork matches the audited
+  `summarize`/`translate` (cloud redacts each line, local zero-egress); the aggregated
+  `translate-live` cloud-log entry is metadata-only and still discloses volume; nothing persists
+  outside allowed surfaces; no new socket/dependency/telemetry; engine unchanged. Three LOW notes,
+  all folded into "Implementation notes" above (none blocking).
+- Logic review of the renderer orchestration (finalized-only gating, dedupe-by-utterance-id,
+  fill `segment.translation`, mutual exclusion with §2). No UI unit-test runner exists in the
+  project (no jest/vitest), so the build's AOT typecheck is the automated ceiling here.
 
-**Needs YOU (live audio + eyes + a configured model — I can't do headlessly):**
-- The actual live experience: toggle on, pick a target, **speak/play non-English audio**, and
-  confirm translated captions appear under the originals in the chosen language.
+**Needs the user (live audio + eyes + a configured model — not doable headlessly):**
+- The actual live experience: pick a non-English target, **speak/play audio**, confirm translated
+  captions appear under the originals in the chosen language.
 - Latency feel (is finalized-segment translation "live enough"?) and a real local-model run
-  (Ollama) confirming zero egress in the cloud-activity log.
+  (Ollama) confirming `on-device` + zero new cloud-log egress; a cloud run confirming the
+  `↑ cloud · redacted` hint + one aggregated `translate-live` log entry on stop.
 
-**Done = both:** the automated gates green AND your on-device confirmation. Per your standing note,
-nothing gets marked done on the build alone.
+**Done = both:** the automated gates (green) AND on-device confirmation (pending). Per the standing
+note, this is NOT marked shipped on the build alone.
 
 ## References
 
