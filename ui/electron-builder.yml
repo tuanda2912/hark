@@ -1,5 +1,6 @@
-# Hark — electron-builder configuration (DRAFT — see PLAN, not yet wired into
-# package.json scripts; needs `npm i -D electron-builder @electron/notarize`).
+# Hark — electron-builder configuration. Wired into package.json `pack`/`dist`
+# (both run `build:engine` → `swift build -c release` FIRST, so the bundled
+# harkd is never stale, then build the renderer+main, then electron-builder).
 #
 # Privacy posture (CLAUDE.md): NO auto-update, NO telemetry, NO publish target.
 # This config builds a signed, notarization-READY .app + dmg + zip and stops.
@@ -32,8 +33,8 @@ files:
 # file. It lands at Contents/Resources/engine/harkd inside the .app, which is
 # what harkd-spawn.ts resolves to in prod (process.resourcesPath + engine/harkd).
 #
-# NOTE: the path below is the engine release build. CI/build script must run
-# `cd engine && swift build -c release` (arm64) FIRST. For a universal app
+# NOTE: the path below is the engine release build. The `pack`/`dist` npm
+# scripts run `build:engine` (`swift build -c release`, arm64) FIRST. For a universal app
 # the binary must be a `lipo`-merged arm64+x86_64 fat Mach-O — see PLAN §A
 # (decision pending; arm64-only is the recommended v1 default).
 extraResources:

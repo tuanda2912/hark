@@ -19,8 +19,9 @@
     "dev:electron": "wait-on http://localhost:4200 && electron .",
     "dev": "concurrently -k -n ng,tsc,el -c blue,yellow,magenta \"npm:dev:renderer\" \"npm:dev:main\" \"npm:dev:electron\"",
     "clean": "rm -rf dist .angular release",
-    "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder --mac"
+    "build:engine": "cd ../engine && swift build -c release",
+    "pack": "npm run build:engine && npm run build && electron-builder --dir",
+    "dist": "npm run build:engine && npm run build && electron-builder --mac"
   },
   "dependencies": {
     "@angular/animations": "^21.0.0",
