@@ -259,7 +259,10 @@ Phase 4 surfaces" carries the live detail; summary:
 - **Settings → Privacy pane extras** — redaction toggles, voiceprint folder, cloud-calls
   log. Slot in as their backing features land.
 - **Remaining design atoms** — `SpeakerTag`, `Eyebrow`, `Toggle`, `CitationChip`.
-- **Light theme** — the design has dark + light; we ship dark only so far.
+- ~~**Light theme**~~ — **DONE (2026-06-03, `e84cb21`).** Settings → Appearance toggle
+  (System / Light / Dark, default System = follow macOS); `ThemeService` flips `<html data-theme>`,
+  the existing dark+light tokens cascade. *Pending the user:* eyeball each screen in light against
+  the design screenshots (02/08/10/12/16/21/24).
 - **Wikilink `[[term]]` parsing** in the transcript — vault-linking, a later phase.
 
 ## Translation (designed, deferred behind RAG — user 2026-06-03)

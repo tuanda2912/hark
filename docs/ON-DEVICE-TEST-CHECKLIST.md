@@ -85,6 +85,25 @@ Use **Test connection** in Settings first — it should say OK.
 - [ ] **Cloud redaction:** a cloud summary of a transcript containing an email /
       phone / amount should report N redactions in the receipt.
 
+## 8. Light / dark theme  ⟵ NEW (today, `e84cb21`)
+- [ ] **Settings → Appearance → Theme** has **System / Light / Dark**. Default is
+      **System** (follows your macOS Light/Dark setting).
+- [ ] Switch to **Light** → the whole app repaints to the light palette instantly
+      (no restart). Switch to **Dark** → back. Switch to **System** → matches your
+      Mac; flip macOS appearance and confirm Hark follows live.
+- [ ] **Eyeball each screen in light** against the design screenshots (in
+      `hark-docs/docs/design/ui/screenshots/`): `02-mw-light`, `08-rev-light`,
+      `10-qa-light`, `12-set-light`, `16-ob-1-trust-light`, `21-comp-light`,
+      `24-st-tagging-modal-light`. Flag anything that looks off (contrast, a
+      stuck-dark element) — components are token-driven so it should "just work,"
+      but light mode hasn't had a human pass yet.
+- [ ] The choice **persists across restarts**.
+
+> Bonus (also fixed today): the **external vault-search backend** choice
+> (Settings → Vault search → External) now persists across restarts — it was
+> silently reverting to Built-in before. If you test external RAG, confirm it
+> stays selected after a relaunch.
+
 ---
 
 ## Notes for next session (Phase 7 — packaging/notarization)
