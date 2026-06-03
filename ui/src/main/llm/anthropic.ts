@@ -115,7 +115,10 @@ export class AnthropicProvider implements LlmProvider {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), LLM_COMPLETE_TIMEOUT_MS);
+    const timer = setTimeout(
+      () => controller.abort(),
+      req.timeoutMs ?? LLM_COMPLETE_TIMEOUT_MS,
+    );
 
     try {
       const res = await fetch(ANTHROPIC_MESSAGES_URL, {

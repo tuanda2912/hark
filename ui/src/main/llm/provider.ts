@@ -16,10 +16,19 @@ import type { LlmConfig, LlmTestResult } from './types';
  *  A misconfigured/dead endpoint must not hang main — we abort after this. */
 export const LLM_REQUEST_TIMEOUT_MS = 15_000;
 
-/** Network timeout for a completion (summary). Summaries process the whole
- *  transcript, so they're materially slower than the ping; allow more headroom
- *  while still capping the worst case so a hung endpoint can't block main. */
+/** Default network timeout for an INTERACTIVE completion (Q&A, a single live
+ *  translation line). These bound a small response, so they finish quickly; the
+ *  cap keeps a hung endpoint from blocking main. */
 export const LLM_COMPLETE_TIMEOUT_MS = 60_000;
+
+/** Network timeout for a HEAVY whole-transcript completion (end-of-meeting
+ *  summary / translation). These can emit thousands of tokens, and a LOCAL
+ *  model (Ollama/llama.cpp) generates them at tens of tokens/sec — minutes for
+ *  a long meeting. The 60s interactive cap would abort a perfectly healthy
+ *  long generation (the "translate times out" bug). 10 minutes comfortably
+ *  covers a max-length local generation while still capping a truly hung
+ *  endpoint. Cloud responds far faster, so this just sits unused there. */
+export const LLM_LONG_COMPLETE_TIMEOUT_MS = 600_000;
 
 /**
  * A non-streaming completion request. System + user are the two prompt parts;
@@ -31,6 +40,11 @@ export interface CompleteReq {
   system: string;
   user: string;
   maxTokens: number;
+  /** Optional per-call abort timeout (ms). Defaults to LLM_COMPLETE_TIMEOUT_MS
+   *  (interactive). Heavy whole-transcript ops (summary/translate) pass
+   *  LLM_LONG_COMPLETE_TIMEOUT_MS so a slow LOCAL model isn't cut off mid-
+   *  generation. */
+  timeoutMs?: number;
 }
 
 /** Result of a non-streaming completion: the assembled response text only. */

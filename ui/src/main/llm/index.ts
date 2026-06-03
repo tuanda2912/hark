@@ -27,7 +27,7 @@ import type {
 import { LLM_PROVIDER_IDS } from './types';
 import * as keystore from './keystore';
 import { KeyStorageUnavailableError } from './keystore';
-import { makeProvider } from './provider';
+import { makeProvider, LLM_LONG_COMPLETE_TIMEOUT_MS } from './provider';
 import { redact } from './redaction';
 import { appendCloudCall, readCloudLog } from './cloud-log';
 
@@ -301,6 +301,9 @@ export async function summarize(req: SummarizeReq): Promise<SummarizeResult> {
       system: SUMMARY_PROMPT,
       user: userText,
       maxTokens: SUMMARY_MAX_TOKENS,
+      // Whole-transcript op — a slow LOCAL model needs more than the 60s
+      // interactive cap (see LLM_LONG_COMPLETE_TIMEOUT_MS).
+      timeoutMs: LLM_LONG_COMPLETE_TIMEOUT_MS,
     });
     logCloudCall({
       action: 'summary',
@@ -425,6 +428,10 @@ export async function translate(req: TranslateReq): Promise<TranslateResult> {
       system: translateSystemPrompt(targetLang),
       user: userText,
       maxTokens: TRANSLATE_MAX_TOKENS,
+      // Whole-transcript translation can emit up to TRANSLATE_MAX_TOKENS (8192);
+      // on a LOCAL model that's minutes, so it needs the long timeout — this is
+      // the fix for "translate times out" while Q&A (small + interactive) is fine.
+      timeoutMs: LLM_LONG_COMPLETE_TIMEOUT_MS,
     });
     logCloudCall({
       action: 'translate',

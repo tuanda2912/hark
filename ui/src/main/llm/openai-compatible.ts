@@ -127,7 +127,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), LLM_COMPLETE_TIMEOUT_MS);
+    const timer = setTimeout(
+      () => controller.abort(),
+      req.timeoutMs ?? LLM_COMPLETE_TIMEOUT_MS,
+    );
 
     try {
       const res = await fetch(url, {
