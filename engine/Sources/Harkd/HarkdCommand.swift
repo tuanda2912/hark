@@ -109,6 +109,46 @@ struct HarkdCommand: AsyncParsableCommand {
             Task { await session.emitModelProgress(phase: phase, fraction: fraction, detail: detail) }
         }
 
+        // Bring up vault-RAG (embedder + index) CONCURRENTLY with the speech /
+        // diarizer loads below — a detached Task launched BEFORE the WhisperKit
+        // await, so vault search never waits behind the multi-minute large-v3
+        // ANE compile (RAG is independent of capture; the embedder is small).
+        // NON-FATAL: a failed embedder load disables ONLY vault search
+        // (rag.retrieve → RAG_UNAVAILABLE); capture + live transcription are
+        // unaffected. The index cold-builds / reconciles in the background and an
+        // FSEvents watcher (30 s debounce, content-hash gated) keeps it fresh.
+        // `session` (actor) + `onModelProgress` (@Sendable) are safe to capture.
+        Task {
+            do {
+                let loadedEmbedder = try await loadTextEmbedder(
+                    progressOutput: .standardError, onProgress: onModelProgress)
+                let model = loadedEmbedder.model
+                let indexDir = try HarkPaths.indexDir()
+                let ragIndex = RagIndex(
+                    dim: model.dimension, modelId: model.id, modelRevision: model.revision, dir: indexDir)
+                // Status sink → UI: hop each index-state change into the session
+                // actor, same pattern as the model-progress hop. `state` is the
+                // RagIndexState rawValue ("idle"|"building"|"ready").
+                let statusSink: RagStatusSink = { state, indexedCount, total in
+                    Task { await session.emitRagIndexStatus(
+                        state: state.rawValue, indexedCount: indexedCount, total: total) }
+                }
+                let vaultRoot = URL(fileURLWithPath: NSHomeDirectory())
+                    .appendingPathComponent("Documents/vault/hark", isDirectory: true)
+                let indexer = RagIndexer(
+                    index: ragIndex, embedder: loadedEmbedder.embedder,
+                    vaultRoot: vaultRoot, statusSink: statusSink)
+                await session.attachRagIndexer(indexer)
+                eprint("Vault RAG embedder ready — index building in background (model: \(model.id))")
+                // Cold build / reconcile + start the watcher. We're already off the
+                // capture-readiness path (this whole Task is concurrent), so awaiting
+                // here is fine — it just keeps this Task alive for the build.
+                await indexer.start()
+            } catch {
+                eprint("harkd: embedder load failed (\(error)); continuing WITHOUT vault search")
+            }
+        }
+
         // Load WhisperKit behind the server (NIO keeps serving during this
         // await). capture.start is gated on readiness until attachModel below.
         eprint("Loading model… (first run on this Mac compiles for ANE — can take ~90s)")
@@ -127,42 +167,6 @@ struct HarkdCommand: AsyncParsableCommand {
             eprint("Diarizer ready — offline speaker pass enabled (models: \(diar.modelsDir.path))")
         } catch {
             eprint("harkd: diarizer load failed (\(error)); continuing WITHOUT speaker labels")
-        }
-
-        // Load the vault-RAG text embedder + bring up the index (Phase 6 slice 4b,
-        // ADR-0032/0033). NON-FATAL like the diarizer: a failed embedder load
-        // disables ONLY vault search (rag.retrieve → RAG_UNAVAILABLE); capture and
-        // live transcription are unaffected. The index cold-builds / reconciles in
-        // the BACKGROUND (RagIndexer.start runs the build off the live path) and an
-        // FSEvents watcher keeps it fresh on a 30 s debounce. Loaded LAST so it
-        // never delays capture readiness.
-        do {
-            let loadedEmbedder = try await loadTextEmbedder(
-                progressOutput: .standardError, onProgress: onModelProgress)
-            let model = loadedEmbedder.model
-            let indexDir = try HarkPaths.indexDir()
-            let ragIndex = RagIndex(
-                dim: model.dimension, modelId: model.id, modelRevision: model.revision, dir: indexDir)
-            // Status sink → UI: hop each index-state change into the session actor,
-            // same pattern as the model-progress hop. Fire-and-forget, off the live
-            // path. `state` is the RagIndexState rawValue ("idle"|"building"|"ready").
-            let statusSink: RagStatusSink = { state, indexedCount, total in
-                Task { await session.emitRagIndexStatus(
-                    state: state.rawValue, indexedCount: indexedCount, total: total) }
-            }
-            let vaultRoot = URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent("Documents/vault/hark", isDirectory: true)
-            let indexer = RagIndexer(
-                index: ragIndex, embedder: loadedEmbedder.embedder,
-                vaultRoot: vaultRoot, statusSink: statusSink)
-            await session.attachRagIndexer(indexer)
-            // Kick the cold build / reconcile + start the watcher in the background;
-            // do NOT await it (it can take a while on a big vault) — capture is
-            // already available, and the index status frames report progress.
-            Task { await indexer.start() }
-            eprint("Vault RAG embedder ready — index building in background (model: \(model.id))")
-        } catch {
-            eprint("harkd: embedder load failed (\(error)); continuing WITHOUT vault search")
         }
 
         if verbose {
