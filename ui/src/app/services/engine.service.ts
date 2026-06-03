@@ -31,6 +31,9 @@ import {
   BookmarkCreatedPayload,
   MeetingSavedPayload,
   MeetingTranscriptPayload,
+  RagResultChunk,
+  RagResultsPayload,
+  RagIndexStatusPayload,
   DisplayedSegment,
   ConnectionState,
   CaptureState,
@@ -204,7 +207,40 @@ export class EngineService {
   readonly bookmarks: Signal<readonly BookmarkCreatedPayload[]> =
     this._bookmarks.asReadonly();
 
+  /**
+   * Latest `rag.index_status` from the engine, or null before the first frame
+   * (or when RAG is unavailable — the embedder/index didn't load). Drives the
+   * Ask panel's vault-index indicator: `building` shows "Indexing your vault…"
+   * (+ `indexed_count`/`total` progress), `ready` enables confident vault Q&A.
+   * Reset to null on socket close so a reconnect re-derives it.
+   */
+  private readonly _ragIndexStatus = signal<RagIndexStatusPayload | null>(null);
+  readonly ragIndexStatus: Signal<RagIndexStatusPayload | null> =
+    this._ragIndexStatus.asReadonly();
+
   private socket: WebSocket | null = null;
+
+  // ─── rag.retrieve request/response correlation ──────────────────────
+  //
+  // The socket is otherwise fire-and-forget (push frames + `ack` we ignore).
+  // `rag.retrieve` is the one REQUEST/REPLY exchange: we tag the outbound
+  // envelope with a unique `id`, park a pending promise here, and resolve it
+  // when the matching `rag.results` (id-correlated) arrives — or reject it on a
+  // matching `error` frame, a timeout, or socket close. Keyed by the id we mint.
+  private ragSeq = 0;
+  private readonly pendingRag = new Map<
+    string,
+    {
+      resolve: (chunks: readonly RagResultChunk[]) => void;
+      reject: (err: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
+
+  /** How long to wait for a `rag.results` before giving up. A cold-built index
+   *  query is well under a second; this is a generous ceiling so a stuck engine
+   *  surfaces an honest error instead of a hung spinner. */
+  private static readonly RAG_RETRIEVE_TIMEOUT_MS = 15_000;
 
   // ─── Lifecycle ──────────────────────────────────────────────────────
 
@@ -259,6 +295,11 @@ export class EngineService {
       this._ready.set(false);
       // Drop any in-flight warm-up progress — a reconnect re-derives it.
       this._modelProgress.set(null);
+      // Stale index state from the dead connection must not linger; a reconnect
+      // re-derives it from fresh `rag.index_status` frames.
+      this._ragIndexStatus.set(null);
+      // Fail any in-flight vault retrievals — their reply can never arrive now.
+      this.rejectAllPendingRag('engine connection closed');
       this.socket = null;
     };
     ws.onmessage = (ev) => this.dispatchFrame(ev.data);
@@ -347,6 +388,76 @@ export class EngineService {
   writeSummary(sessionId: string, summary: string): void {
     if (!sessionId || summary.trim().length === 0) return;
     this.send({ type: 'summary.write', payload: { session_id: sessionId, summary } });
+  }
+
+  /**
+   * Retrieve the top-`k` vault chunks for `query` from the engine's local RAG
+   * index (Phase 6 slice 4c, ADR-0032/0033). The engine embeds the query
+   * locally, brute-force cosine-ranks the index, and reads each hit's snippet
+   * LIVE from the vault — nothing leaves the machine here. This is the only
+   * request/reply exchange on the socket: we tag the envelope with a unique id
+   * and await the id-correlated `rag.results` reply.
+   *
+   * Resolves with the hits (possibly empty — no vault match). REJECTS on:
+   *   - an id-correlated `error` frame (e.g. RAG_UNAVAILABLE when the embedder/
+   *     index didn't load) — the message is surfaced to the caller, NOT the
+   *     global error banner (it's a scoped failure the Ask panel renders inline);
+   *   - a timeout (engine hung);
+   *   - the socket not being open / closing mid-flight.
+   *
+   * The caller (the host's vault-scope Ask) feeds the returned chunks into
+   * `llm.ask` (main), which redacts them for a cloud model (ADR-0031) or sends
+   * them as-is for a local one. The engine never calls a model.
+   */
+  retrieve(
+    query: string,
+    opts?: { k?: number; scope?: string },
+  ): Promise<readonly RagResultChunk[]> {
+    const q = query.trim();
+    if (q.length === 0) return Promise.resolve([]);
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error('not connected to the engine'));
+    }
+    const id = `rag-${++this.ragSeq}`;
+    return new Promise<readonly RagResultChunk[]>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRag.delete(id);
+        reject(new Error('vault search timed out'));
+      }, EngineService.RAG_RETRIEVE_TIMEOUT_MS);
+      this.pendingRag.set(id, { resolve, reject, timeout });
+      this.send(
+        {
+          type: 'rag.retrieve',
+          payload: {
+            query: q,
+            ...(opts?.k !== undefined ? { k: opts.k } : {}),
+            ...(opts?.scope !== undefined ? { scope: opts.scope } : {}),
+          },
+        },
+        id,
+      );
+    });
+  }
+
+  /** Settle + drop a pending `rag.retrieve` by id (clears its timeout). Returns
+   *  the parked handlers, or undefined if the id is unknown/already settled. */
+  private takePendingRag(id: string | undefined) {
+    if (id === undefined) return undefined;
+    const pending = this.pendingRag.get(id);
+    if (!pending) return undefined;
+    clearTimeout(pending.timeout);
+    this.pendingRag.delete(id);
+    return pending;
+  }
+
+  /** Reject + clear every parked `rag.retrieve` (socket closed — no reply can
+   *  arrive). Clears each timeout so nothing fires post-rejection. */
+  private rejectAllPendingRag(reason: string): void {
+    for (const [, pending] of this.pendingRag) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(reason));
+    }
+    this.pendingRag.clear();
   }
 
   /**
@@ -461,7 +572,7 @@ export class EngineService {
 
   // ─── Internals ──────────────────────────────────────────────────────
 
-  private send(cmd: EngineCommand): void {
+  private send(cmd: EngineCommand, id?: string): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       this.errors$.next({
         code: 'NOT_CONNECTED',
@@ -471,7 +582,11 @@ export class EngineService {
       });
       return;
     }
-    this.socket.send(JSON.stringify(cmd));
+    // Attach an envelope-level `id` for the one request/reply exchange
+    // (`rag.retrieve` → id-correlated `rag.results`). Fire-and-forget commands
+    // send no id; the engine's decoder treats it as optional either way.
+    const frame = id !== undefined ? { ...cmd, id } : cmd;
+    this.socket.send(JSON.stringify(frame));
   }
 
   private dispatchFrame(raw: unknown): void {
@@ -573,11 +688,33 @@ export class EngineService {
         this.meetingSaved$.next(saved);
         break;
       }
+      case 'rag.results': {
+        // Reply to a `rag.retrieve` — resolve the id-correlated pending promise.
+        // An unknown/stale id (already timed out) is ignored.
+        const pending = this.takePendingRag(env.id);
+        if (pending) {
+          pending.resolve((env.payload as RagResultsPayload).chunks);
+        }
+        break;
+      }
+      case 'rag.index_status':
+        // Unsolicited index-build state for the Ask panel's vault indicator.
+        this._ragIndexStatus.set(env.payload as RagIndexStatusPayload);
+        break;
       case 'warning':
         this.warnings$.next(env.payload as WarningPayload);
         break;
       case 'error': {
         const err = env.payload as ErrorPayload;
+        // If this error is the id-correlated reply to an in-flight
+        // `rag.retrieve` (e.g. RAG_UNAVAILABLE), reject THAT promise and stop —
+        // it's a scoped failure the Ask panel renders inline, not a global
+        // banner. Don't also push it to errors$/lastError.
+        const pendingRag = this.takePendingRag(env.id);
+        if (pendingRag) {
+          pendingRag.reject(new Error(err.message || err.code));
+          break;
+        }
         this.errors$.next(err);
         this._lastError.set(err);
         // If capture was mid-start when this error landed, revert

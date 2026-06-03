@@ -28,6 +28,7 @@ import {
   LANGUAGE_CHOICES,
   DisplayedSegment,
   MeetingSavedPayload,
+  RagResultChunk,
 } from './services/engine.types';
 import { TranscriptLineComponent } from './components/transcript-line.component';
 import { StatusBannerComponent } from './components/status-banner.component';
@@ -39,7 +40,11 @@ import {
   AttendeesPanelComponent,
   TagSpeakerRequest,
 } from './components/attendees-panel.component';
-import { AskPanelComponent } from './components/ask-panel.component';
+import {
+  AskPanelComponent,
+  AnswerSource,
+  AskScope,
+} from './components/ask-panel.component';
 import { EyebrowComponent } from './components/eyebrow.component';
 import { SpeakerTaggingComponent } from './components/speaker-tagging.component';
 import { PostMeetingReviewComponent } from './components/post-meeting-review.component';
@@ -85,14 +90,32 @@ export class AppComponent implements OnInit, OnDestroy {
   // (same as the Summary panel) and hold the latest answer here for display.
   // Nothing is persisted to the vault in this slice; the answer is transient.
 
-  /** True while an answer is in flight — passed to the panel's `loading`
-   *  input to show its "Thinking…" state. */
-  readonly asking = this.llm.asking;
+  /**
+   * Busy flag for the Ask panel's `loading` ("Thinking…") state. Owned by the
+   * host (not just `llm.asking`) because a VAULT-scope question runs TWO async
+   * steps — `engine.retrieve` (local RAG) THEN `llm.ask` — and the spinner must
+   * cover both, not just the LLM leg. Toggled in `onAsk`'s try/finally.
+   */
+  readonly askInFlight = signal(false);
 
   /** The latest answer to show in the Ask panel: the model's prose on success,
    *  a short "Couldn't answer: …" line on failure, or null before the first
-   *  question. Transient — reset when a new meeting starts. */
+   *  question. Transient — reset when a new meeting starts / scope changes. */
   readonly askAnswer = signal<string | null>(null);
+
+  /** What the next Ask question is answered from (Phase 6 slice 4c, ADR-0032):
+   *  'meeting' = this meeting's transcript (Slice 3); 'vault' = the whole vault
+   *  via the engine's local RAG retrieval. */
+  readonly askScope = signal<AskScope>('meeting');
+
+  /** Numbered source cards backing the latest VAULT answer — built from the
+   *  retrieved chunks' metadata (note path, heading, snippet). Empty for a
+   *  meeting-scope answer (Slice 3 surfaces no sources) and before any ask. */
+  readonly askSources = signal<readonly AnswerSource[]>([]);
+
+  /** Latest vault RAG index status from the engine (for the panel's index
+   *  indicator); null when unknown / RAG unavailable. */
+  readonly ragIndexStatus = this.engine.ragIndexStatus;
 
   readonly connection = this.engine.connection;
   readonly capture = this.engine.capture;
@@ -348,28 +371,131 @@ export class AppComponent implements OnInit, OnDestroy {
   });
 
   /**
-   * The Ask panel submitted a question. Assemble the transcript TEXT + applied
-   * speaker names off EngineService (the SAME builders the Summary panel uses)
-   * and send them to main via LlmService.ask — NO direct network. On success
-   * show the model's answer; on failure show a short "Couldn't answer: …" line
-   * (the panel renders whatever string we set on `[answer]`). The panel's
-   * `[loading]` shows "Thinking…" while `llm.asking()` is true. Citations /
-   * sources are intentionally left EMPTY for v1 — rich, verifiable sources need
-   * retrieval / structured output and land in a later slice; we don't fake them.
+   * The user switched the Ask scope (this meeting | vault). Store it and clear
+   * any stale answer/sources from the other scope — a meeting answer's (empty)
+   * sources and a vault answer's note-cards don't carry over.
+   */
+  setAskScope(scope: AskScope): void {
+    if (this.askScope() === scope) return;
+    this.askScope.set(scope);
+    this.askAnswer.set(null);
+    this.askSources.set([]);
+  }
+
+  /**
+   * The Ask panel submitted a question. Routes by the current scope:
+   *
+   *   - 'meeting' (Slice 3): assemble the transcript TEXT + applied speaker
+   *     names and send to main's LlmService.ask — no sources (this slice).
+   *   - 'vault' (Slice 4c, ADR-0032): first `engine.retrieve` the top-K vault
+   *     chunks (LOCAL — embed + cosine + read-from-vault, nothing leaves the
+   *     Mac), then send their TEXTS as context to LlmService.ask. Main redacts
+   *     each chunk for a cloud model (ADR-0031) or sends as-is for a local one.
+   *     The retrieved chunks' METADATA becomes the numbered source cards.
+   *
+   * The renderer NEVER makes a network call. `askInFlight` covers BOTH async
+   * legs so the panel's "Thinking…" spinner spans retrieval + answering.
    */
   async onAsk(question: string): Promise<void> {
     const q = question.trim();
     if (q.length === 0) return;
-    // Clear the prior answer so a stale one doesn't sit beneath the spinner.
+    // Clear prior answer + sources so nothing stale sits beneath the spinner.
     this.askAnswer.set(null);
+    this.askSources.set([]);
+    this.askInFlight.set(true);
+    try {
+      if (this.askScope() === 'vault') {
+        await this.askVault(q);
+      } else {
+        await this.askMeeting(q);
+      }
+    } finally {
+      this.askInFlight.set(false);
+    }
+  }
+
+  /** This-meeting Q&A (Slice 3): answer grounded in the meeting transcript. */
+  private async askMeeting(q: string): Promise<void> {
     const result = await this.llm.ask({
       question: q,
+      scope: 'meeting',
       transcript: this.buildAskTranscript(),
       knownNames: this.buildAskKnownNames(),
     });
     this.askAnswer.set(
       result.ok ? result.answer : `Couldn't answer: ${result.detail}`,
     );
+  }
+
+  /**
+   * Vault-wide Q&A (Slice 4c): retrieve from the engine's LOCAL RAG index, then
+   * answer from the retrieved chunks with numbered source cards. Retrieval and
+   * answering fail independently with honest, scoped messages (no global error
+   * banner — the panel renders the message inline).
+   */
+  private async askVault(q: string): Promise<void> {
+    let chunks: readonly RagResultChunk[];
+    try {
+      chunks = await this.engine.retrieve(q, { scope: 'vault', k: 6 });
+    } catch (err) {
+      // RAG_UNAVAILABLE (index/embedder not loaded), a timeout, or a closed
+      // socket — surface it inline rather than as a global banner.
+      this.askAnswer.set(
+        `Couldn't search your vault: ${
+          err instanceof Error ? err.message : 'retrieval failed'
+        }`,
+      );
+      return;
+    }
+    if (chunks.length === 0) {
+      this.askAnswer.set(
+        "I couldn't find anything in your vault about that. Try rephrasing, " +
+          'or check that your notes are indexed.',
+      );
+      return;
+    }
+    const result = await this.llm.ask({
+      question: q,
+      scope: 'vault',
+      context: chunks.map((c) => c.text),
+      knownNames: this.buildAskKnownNames(),
+    });
+    if (!result.ok) {
+      this.askAnswer.set(`Couldn't answer: ${result.detail}`);
+      return;
+    }
+    this.askAnswer.set(result.answer);
+    // Numbered source cards from the retrieved chunks' metadata — the citation
+    // surface the model's inline [n] refs point at (n = 1-based retrieval rank).
+    this.askSources.set(chunks.map((c, i) => this.chunkToSource(c, i)));
+  }
+
+  /** Map a retrieved vault chunk to a numbered Ask-panel source card. `title`
+   *  is the note's filename (no extension); `ref` is the vault-relative path
+   *  plus the heading breadcrumb when present; `snippet` is the retrieved text
+   *  (whitespace-collapsed, truncated). No `stamp` — a chunk carries no reliable
+   *  timestamp, and we never fabricate one. */
+  private chunkToSource(c: RagResultChunk, i: number): AnswerSource {
+    const heading = (c.heading_path ?? '').trim();
+    return {
+      n: i + 1,
+      title: this.noteName(c.note_path),
+      ref: heading ? `${c.note_path} · ${heading}` : c.note_path,
+      stamp: '',
+      snippet: this.truncate(c.text, 240),
+    };
+  }
+
+  /** A note's display name: its basename without the `.md` extension. */
+  private noteName(notePath: string): string {
+    const file = notePath.split('/').pop() ?? notePath;
+    return file.replace(/\.md$/i, '');
+  }
+
+  /** Collapse whitespace + truncate a snippet to `max` chars with an ellipsis. */
+  private truncate(s: string, max: number): string {
+    const t = s.trim().replace(/\s+/g, ' ');
+    return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
   }
 
   /**
@@ -669,9 +795,10 @@ export class AppComponent implements OnInit, OnDestroy {
     // meeting must not stay hidden because a prior one was dismissed).
     this.warning.set(null);
     this.dismissedSavedSession.set(null);
-    // A fresh meeting starts with no Q&A answer — the prior one was about a
-    // different (now-cleared) transcript.
+    // A fresh meeting starts with a clean Ask view — drop any prior answer +
+    // source cards (the prior one was about a different, now-cleared context).
     this.askAnswer.set(null);
+    this.askSources.set([]);
     this.engine.startCapture({
       mic: this.micEnabled(),
       system: this.systemEnabled(),
@@ -693,8 +820,9 @@ export class AppComponent implements OnInit, OnDestroy {
     if (!this.canClear()) return;
     this.warning.set(null);
     this.dismissedSavedSession.set(null);
-    // Drop any Q&A answer — it was about the transcript we're clearing.
+    // Drop any Q&A answer + source cards — a clean slate for the next meeting.
     this.askAnswer.set(null);
+    this.askSources.set([]);
     // clearTranscript() nulls EngineService.lastMeetingSaved(), so both the
     // card (derived) and the Attendees roster clear together.
     this.engine.clearTranscript();

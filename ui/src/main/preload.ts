@@ -201,7 +201,12 @@ contextBridge.exposeInMainWorld('hark', {
     ask(req: AskReq): Promise<AskResult> {
       return ipcRenderer.invoke('hark:llm:ask', {
         question: typeof req?.question === 'string' ? req.question : '',
+        scope: req?.scope === 'vault' ? 'vault' : 'meeting',
         transcript: typeof req?.transcript === 'string' ? req.transcript : '',
+        // Vault scope (slice 4c): the retrieved chunk texts, in citation order.
+        context: Array.isArray(req?.context)
+          ? req.context.filter((c): c is string => typeof c === 'string')
+          : undefined,
         knownNames: Array.isArray(req?.knownNames)
           ? req.knownNames.filter((n): n is string => typeof n === 'string')
           : undefined,

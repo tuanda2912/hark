@@ -97,15 +97,24 @@ export type SummarizeResult =
 // egress). Redaction/egress/logging all live in main — the renderer consumes
 // the answer text only and persists nothing.
 
-/** What the renderer sends main to answer a question about this meeting: the
- *  user's question, the assembled transcript text, and the applied speaker
- *  display-names main should collapse on a cloud send. Text only — never
- *  audio. */
+/** What the renderer sends main to answer a question. The grounding context
+ *  depends on `scope`:
+ *   - 'meeting' (default): `transcript` — this meeting's assembled text.
+ *   - 'vault' (Phase 6 slice 4c): `context` — the top-K vault chunk TEXTS the
+ *     renderer retrieved from the engine's local RAG index, in citation order.
+ *  Plus the applied speaker display-names main collapses on a cloud send. Text
+ *  only — never audio. Keep in lockstep with main's `AskReq`. */
 export interface AskReq {
-  /** The user's natural-language question about this meeting. */
+  /** The user's natural-language question. */
   question: string;
-  /** The transcript as readable lines (e.g. "Speaker 1 00:12: …"). */
-  transcript: string;
+  /** Which knowledge to answer from. Defaults to 'meeting' when absent. */
+  scope?: 'meeting' | 'vault';
+  /** Meeting scope: the transcript as readable lines (e.g. "Speaker 1 00:12: …"). */
+  transcript?: string;
+  /** Vault scope: retrieved chunk texts in citation order (1-based [n]). Main
+   *  numbers + redacts these; the chunk metadata stays renderer-side for the
+   *  source cards. */
+  context?: string[];
   /** Applied speaker display-names for known-name → label collapse (cloud).
    *  Optional / may be empty when no names have been applied yet. */
   knownNames?: string[];

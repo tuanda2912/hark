@@ -191,6 +191,58 @@ export interface MeetingTranscriptPayload {
   readonly utterances: readonly MeetingTranscriptUtterance[];
 }
 
+// ─── Vault RAG (Phase 6 slice 4, ADR-0032/0033) ──────────────────────
+//
+// Engine-side retrieval over the local vault vector index. `rag.retrieve` is a
+// UI→engine REQUEST (command, below); `rag.results` is the engine's reply
+// (this payload), correlated by the request envelope `id` (like `ack`);
+// `rag.index_status` is an unsolicited engine→UI event for the index-build
+// indicator. Field names mirror `WireProtocol.swift` exactly (snake_case on the
+// wire via `.convertToSnakeCase`).
+//
+// PRIVACY: a chunk's `text` is vault content the engine returns to the LOCAL UI
+// over the loopback socket only — it is never networked by the engine (rule
+// #1/#2). When the renderer forwards chunks to a CLOUD model it does so via
+// main's `llm.ask`, which redacts first (ADR-0031); a local model sends them
+// as-is (zero egress).
+
+/** One retrieval hit. Mirrors the Swift `RagResultChunk`: the snippet `text`
+ *  read live from the vault at `[char_start, char_end)`, plus its source
+ *  metadata for a citation / jump-to-source affordance and the cosine `score`
+ *  (higher = closer). All fields non-optional. */
+export interface RagResultChunk {
+  readonly text: string;
+  /** Vault-relative note path, e.g. "meetings/2026-06-01-standup.md". */
+  readonly note_path: string;
+  /** Heading breadcrumb above the chunk, e.g. "Decisions › Pricing". */
+  readonly heading_path: string;
+  readonly char_start: number;
+  readonly char_end: number;
+  readonly score: number;
+}
+
+/** `rag.results` — reply to a `rag.retrieve`, correlated by envelope `id`.
+ *  `chunks` is the top-K hits, score-descending. */
+export interface RagResultsPayload {
+  readonly chunks: readonly RagResultChunk[];
+}
+
+/**
+ * `rag.index_status` — unsolicited engine→UI event on index build start /
+ * progress / done, so the Ask panel can show an index-state indicator while a
+ * cold build runs. `state` is one of the three literal values; `indexed_count`
+ * is how many notes have been (re)indexed so far this build; `total` is the
+ * cold-build denominator (count of `.md` files) or `null` for an incremental
+ * single-file update (no meaningful total). Mirrors the Swift
+ * `RagIndexStatusPayload` — `total` is explicit JSON `null` (never a dropped
+ * key) so we can distinguish "no total" (incremental) from a forgotten field.
+ */
+export interface RagIndexStatusPayload {
+  readonly state: 'idle' | 'building' | 'ready';
+  readonly indexed_count: number;
+  readonly total: number | null;
+}
+
 // ─── UI → Engine command shapes ──────────────────────────────────────
 
 export interface CaptureStartCommand {
@@ -297,12 +349,32 @@ export interface SummaryWriteCommand {
   };
 }
 
+/**
+ * Ask the engine to retrieve the top-`k` vault chunks for `query` (Phase 6
+ * slice 4c, ADR-0032/0033). The engine embeds `query` locally (e5 `.query`),
+ * brute-force cosine-ranks the index, reads each hit's snippet live from the
+ * vault, and replies with a `rag.results` frame correlated by the envelope
+ * `id`. `k` is optional (the engine applies a default + clamps a huge value);
+ * `scope` reserves room for future sub-path scoping ("vault" = everything in
+ * v1). The engine NEVER calls a model — it only returns local chunks; main
+ * owns the redact→LLM step. Mirrors the Swift `RagRetrieveCommand`.
+ */
+export interface RagRetrieveCommand {
+  readonly type: 'rag.retrieve';
+  readonly payload: {
+    readonly query: string;
+    readonly k?: number;
+    readonly scope?: string;
+  };
+}
+
 export type EngineCommand =
   | CaptureStartCommand
   | CaptureStopCommand
   | BookmarkCreateCommand
   | SpeakerRenameCommand
-  | SummaryWriteCommand;
+  | SummaryWriteCommand
+  | RagRetrieveCommand;
 
 // ─── Renderer-side derived types ─────────────────────────────────────
 

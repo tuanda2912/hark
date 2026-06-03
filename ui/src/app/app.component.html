@@ -371,19 +371,25 @@
         </main>
       </div>
 
-      <!-- RIGHT: Ask / Q&A (Phase 6 slice 3). Live once a model is configured:
-           the question goes to main's LLM bridge via LlmService.ask (NO direct
-           network), and the answer text shows in the answer area. Citations /
-           sources stay EMPTY in v1 (rich, verifiable sources need retrieval —
-           a later slice; we don't fake them). With no model the panel keeps its
-           honest "set up a model" empty state; the picker CTA opens Settings. -->
+      <!-- RIGHT: Ask / Q&A. Live once a model is configured. The scope toggle
+           picks what the answer is grounded in: THIS meeting's transcript
+           (Slice 3) or the WHOLE vault via the engine's LOCAL RAG retrieval
+           (Slice 4c). Either way the renderer makes NO network call — for vault
+           it retrieves locally over the socket, then main does the redact→LLM
+           step. Vault answers render numbered source cards from the retrieved
+           chunks' metadata. With no model the panel keeps its honest "set up a
+           model" empty state; the picker CTA opens Settings. -->
       <hark-ask-panel
         class="hark-col-right"
         [modelConfigured]="modelConfigured()"
         [enabled]="modelConfigured()"
-        [loading]="asking()"
+        [loading]="askInFlight()"
         [answer]="askAnswer()"
+        [scope]="askScope()"
+        [sources]="askSources()"
+        [indexStatus]="ragIndexStatus()"
         (ask)="onAsk($event)"
+        (scopeChange)="setAskScope($event)"
         (dismiss)="toggleRightPanel()"
         (openSettings)="openSettings()"
       />

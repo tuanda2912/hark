@@ -43,6 +43,12 @@ import {
 } from '@angular/core';
 import { EyebrowComponent } from './eyebrow.component';
 import { CitationChipComponent } from './citation-chip.component';
+import type { RagIndexStatusPayload } from '../services/engine.types';
+
+/** What an Ask question is answered from (Phase 6 slice 4c, ADR-0032):
+ *  'meeting' = THIS meeting's transcript (Slice 3); 'vault' = the whole vault
+ *  via local RAG retrieval. The host owns the value + does the retrieval. */
+export type AskScope = 'meeting' | 'vault';
 
 /** A resolved source backing an answer (the design's Source card). The host
  *  will populate these from the provider layer; today the list is always
@@ -116,6 +122,86 @@ export interface AnswerSource {
       .close:hover {
         color: var(--text);
         background: var(--highlight);
+      }
+
+      /* ─── Scope toggle (this meeting | vault) ────────────────────────
+       * A compact segmented control selecting WHAT a question is answered
+       * from. 'vault' routes through local RAG retrieval (slice 4c); the
+       * index indicator beside it tells the user the vault is searchable. */
+      .scope {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px 2px;
+      }
+      .scope-seg {
+        display: inline-flex;
+        padding: 2px;
+        gap: 2px;
+        border-radius: var(--r-input);
+        border: 1px solid var(--border-2);
+        background: var(--surface);
+      }
+      .seg-btn {
+        appearance: none;
+        border: none;
+        background: transparent;
+        color: var(--text-3);
+        font-family: var(--font-ui);
+        font-size: 11.5px;
+        font-weight: 500;
+        padding: 3px 9px;
+        border-radius: calc(var(--r-input) - 2px);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .seg-btn:hover {
+        color: var(--text-2);
+      }
+      .seg-btn.active {
+        color: var(--text);
+        background: var(--highlight);
+      }
+      /* Index indicator — a state dot + terse label, shown only for the vault
+       * scope. Truthful: "building" while a cold index runs, "ready" once it
+       * can be searched. No fake percentage. */
+      .idx {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        font-size: 11px;
+        color: var(--text-3);
+        overflow: hidden;
+      }
+      .idx .dot {
+        width: 7px;
+        height: 7px;
+        flex-shrink: 0;
+        border-radius: 50%;
+        background: var(--text-3);
+      }
+      .idx.ready .dot {
+        background: var(--status-ok, #3fb950);
+      }
+      .idx.building .dot {
+        background: var(--status-cloud, #d29922);
+        animation: idx-pulse 1100ms ease-in-out infinite;
+      }
+      .idx .idx-label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      @keyframes idx-pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.35;
+        }
       }
 
       /* ─── Question input ─────────────────────────────────────────── */
@@ -444,6 +530,42 @@ export interface AnswerSource {
       </button>
     </div>
 
+    <!-- ─── Scope toggle: answer from THIS meeting or the whole VAULT ──
+         The host owns the value (and does the RAG retrieval for 'vault'); we
+         only emit the choice + reflect the index state. -->
+    <div class="scope">
+      <div class="scope-seg" role="tablist" aria-label="What to answer from">
+        <button
+          type="button"
+          role="tab"
+          class="seg-btn"
+          [class.active]="scope() === 'meeting'"
+          [attr.aria-selected]="scope() === 'meeting'"
+          (click)="scopeChange.emit('meeting')"
+          title="Answer from this meeting's transcript"
+        >
+          This meeting
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="seg-btn"
+          [class.active]="scope() === 'vault'"
+          [attr.aria-selected]="scope() === 'vault'"
+          (click)="scopeChange.emit('vault')"
+          title="Answer from across your whole vault (local search)"
+        >
+          Vault
+        </button>
+      </div>
+      @if (scope() === 'vault') {
+        <div class="idx" [class.ready]="indexState() === 'ready'" [class.building]="indexState() === 'building'">
+          <span class="dot" aria-hidden="true"></span>
+          <span class="idx-label" [title]="indexLabel()">{{ indexLabel() }}</span>
+        </div>
+      }
+    </div>
+
     <!-- ─── Question input ───────────────────────────────────────────
          Present for layout fidelity but disabled until a model is connected.
          Submit is a guarded no-op while not enabled. -->
@@ -467,8 +589,8 @@ export interface AnswerSource {
         <input
           type="text"
           [disabled]="!enabled() || loading()"
-          placeholder="Ask about this meeting…"
-          aria-label="Ask a question about this meeting"
+          [placeholder]="inputPlaceholder()"
+          [attr.aria-label]="inputPlaceholder()"
           (keydown.enter)="onSubmit($any($event.target))"
         />
         @if (enabled()) {
@@ -559,14 +681,24 @@ export interface AnswerSource {
               </svg>
             </span>
             @if (modelConfigured()) {
-              Ask about this meeting
+              @if (scope() === 'vault') {
+                Ask across your vault
+              } @else {
+                Ask about this meeting
+              }
             } @else {
               Connect a model first
             }
           </div>
           @if (modelConfigured()) {
-            Ask a question to get an answer grounded in this meeting's
-            transcript and your vault — with numbered sources you can verify.
+            @if (scope() === 'vault') {
+              Ask a question and get an answer grounded in your whole vault —
+              found by local search, with numbered sources you can verify.
+              Nothing is indexed or searched in the cloud.
+            } @else {
+              Ask a question to get an answer grounded in this meeting's
+              transcript — with numbered sources you can verify.
+            }
           } @else {
             Connect a model to ask questions and get answers grounded in this
             meeting's transcript and your vault — with numbered sources you can
@@ -662,9 +794,23 @@ export class AskPanelComponent {
    *  section shows its honest placeholder rather than any fake card. */
   readonly sources = input<readonly AnswerSource[]>([]);
 
-  /** A submitted question (only fires when `enabled`). Host wires this to the
-   *  provider service in a later slice. */
+  /** What a question is answered from (Phase 6 slice 4c). The host owns the
+   *  value + does the retrieval for 'vault'; the panel reflects it in the
+   *  toggle, the placeholder, and the empty-state copy. */
+  readonly scope = input<AskScope>('meeting');
+
+  /** Latest vault RAG index status from the engine, or null (unknown / RAG
+   *  unavailable). Drives the index indicator shown beside the toggle when
+   *  `scope === 'vault'`. */
+  readonly indexStatus = input<RagIndexStatusPayload | null>(null);
+
+  /** A submitted question (only fires when `enabled`). The host reads the
+   *  current `scope` to decide meeting- vs vault-grounded answering. */
   readonly ask = output<string>();
+
+  /** The user toggled the answer scope. Host stores it + clears any stale
+   *  answer/sources from the other scope. */
+  readonly scopeChange = output<AskScope>();
 
   /** User clicked the "set up a model" CTA. Host opens the Settings modal. */
   readonly openSettings = output<void>();
@@ -677,6 +823,38 @@ export class AskPanelComponent {
   protected readonly sourcesLabel = computed(() => {
     const n = this.sources().length;
     return n > 0 ? `Sources · ${n}` : 'Sources';
+  });
+
+  /** Placeholder + aria-label for the question input, scope-aware so the user
+   *  knows what they're querying before they type. */
+  protected readonly inputPlaceholder = computed(() =>
+    this.scope() === 'vault'
+      ? 'Ask across your vault…'
+      : 'Ask about this meeting…',
+  );
+
+  /** The index `state` (or 'unknown' when no status frame has arrived / RAG is
+   *  unavailable) — drives the indicator dot's color class. */
+  protected readonly indexState = computed(
+    () => this.indexStatus()?.state ?? 'unknown',
+  );
+
+  /** Terse, honest index-state label. No fake percentage: a building index
+   *  shows its count (and total when known); "ready" once searchable. */
+  protected readonly indexLabel = computed(() => {
+    const s = this.indexStatus();
+    if (!s) return 'Vault index status unknown';
+    switch (s.state) {
+      case 'building':
+        return s.total != null
+          ? `Indexing your vault… ${s.indexed_count}/${s.total}`
+          : `Indexing your vault… (${s.indexed_count})`;
+      case 'ready':
+        return 'Vault indexed — ready to search';
+      case 'idle':
+      default:
+        return 'Vault index idle';
+    }
   });
 
   protected onSubmit(el: HTMLInputElement): void {

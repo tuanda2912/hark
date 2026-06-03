@@ -353,6 +353,53 @@ const QA_PROMPT = [
 ].join('\n');
 
 /**
+ * System prompt for VAULT-scope Q&A (Phase 6 slice 4c, ADR-0032). Grounds the
+ * model strictly in the NUMBERED sources (vault chunks the renderer retrieved
+ * from the engine's local RAG index) and asks for inline [n] citations matching
+ * the source numbers — so the answer's claims deep-link to their source notes.
+ * Distinguishes citation markers ([2]) from redaction placeholders ([name]).
+ * Stable across calls (Anthropic prompt-caches it). Content-free.
+ */
+const VAULT_QA_PROMPT = [
+  'You are a knowledge-base Q&A assistant. Answer the user\'s question using',
+  'ONLY the numbered Sources in the user message — excerpts retrieved from the',
+  'user\'s personal notes/vault. Ground every claim in those sources and CITE',
+  'them inline with bracketed numbers matching the source numbers, e.g. "The',
+  'deadline is Friday [2]." Cite each sentence that draws on a source. If the',
+  'sources do not contain the information needed, say plainly that the vault',
+  'does not cover it rather than inventing an answer, guessing, or drawing on',
+  'outside knowledge. Do NOT fabricate facts, names, numbers, owners, or',
+  'decisions that are not present. Some entities may appear as redaction',
+  'placeholders such as [name], [email], [phone], [amount], [url], or [number];',
+  'treat them as opaque, preserve them verbatim, and do not guess what they',
+  'originally were. Keep citation markers like [2] distinct from redaction',
+  'placeholders like [name].',
+].join('\n');
+
+/**
+ * Build the VAULT-scope user message: the question followed by the numbered
+ * Sources block ("[1] …", "[2] …") the model cites against. Pure (no network,
+ * no redaction) — callers pass the ALREADY-redacted texts on the cloud path, or
+ * the raw texts on the local path. Exported for unit testing the numbering.
+ */
+export function buildVaultUserMessage(question: string, chunkTexts: string[]): string {
+  const sources = chunkTexts
+    .map((t, i) => `[${i + 1}] ${t.trim()}`)
+    .join('\n\n');
+  return `Question: ${question}\n\nSources:\n${sources}`;
+}
+
+/** A fresh all-zero redaction tally (the local-egress receipt, and the reduce
+ *  seed for vault-scope cloud sends). A new object each call so no caller can
+ *  mutate a shared one. */
+function freshZeroCounts(): RedactionCounts {
+  return {
+    total: 0,
+    byCategory: { email: 0, phone: 0, money: 0, number: 0, url: 0, name: 0 },
+  };
+}
+
+/**
  * Answer a question about THIS meeting (Slice 3). Mirrors `summarize` exactly,
  * with one difference: the QUESTION is user content too, so on the cloud path
  * BOTH the transcript and the question are redacted independently and their
@@ -374,15 +421,32 @@ const QA_PROMPT = [
 export async function ask(req: AskReq): Promise<AskResult> {
   // Coerce untrusted IPC input.
   const question = typeof req?.question === 'string' ? req.question : '';
+  const scope: 'meeting' | 'vault' = req?.scope === 'vault' ? 'vault' : 'meeting';
   const transcript = typeof req?.transcript === 'string' ? req.transcript : '';
+  // Vault-scope context: drop empties so an all-blank list reads as "no
+  // context" (the guard below) rather than a prompt full of empty [n] sources.
+  const context = Array.isArray(req?.context)
+    ? req.context.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+    : [];
   const knownNames = Array.isArray(req?.knownNames)
     ? req.knownNames.filter((n): n is string => typeof n === 'string')
     : [];
 
+  // The cloud-log action distinguishes the two scopes (honest receipt). Used in
+  // every log line below, including the early-return error paths.
+  const action = scope === 'vault' ? 'qa-vault' : 'qa';
+
   if (question.length === 0) {
     return { ok: false, detail: 'No question asked' };
   }
-  if (transcript.length === 0) {
+  // Grounding guard depends on scope: vault needs retrieved chunks, meeting
+  // needs a transcript. (For vault, an empty list means retrieval found
+  // nothing — the host surfaces that before calling, but guard defensively.)
+  if (scope === 'vault') {
+    if (context.length === 0) {
+      return { ok: false, detail: 'No vault context to answer from' };
+    }
+  } else if (transcript.length === 0) {
     return { ok: false, detail: 'No transcript to answer from' };
   }
 
@@ -405,7 +469,7 @@ export async function ask(req: AskReq): Promise<AskResult> {
         ? 'Key storage unavailable'
         : 'Could not read stored key';
     logCloudCall({
-      action: 'qa',
+      action,
       config,
       egress,
       inChars: 0,
@@ -417,47 +481,61 @@ export async function ask(req: AskReq): Promise<AskResult> {
     return { ok: false, detail };
   }
 
-  // Fork: redact BOTH the question and the transcript for cloud (the question
-  // is user content leaving the machine too); pass both through for local.
-  // The receipt sums the two tallies.
-  const zeroCounts: RedactionCounts = {
-    total: 0,
-    byCategory: { email: 0, phone: 0, money: 0, number: 0, url: 0, name: 0 },
-  };
-
-  let sentQuestion: string;
-  let sentTranscript: string;
+  // Fork: redact ALL user content for cloud (the question is user content too;
+  // for vault, EACH retrieved chunk is vault content leaving the machine); pass
+  // everything through for local (zero egress). The receipt SUMS every redacted
+  // piece's tally. System prompt + user message are scope-specific.
+  let system: string;
+  let user: string;
   let counts: RedactionCounts;
+
   if (egress === 'cloud') {
     const q = redact(question, knownNames);
-    const t = redact(transcript, knownNames);
-    sentQuestion = q.text;
-    sentTranscript = t.text;
-    counts = sumCounts(q.counts, t.counts);
+    if (scope === 'vault') {
+      // Redact each chunk independently; sum the question's + every chunk's
+      // counts. The model sees only the redacted texts, numbered [1..K].
+      const redactedChunks = context.map((c) => redact(c, knownNames));
+      counts = [q.counts, ...redactedChunks.map((r) => r.counts)].reduce(
+        (acc, c) => sumCounts(acc, c),
+        freshZeroCounts(),
+      );
+      system = VAULT_QA_PROMPT;
+      user = buildVaultUserMessage(
+        q.text,
+        redactedChunks.map((r) => r.text),
+      );
+    } else {
+      const t = redact(transcript, knownNames);
+      counts = sumCounts(q.counts, t.counts);
+      system = QA_PROMPT;
+      user = `Question: ${q.text}\n\nMeeting transcript:\n${t.text}`;
+    }
   } else {
-    sentQuestion = question;
-    sentTranscript = transcript;
-    counts = zeroCounts;
+    // LOCAL — zero egress: send the full question + grounding context as-is.
+    counts = freshZeroCounts();
+    if (scope === 'vault') {
+      system = VAULT_QA_PROMPT;
+      user = buildVaultUserMessage(question, context);
+    } else {
+      system = QA_PROMPT;
+      user = `Question: ${question}\n\nMeeting transcript:\n${transcript}`;
+    }
   }
-
-  // User message: question first, then the transcript to answer from (redacted
-  // versions on the cloud path).
-  const user = `Question: ${sentQuestion}\n\nMeeting transcript:\n${sentTranscript}`;
 
   const provider = makeProvider(config, key);
 
   try {
     const { text: answer } = await provider.complete({
-      system: QA_PROMPT,
+      system,
       user,
       maxTokens: QA_MAX_TOKENS,
     });
     logCloudCall({
-      action: 'qa',
+      action,
       config,
       egress,
       // inChars = the length of the text actually SENT (redacted, for cloud) —
-      // question + transcript; never the raw content, just the length.
+      // question + grounding context; never the raw content, just the length.
       inChars: user.length,
       outChars: answer.length,
       redactionTotal: counts.total,
@@ -469,7 +547,7 @@ export async function ask(req: AskReq): Promise<AskResult> {
     // generic network/timeout string) — safe to surface + log as `detail`.
     const detail = err instanceof Error ? err.message : 'Q&A failed';
     logCloudCall({
-      action: 'qa',
+      action,
       config,
       egress,
       inChars: user.length,

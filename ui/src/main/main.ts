@@ -539,11 +539,17 @@ ipcMain.handle('hark:llm:summarize', (_ev, raw: unknown): Promise<SummarizeResul
 ipcMain.handle('hark:llm:ask', (_ev, raw: unknown): Promise<AskResult> => {
   const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   const question = typeof o['question'] === 'string' ? o['question'] : '';
+  const scope = o['scope'] === 'vault' ? 'vault' : 'meeting';
   const transcript = typeof o['transcript'] === 'string' ? o['transcript'] : '';
+  // Vault scope (slice 4c): the retrieved chunk texts, citation order. Coerced
+  // to a clean string[] — main redacts each for a cloud send.
+  const context = Array.isArray(o['context'])
+    ? o['context'].filter((c): c is string => typeof c === 'string')
+    : undefined;
   const knownNames = Array.isArray(o['knownNames'])
     ? o['knownNames'].filter((n): n is string => typeof n === 'string')
     : undefined;
-  return llm.ask({ question, transcript, knownNames });
+  return llm.ask({ question, scope, transcript, context, knownNames });
 });
 
 // Read the local cloud-call activity log (Settings → Privacy). METADATA ONLY —

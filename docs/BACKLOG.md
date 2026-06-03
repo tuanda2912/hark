@@ -106,6 +106,34 @@ is being built **provider-agnostic now**; the integration lands later.
     production download can't resolve it; dev uses the local-dir override); (2) optionally cache the
     compiled `.mlmodelc` under `HarkPaths` to skip recompiles. Next: **4b** (chunker + brute-force
     index + FSEvents watcher + `rag.retrieve`/`rag.index_status` frames).
+  - **4b status — DONE + on-device validated (2026-06-03).** Heading-aware `RagChunker`,
+    `RagIndex` (brute-force cosine over `vectors.bin` + `meta.jsonl` + `manifest.json`),
+    `RagIndexer` (cold build + FSEvents watcher + incremental + retrieve), and the
+    `rag.retrieve`/`rag.results`/`rag.index_status` wire frames. **Offset-only** (decision
+    2026-06-03): `meta.jsonl` holds pointers only (no raw note text); retrieve reads the snippet
+    live from the vault at the stored offsets and skips any file deleted/changed since index.
+    168 engine tests green incl. the real-embedder end-to-end + the FSEvents SIGSEGV fix
+    (`kFSEventStreamCreateFlagUseCFTypes`). Privacy-audited PASS.
+  - **4c status — DONE (2026-06-03).** UI wiring: renderer `EngineService.retrieve()` (the one
+    request/reply exchange on the socket, id-correlated `rag.retrieve`→`rag.results`, with
+    timeout + socket-close cleanup) + a `ragIndexStatus` signal; main `ask()` gains a **vault
+    scope** that builds a numbered-Sources prompt and (cloud) redacts EACH chunk independently;
+    Ask-panel **this-meeting | vault** scope toggle + index indicator; host orchestration
+    (retrieve → llm.ask → numbered source cards from chunk metadata). The empty `[1][2]`
+    citations Slice 3 left are now real source cards. Renderer makes no network call; engine
+    never calls a model. Live WS smoke proves the round-trip on-device. ADR-0032/0033.
+    - *Cold-start ordering — FIXED in 4c.* The RAG embedder used to load in `HarkdCommand`
+      strictly AFTER WhisperKit + the diarizer (sequential `await`s), so on a cold start vault
+      search was `RAG_UNAVAILABLE` for the *minutes* the large-v3 ANE compile takes — even though
+      RAG is independent of capture. Now loaded in a **detached `Task` launched before** the
+      WhisperKit await, so the embedder + index come up concurrently with (and never wait behind)
+      the speech model. The 4c smoke confirms it: vault retrieval returned 5 hits while
+      `meta.hello` still reported `model_loaded=(loading)`.
+    - *Jump-to-source (pick up):* source cards + inline `[n]` are display-only. Wire the
+      `citation-chip` / source-card `select` to open the note at `char_start` (Finder reveal, or
+      an in-app note view) — the chunk already carries `note_path` + offsets. Also: inline `[n]`
+      renders as plain text in the answer prose; a later pass can split the prose and render real
+      chips inline.
 - **Cloud-call log + PII redaction — SHIPPED (Slice 2).** Every cloud call redacts PII first +
   logs metadata-only; surfaced in Settings → Privacy "Cloud activity". Local calls need neither.
   (NER name redaction + a redaction toggle remain deferred — see the summary entry.)

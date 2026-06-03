@@ -120,15 +120,33 @@ export type SummarizeResult =
 
 /**
  * An ask request from the renderer. `question` is the user's free-text
- * question about THIS meeting; `transcript` is the (already
- * speaker-back-annotated) meeting text the model must answer from.
- * `knownNames` is the roster's display names so the redactor can collapse
- * them to `[name]` for CLOUD egress (both question and transcript are
- * redacted). All arrive as untrusted IPC data; main coerces them.
+ * question. The grounding context depends on `scope`:
+ *
+ *   - 'meeting' (default): `transcript` is the (already speaker-back-annotated)
+ *     meeting text the model must answer from.
+ *   - 'vault' (Phase 6 slice 4c, ADR-0032): `context` is the top-K vault chunk
+ *     TEXTS the renderer retrieved from the engine's local RAG index, in
+ *     citation order (the model cites them as [1], [2], …). The chunk METADATA
+ *     (note paths / offsets) stays in the renderer for source-card rendering —
+ *     main only needs the text to build + redact the prompt.
+ *
+ * `knownNames` is the roster's display names so the redactor can collapse them
+ * to `[name]` for CLOUD egress. On the cloud path EVERY piece of user content
+ * leaving the machine is redacted: the question AND the transcript (meeting) or
+ * the question AND each context chunk (vault). All arrive as untrusted IPC
+ * data; main coerces them.
  */
 export interface AskReq {
   question: string;
-  transcript: string;
+  /** Which knowledge the answer is grounded in. Defaults to 'meeting' when
+   *  absent (back-compat with the Slice 3 contract). */
+  scope?: 'meeting' | 'vault';
+  /** Meeting-scope grounding: the transcript text. Required for 'meeting'. */
+  transcript?: string;
+  /** Vault-scope grounding: retrieved chunk texts in citation order. Required
+   *  for 'vault'. Main numbers them [1..K] in the prompt and redacts each one
+   *  for a cloud send. */
+  context?: string[];
   knownNames?: string[];
 }
 
