@@ -63,8 +63,13 @@ is being built **provider-agnostic now**; the integration lands later.
     not "all PII removed"). *Pick up:* a local NER pass for names + a user-facing redaction toggle.
   - *Non-streaming v1:* the summary returns whole (≤60s), no token streaming. *Pick up:* SSE
     streaming over IPC for a live-typing summary (design wants it; deferred for simplicity).
-- **This-meeting Q&A (Slice 3).** Wire the Ask panel for the *current* meeting — feeds the
-  current transcript as context (no vector index needed). Streaming answer + citations.
+- **This-meeting Q&A — SHIPPED (Slice 3).** The Ask panel is wired: a question + the current
+  meeting transcript → `llm.ask` in main → (redact question AND transcript if cloud) →
+  grounded answer ("answer only from this transcript; say you don't know rather than invent").
+  Same egress governance + cloud-log (`action:'qa'`) as summary; local ⇒ zero egress. ADR-0031.
+  - *Deferred:* rich `[1][2]` **citations / source cards** are left empty (NOT faked) — they need
+    retrieval / structured output, which arrives with the vault-RAG slice. Answer streaming also
+    deferred (non-streaming v1, like summary).
 - **Vault-wide / 2nd-brain Q&A — RAG (Slice 4, deferred).** Cross-meeting questions over the
   whole vault. Cloud model NEVER sees the vault: **local** embed → **local** vector search
   (top-K) → only the redacted top-K chunks + question go to the model → answer + citations.

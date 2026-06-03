@@ -43,6 +43,8 @@ import type {
   LlmTestResult,
   SummarizeReq,
   SummarizeResult,
+  AskReq,
+  AskResult,
   CloudCallLogEntry,
 } from './llm.types';
 
@@ -105,6 +107,14 @@ declare global {
          * log. The renderer never makes a network call and never sees the key.
          */
         summarize(req: SummarizeReq): Promise<SummarizeResult>;
+        /**
+         * Answer a question about THIS meeting from its transcript TEXT
+         * (Phase 6 slice 3). Same egress model as `summarize`: main owns the
+         * cloud/local fork, redaction (cloud only), the provider HTTP, and the
+         * local cloud-call log. The renderer never makes a network call, never
+         * sees the key, and persists nothing.
+         */
+        ask(req: AskReq): Promise<AskResult>;
         /** Read the local cloud-activity log (metadata only — never content)
          *  for Settings → Privacy. */
         getCloudLog(): Promise<CloudCallLogEntry[]>;

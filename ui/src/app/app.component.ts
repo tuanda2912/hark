@@ -76,6 +76,24 @@ export class AppComponent implements OnInit, OnDestroy {
    *  input stays disabled. */
   readonly modelConfigured = this.llm.configured;
 
+  // ─── Ask / this-meeting Q&A (Phase 6 slice 3, ADR-0031) ─────────────
+  //
+  // The Ask panel (right column) sends the user's question to main's LLM
+  // bridge via LlmService.ask — the renderer makes NO network call; main owns
+  // the cloud/local fork, redaction (cloud only), and the cloud-call log. We
+  // assemble the transcript TEXT + applied speaker names off EngineService
+  // (same as the Summary panel) and hold the latest answer here for display.
+  // Nothing is persisted to the vault in this slice; the answer is transient.
+
+  /** True while an answer is in flight — passed to the panel's `loading`
+   *  input to show its "Thinking…" state. */
+  readonly asking = this.llm.asking;
+
+  /** The latest answer to show in the Ask panel: the model's prose on success,
+   *  a short "Couldn't answer: …" line on failure, or null before the first
+   *  question. Transient — reset when a new meeting starts. */
+  readonly askAnswer = signal<string | null>(null);
+
   readonly connection = this.engine.connection;
   readonly capture = this.engine.capture;
   readonly heartbeat = this.engine.heartbeat;
@@ -328,6 +346,72 @@ export class AppComponent implements OnInit, OnDestroy {
       this.summaryOpen.set(false);
     }
   });
+
+  /**
+   * The Ask panel submitted a question. Assemble the transcript TEXT + applied
+   * speaker names off EngineService (the SAME builders the Summary panel uses)
+   * and send them to main via LlmService.ask — NO direct network. On success
+   * show the model's answer; on failure show a short "Couldn't answer: …" line
+   * (the panel renders whatever string we set on `[answer]`). The panel's
+   * `[loading]` shows "Thinking…" while `llm.asking()` is true. Citations /
+   * sources are intentionally left EMPTY for v1 — rich, verifiable sources need
+   * retrieval / structured output and land in a later slice; we don't fake them.
+   */
+  async onAsk(question: string): Promise<void> {
+    const q = question.trim();
+    if (q.length === 0) return;
+    // Clear the prior answer so a stale one doesn't sit beneath the spinner.
+    this.askAnswer.set(null);
+    const result = await this.llm.ask({
+      question: q,
+      transcript: this.buildAskTranscript(),
+      knownNames: this.buildAskKnownNames(),
+    });
+    this.askAnswer.set(
+      result.ok ? result.answer : `Couldn't answer: ${result.detail}`,
+    );
+  }
+
+  /**
+   * Build the transcript text for an Ask request from the clean, post-stop
+   * labeled utterances (EngineService.segments(), already sorted by tStart).
+   * Each line is "<speaker> <mm:ss>: <text>", with the speaker omitted when
+   * unknown so we never fabricate one. Text only — no audio, no per-line ids.
+   * Empty string when there's nothing to ask about (the engine/model answers
+   * "no transcript"); mirrors the Summary panel's assembler.
+   */
+  private buildAskTranscript(): string {
+    return this.segments()
+      .map((s) => {
+        const stamp = this.formatTime(s.tStart);
+        const speaker = s.speaker ? `${s.speaker} ` : '';
+        return `${speaker}${stamp}: ${s.text}`;
+      })
+      .join('\n');
+  }
+
+  /**
+   * The applied speaker display-names from the saved roster — the names main
+   * collapses to labels before a CLOUD send (ADR-0031). Each speaker's applied
+   * name: `matched_name` when set, else the label only if it isn't the generic
+   * "Speaker N" placeholder (a bare placeholder carries no PII). De-duped,
+   * non-empty. Mirrors the Summary panel's `buildKnownNames`.
+   */
+  private buildAskKnownNames(): string[] {
+    const saved = this.engine.lastMeetingSaved();
+    if (!saved) return [];
+    const names = new Set<string>();
+    for (const sp of saved.speakers) {
+      const applied = (sp.matched_name ?? '').trim();
+      if (applied) {
+        names.add(applied);
+        continue;
+      }
+      const label = sp.label.trim();
+      if (label && !/^Speaker\s+\d+$/i.test(label)) names.add(label);
+    }
+    return Array.from(names);
+  }
 
   /** Seed the live top-bar selections from the persisted defaults once the
    *  prefs have loaded from disk. Runs once: after `loaded()` flips true we
@@ -585,6 +669,9 @@ export class AppComponent implements OnInit, OnDestroy {
     // meeting must not stay hidden because a prior one was dismissed).
     this.warning.set(null);
     this.dismissedSavedSession.set(null);
+    // A fresh meeting starts with no Q&A answer — the prior one was about a
+    // different (now-cleared) transcript.
+    this.askAnswer.set(null);
     this.engine.startCapture({
       mic: this.micEnabled(),
       system: this.systemEnabled(),
@@ -606,6 +693,8 @@ export class AppComponent implements OnInit, OnDestroy {
     if (!this.canClear()) return;
     this.warning.set(null);
     this.dismissedSavedSession.set(null);
+    // Drop any Q&A answer — it was about the transcript we're clearing.
+    this.askAnswer.set(null);
     // clearTranscript() nulls EngineService.lastMeetingSaved(), so both the
     // card (derived) and the Attendees roster clear together.
     this.engine.clearTranscript();

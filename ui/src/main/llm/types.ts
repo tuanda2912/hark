@@ -108,17 +108,58 @@ export type SummarizeResult =
     }
   | { ok: false; detail: string };
 
+// ─── Slice 3: this-meeting Q&A (Phase 6) ──────────────────────────────────
+//
+// Same egress + redaction discipline as Slice 2's summary: a CLOUD provider
+// gets a REDACTED transcript AND a REDACTED question (the question is user
+// content leaving the machine too); a LOCAL (loopback) endpoint gets both
+// as-is (zero egress, redaction all-zero). Every call appends one
+// METADATA-ONLY cloud-log entry with action:'qa' — never the question,
+// transcript, or answer text. Part of the LOCKED contract the renderer codes
+// against (window.hark.llm.ask).
+
+/**
+ * An ask request from the renderer. `question` is the user's free-text
+ * question about THIS meeting; `transcript` is the (already
+ * speaker-back-annotated) meeting text the model must answer from.
+ * `knownNames` is the roster's display names so the redactor can collapse
+ * them to `[name]` for CLOUD egress (both question and transcript are
+ * redacted). All arrive as untrusted IPC data; main coerces them.
+ */
+export interface AskReq {
+  question: string;
+  transcript: string;
+  knownNames?: string[];
+}
+
+/**
+ * Result of an ask call. On success the renderer gets the model's `answer`
+ * plus the egress kind + a redaction receipt (the SUM of the question's and
+ * transcript's per-category counts on the cloud path; all-zero on local).
+ * On failure a short, content-free `detail` (derived from the HTTP status,
+ * never a body).
+ */
+export type AskResult =
+  | {
+      ok: true;
+      answer: string;
+      model: string;
+      egress: 'cloud' | 'local';
+      redaction: RedactionCounts;
+    }
+  | { ok: false; detail: string };
+
 /**
  * One entry in the local cloud-call activity log (ADR-0031 §4). METADATA
- * ONLY — there is deliberately NO transcript/summary field. `inChars` is the
- * length of the text actually SENT (redacted, for cloud); `outChars` the
- * summary length; `redactionTotal` mirrors RedactionCounts.total. Local
- * actions are logged too (egress: 'local', redactionTotal: 0) so the user
- * sees the full picture.
+ * ONLY — there is deliberately NO transcript/summary/question/answer field.
+ * `inChars` is the length of the text actually SENT (redacted, for cloud);
+ * `outChars` the response length; `redactionTotal` mirrors
+ * RedactionCounts.total. Local actions are logged too (egress: 'local',
+ * redactionTotal: 0) so the user sees the full picture.
  */
 export interface CloudCallLogEntry {
   ts: string;
-  /** The action that triggered the call. Slice 2: always 'summary'. */
+  /** The action that triggered the call: 'summary' (Slice 2) or 'qa' (Slice 3). */
   action: string;
   provider: string;
   model: string;

@@ -15,6 +15,8 @@ import type {
   LlmProviderId,
   SummarizeReq,
   SummarizeResult,
+  AskReq,
+  AskResult,
   RedactionCounts,
   CloudCallLogEntry,
 } from './types';
@@ -321,6 +323,174 @@ export async function summarize(req: SummarizeReq): Promise<SummarizeResult> {
     });
     return { ok: false, detail };
   }
+}
+
+// ─── This-meeting Q&A (Slice 3 — Phase 6) ──────────────────────────────────
+
+/** Upper bound on a Q&A answer. Answers are short, grounded responses (not a
+ *  full summary), so this is generous headroom, not a target. */
+const QA_MAX_TOKENS = 1_024;
+
+/**
+ * System prompt for this-meeting Q&A. Stable across calls (so Anthropic
+ * prompt-caches it). Grounds the model strictly in the provided transcript —
+ * it must answer from what was actually said, may quote/refer to it, and must
+ * say it doesn't know rather than invent when the transcript lacks the answer.
+ * Content-free — safe to keep inline.
+ */
+const QA_PROMPT = [
+  'You are a meeting Q&A assistant. Answer the user\'s question using ONLY the',
+  'meeting transcript provided in the user message. Ground every claim in what',
+  'was actually said — quote or refer to the relevant parts of the transcript',
+  'when helpful. If the transcript does not contain the information needed to',
+  'answer, say plainly that the meeting does not cover it (or that you do not',
+  'know based on the transcript) rather than inventing an answer, guessing, or',
+  'drawing on outside knowledge. Do NOT fabricate facts, names, numbers,',
+  'owners, or decisions that are not present. Some entities may appear as',
+  'redaction placeholders such as [name], [email], [phone], [amount], [url], or',
+  '[number]; treat them as opaque, preserve them verbatim, and do not guess',
+  'what they originally were.',
+].join('\n');
+
+/**
+ * Answer a question about THIS meeting (Slice 3). Mirrors `summarize` exactly,
+ * with one difference: the QUESTION is user content too, so on the cloud path
+ * BOTH the transcript and the question are redacted independently and their
+ * counts are SUMMED into the returned receipt. Egress fork:
+ *   - LOCAL (loopback OpenAI-compatible) → send FULL question + transcript, NO
+ *     redaction (zero egress, full quality). Redaction counts all zero.
+ *   - CLOUD (Anthropic, or remote OpenAI-compatible) → REDACT the question and
+ *     the transcript separately and send only the redacted text.
+ *
+ * Every call — cloud OR local — appends one METADATA-ONLY cloud-log entry
+ * (action:'qa'; lengths, summed redaction total, egress, status). On any error
+ * we log a status:'error' entry (no content) and return { ok:false, detail }
+ * with the provider's content-free, status-derived message.
+ *
+ * PRIVACY: the question, transcript, and answer are NEVER logged here and
+ * NEVER written to the cloud log — only their character lengths. The provider
+ * layer guarantees no request/response body leaks into logs or thrown detail.
+ */
+export async function ask(req: AskReq): Promise<AskResult> {
+  // Coerce untrusted IPC input.
+  const question = typeof req?.question === 'string' ? req.question : '';
+  const transcript = typeof req?.transcript === 'string' ? req.transcript : '';
+  const knownNames = Array.isArray(req?.knownNames)
+    ? req.knownNames.filter((n): n is string => typeof n === 'string')
+    : [];
+
+  if (question.length === 0) {
+    return { ok: false, detail: 'No question asked' };
+  }
+  if (transcript.length === 0) {
+    return { ok: false, detail: 'No transcript to answer from' };
+  }
+
+  const config = readConfig();
+  if (!config) {
+    return { ok: false, detail: 'No provider configured' };
+  }
+
+  const egress: 'cloud' | 'local' = isLocalEgress(config) ? 'local' : 'cloud';
+
+  // Decrypt the key (main-only) to inject into the provider. A local endpoint
+  // may legitimately have none — that's fine; only cloud is guaranteed to need
+  // it (the provider/endpoint surfaces a 401 if it does and there's none).
+  let key: string | undefined;
+  try {
+    key = keystore.getKey(config.provider) ?? undefined;
+  } catch (err) {
+    const detail =
+      err instanceof KeyStorageUnavailableError
+        ? 'Key storage unavailable'
+        : 'Could not read stored key';
+    logCloudCall({
+      action: 'qa',
+      config,
+      egress,
+      inChars: 0,
+      outChars: 0,
+      redactionTotal: 0,
+      status: 'error',
+      detail,
+    });
+    return { ok: false, detail };
+  }
+
+  // Fork: redact BOTH the question and the transcript for cloud (the question
+  // is user content leaving the machine too); pass both through for local.
+  // The receipt sums the two tallies.
+  const zeroCounts: RedactionCounts = {
+    total: 0,
+    byCategory: { email: 0, phone: 0, money: 0, number: 0, url: 0, name: 0 },
+  };
+
+  let sentQuestion: string;
+  let sentTranscript: string;
+  let counts: RedactionCounts;
+  if (egress === 'cloud') {
+    const q = redact(question, knownNames);
+    const t = redact(transcript, knownNames);
+    sentQuestion = q.text;
+    sentTranscript = t.text;
+    counts = sumCounts(q.counts, t.counts);
+  } else {
+    sentQuestion = question;
+    sentTranscript = transcript;
+    counts = zeroCounts;
+  }
+
+  // User message: question first, then the transcript to answer from (redacted
+  // versions on the cloud path).
+  const user = `Question: ${sentQuestion}\n\nMeeting transcript:\n${sentTranscript}`;
+
+  const provider = makeProvider(config, key);
+
+  try {
+    const { text: answer } = await provider.complete({
+      system: QA_PROMPT,
+      user,
+      maxTokens: QA_MAX_TOKENS,
+    });
+    logCloudCall({
+      action: 'qa',
+      config,
+      egress,
+      // inChars = the length of the text actually SENT (redacted, for cloud) —
+      // question + transcript; never the raw content, just the length.
+      inChars: user.length,
+      outChars: answer.length,
+      redactionTotal: counts.total,
+      status: 'ok',
+    });
+    return { ok: true, answer, model: config.model, egress, redaction: counts };
+  } catch (err) {
+    // The provider throws ONLY content-free, status-derived messages (or a
+    // generic network/timeout string) — safe to surface + log as `detail`.
+    const detail = err instanceof Error ? err.message : 'Q&A failed';
+    logCloudCall({
+      action: 'qa',
+      config,
+      egress,
+      inChars: user.length,
+      outChars: 0,
+      redactionTotal: counts.total,
+      status: 'error',
+      detail,
+    });
+    return { ok: false, detail };
+  }
+}
+
+/** Sum two RedactionCounts into one (per-category + total). Used by `ask`,
+ *  which redacts the question and the transcript independently and reports the
+ *  combined receipt. */
+function sumCounts(a: RedactionCounts, b: RedactionCounts): RedactionCounts {
+  const byCategory: Record<string, number> = {};
+  for (const key of new Set([...Object.keys(a.byCategory), ...Object.keys(b.byCategory)])) {
+    byCategory[key] = (a.byCategory[key] ?? 0) + (b.byCategory[key] ?? 0);
+  }
+  return { total: a.total + b.total, byCategory };
 }
 
 /** Build + append a cloud-log entry. METADATA ONLY — callers pass lengths and

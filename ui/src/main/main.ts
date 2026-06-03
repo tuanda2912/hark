@@ -14,7 +14,7 @@ import { spawnHarkd, HarkdHandle } from './harkd-spawn';
 import { HarkTray, TrayState } from './tray';
 import { loadPrefs, savePrefs, getPrefsPath, Prefs } from './prefs';
 import * as llm from './llm';
-import type { LlmStatus, LlmTestResult, SummarizeResult, CloudCallLogEntry } from './llm/types';
+import type { LlmStatus, LlmTestResult, SummarizeResult, AskResult, CloudCallLogEntry } from './llm/types';
 
 // The user's vault lives OUTSIDE the repo and the app-support dir. Per
 // CLAUDE.md it is the only place transcripts/notes are written, so the
@@ -524,6 +524,26 @@ ipcMain.handle('hark:llm:summarize', (_ev, raw: unknown): Promise<SummarizeResul
     ? o['knownNames'].filter((n): n is string => typeof n === 'string')
     : undefined;
   return llm.summarize({ transcript, knownNames });
+});
+
+// Answer a question about THIS meeting (Slice 3 — Phase 6). Like summarize,
+// this routes real user content (the question AND the transcript) toward an
+// outbound network call, and only on explicit user invocation. The `raw`
+// payload crosses the bridge as untrusted structured-clone data; llm.ask
+// coerces it (string question, string transcript, string[] knownNames). For a
+// CLOUD provider BOTH the question and the transcript are REDACTED before send;
+// for a LOCAL (loopback) endpoint they are sent as-is (zero egress). Every call
+// appends a METADATA-ONLY cloud-log entry with action:'qa'. The resolved
+// AskResult carries the answer + a content-free redaction receipt; on failure
+// { ok:false, detail } with a status-derived message — never a key or body.
+ipcMain.handle('hark:llm:ask', (_ev, raw: unknown): Promise<AskResult> => {
+  const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const question = typeof o['question'] === 'string' ? o['question'] : '';
+  const transcript = typeof o['transcript'] === 'string' ? o['transcript'] : '';
+  const knownNames = Array.isArray(o['knownNames'])
+    ? o['knownNames'].filter((n): n is string => typeof n === 'string')
+    : undefined;
+  return llm.ask({ question, transcript, knownNames });
 });
 
 // Read the local cloud-call activity log (Settings → Privacy). METADATA ONLY —

@@ -21,6 +21,8 @@ import type {
   LlmTestResult,
   SummarizeReq,
   SummarizeResult,
+  AskReq,
+  AskResult,
   CloudCallLogEntry,
 } from './llm.types';
 
@@ -59,6 +61,10 @@ export class LlmService {
   /** The most recent summarize result (success or failure), or null before the
    *  first call / after a reset. */
   readonly summary = signal<SummarizeResult | null>(null);
+
+  /** True while an `ask()` call is in flight. Drives the Ask panel's
+   *  "thinking" state. */
+  readonly asking = signal(false);
   /** The local cloud-activity log (metadata only — never content). Surfaced
    *  read-only in Settings → Privacy. */
   readonly cloudLog = signal<CloudCallLogEntry[]>([]);
@@ -163,6 +169,40 @@ export class LlmService {
   resetSummary(): void {
     this.summary.set(null);
     this.summarizing.set(false);
+  }
+
+  // ─── Ask: this-meeting Q&A (Phase 6 slice 3) ────────────────────────
+
+  /**
+   * Send a question + the transcript text to main to be answered (no direct
+   * network — main owns the provider HTTP + redaction + cloud/local fork +
+   * the local cloud-call log). Toggles `asking` around the call and returns
+   * the result so the caller can react inline; resolves with `{ ok: false }`
+   * (never throws) so the panel only ever renders a result. No-op (a failure
+   * result) outside Electron, where `window.hark.llm` is absent. Unlike
+   * `summarize`, the answer is NOT retained in a service signal — Q&A is
+   * transient (the host holds the latest answer for display) and nothing is
+   * persisted to the vault in this slice.
+   */
+  async ask(req: AskReq): Promise<AskResult> {
+    const llm = window.hark?.llm;
+    if (!llm) {
+      return {
+        ok: false,
+        detail: 'No model bridge available (running outside Electron).',
+      };
+    }
+    this.asking.set(true);
+    try {
+      return await llm.ask(req);
+    } catch (err) {
+      return {
+        ok: false,
+        detail: err instanceof Error ? err.message : 'ask failed',
+      };
+    } finally {
+      this.asking.set(false);
+    }
   }
 
   /** Re-read the local cloud-activity log from main into the `cloudLog`

@@ -14,6 +14,8 @@ import type {
   LlmTestResult,
   SummarizeReq,
   SummarizeResult,
+  AskReq,
+  AskResult,
   CloudCallLogEntry,
 } from './llm/types';
 
@@ -181,6 +183,24 @@ contextBridge.exposeInMainWorld('hark', {
      *  detail } with a status-derived message (never a key or response body). */
     summarize(req: SummarizeReq): Promise<SummarizeResult> {
       return ipcRenderer.invoke('hark:llm:summarize', {
+        transcript: typeof req?.transcript === 'string' ? req.transcript : '',
+        knownNames: Array.isArray(req?.knownNames)
+          ? req.knownNames.filter((n): n is string => typeof n === 'string')
+          : undefined,
+      });
+    },
+
+    /** Ask a question about THIS meeting (Slice 3 — Phase 6). For a CLOUD
+     *  provider main REDACTS BOTH the question and the transcript before send
+     *  (the question is user content leaving the machine too); for a LOCAL
+     *  (loopback) endpoint both are sent as-is (zero egress). We re-shape to
+     *  ONLY the whitelisted fields here so nothing extra crosses the bridge;
+     *  main re-coerces again. Resolves an AskResult — on success the answer + a
+     *  content-free redaction receipt, on failure { ok:false, detail } with a
+     *  status-derived message (never a key or response body). */
+    ask(req: AskReq): Promise<AskResult> {
+      return ipcRenderer.invoke('hark:llm:ask', {
+        question: typeof req?.question === 'string' ? req.question : '',
         transcript: typeof req?.transcript === 'string' ? req.transcript : '',
         knownNames: Array.isArray(req?.knownNames)
           ? req.knownNames.filter((n): n is string => typeof n === 'string')

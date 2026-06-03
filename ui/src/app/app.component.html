@@ -371,13 +371,19 @@
         </main>
       </div>
 
-      <!-- RIGHT: Ask / Q&A SHELL (no model wired; honest empty state).
-           Provider-agnostic — cloud AND local models land in Phase 6. The
-           model-picker CTA opens the existing Settings modal (the hook for
-           the future provider layer). -->
+      <!-- RIGHT: Ask / Q&A (Phase 6 slice 3). Live once a model is configured:
+           the question goes to main's LLM bridge via LlmService.ask (NO direct
+           network), and the answer text shows in the answer area. Citations /
+           sources stay EMPTY in v1 (rich, verifiable sources need retrieval —
+           a later slice; we don't fake them). With no model the panel keeps its
+           honest "set up a model" empty state; the picker CTA opens Settings. -->
       <hark-ask-panel
         class="hark-col-right"
         [modelConfigured]="modelConfigured()"
+        [enabled]="modelConfigured()"
+        [loading]="asking()"
+        [answer]="askAnswer()"
+        (ask)="onAsk($event)"
         (dismiss)="toggleRightPanel()"
         (openSettings)="openSettings()"
       />

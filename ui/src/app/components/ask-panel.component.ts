@@ -221,6 +221,35 @@ export interface AnswerSource {
         margin-top: 18px;
       }
 
+      /* In-flight answer — a small spinner + label while ask() runs. No fake
+       * content; mirrors the summary panel's "generating" treatment. */
+      .thinking {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        padding: 16px;
+        border-radius: var(--r-panel);
+        border: 1px dashed var(--border-2);
+        background: var(--surface);
+        color: var(--text-2);
+        font-size: 12.5px;
+      }
+      .spinner {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        border: 2px solid var(--border-2);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: ask-spin 700ms linear infinite;
+      }
+      @keyframes ask-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
       /* Honest empty state — no answer yet (no model, or not asked). */
       .empty {
         margin-top: 6px;
@@ -437,10 +466,10 @@ export interface AnswerSource {
         </svg>
         <input
           type="text"
-          [disabled]="!enabled()"
+          [disabled]="!enabled() || loading()"
           placeholder="Ask about this meeting…"
           aria-label="Ask a question about this meeting"
-          (keydown.enter)="onSubmit($any($event.target).value)"
+          (keydown.enter)="onSubmit($any($event.target))"
         />
         @if (enabled()) {
           <span class="enter-key" aria-hidden="true">↵</span>
@@ -490,7 +519,14 @@ export interface AnswerSource {
     <div class="body scroll-y">
       <hark-eyebrow>Answer</hark-eyebrow>
 
-      @if (answer(); as text) {
+      @if (loading()) {
+        <!-- In-flight answer. A small spinner + label, no fake content — the
+             real answer (or an error) replaces this when ask() resolves. -->
+        <div class="thinking" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          Thinking…
+        </div>
+      } @else if (answer(); as text) {
         <!-- Streamed answer prose. Inline numbered citation refs render with
              the citation-chip atom; the host interleaves text + [n] refs
              when the answer layer lands. Empty today. -->
@@ -608,6 +644,11 @@ export class AskPanelComponent {
    *  in-flight answer) can disable input without un-configuring the model. */
   readonly enabled = input<boolean>(false);
 
+  /** True while an answer is being generated. Takes precedence over `answer`
+   *  in the answer area: shows a small spinner + "Thinking…" instead of the
+   *  empty state or a stale prior answer while the call is in flight. */
+  readonly loading = input<boolean>(false);
+
   /** The current answer prose, or null when there's no answer (the case
    *  today). Drives the answer-area empty state vs. rendered prose. The host
    *  fills this from the provider layer in a later slice. */
@@ -638,9 +679,14 @@ export class AskPanelComponent {
     return n > 0 ? `Sources · ${n}` : 'Sources';
   });
 
-  protected onSubmit(value: string): void {
-    if (!this.enabled()) return;
-    const q = value.trim();
-    if (q.length > 0) this.ask.emit(q);
+  protected onSubmit(el: HTMLInputElement): void {
+    // Guard: ignore submits while disabled or an answer is already in flight.
+    if (!this.enabled() || this.loading()) return;
+    const q = el.value.trim();
+    if (q.length === 0) return;
+    this.ask.emit(q);
+    // Clear the field so the next question starts empty; the question is
+    // already captured in the emitted event.
+    el.value = '';
   }
 }

@@ -88,6 +88,45 @@ export type SummarizeResult =
     }
   | { ok: false; detail: string };
 
+// ─── Ask (this-meeting Q&A) (Phase 6 slice 3, ADR-0031) ─────────────────
+//
+// Same egress model as summarize: the renderer hands main the transcript TEXT
+// only (never audio/voiceprints) plus the meeting's applied speaker
+// display-names so main can collapse them to labels before a CLOUD send. For a
+// LOCAL provider main sends the full transcript with no redaction (zero
+// egress). Redaction/egress/logging all live in main — the renderer consumes
+// the answer text only and persists nothing.
+
+/** What the renderer sends main to answer a question about this meeting: the
+ *  user's question, the assembled transcript text, and the applied speaker
+ *  display-names main should collapse on a cloud send. Text only — never
+ *  audio. */
+export interface AskReq {
+  /** The user's natural-language question about this meeting. */
+  question: string;
+  /** The transcript as readable lines (e.g. "Speaker 1 00:12: …"). */
+  transcript: string;
+  /** Applied speaker display-names for known-name → label collapse (cloud).
+   *  Optional / may be empty when no names have been applied yet. */
+  knownNames?: string[];
+}
+
+/**
+ * Result of an `ask()` call. Discriminated on `ok` (mirrors `SummarizeResult`):
+ *  - success carries the answer text, the model that produced it, whether it
+ *    went to the cloud or ran locally, and the redaction tally;
+ *  - failure carries a one-line human-readable `detail`.
+ */
+export type AskResult =
+  | {
+      ok: true;
+      answer: string;
+      model: string;
+      egress: 'cloud' | 'local';
+      redaction: RedactionCounts;
+    }
+  | { ok: false; detail: string };
+
 /**
  * One row of the local cloud-activity log (ADR-0031). Metadata ONLY — the
  * transcript content is never logged. Both cloud and local actions are
