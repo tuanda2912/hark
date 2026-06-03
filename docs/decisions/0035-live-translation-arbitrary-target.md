@@ -82,6 +82,23 @@ or a SwiftUI host. End-of-meeting arbitrary-target (the more common ask) is alre
 
 ## Implementation notes (as built)
 
+- **Auto-translate + save on Stop (added 2026-06-04).** Live per-segment
+  translation is a real-time PREVIEW; it is NOT itself persisted (the post-stop
+  re-segmentation discards the live `segment.translation` values). Instead, when
+  live translation was ACTIVE at stop (`LiveTranslationService.targetLang` is
+  set), the renderer auto-runs the §1 end-of-meeting translation on the CLEAN
+  post-stop transcript and saves it (`## Transcript — <lang>`) — so the user gets
+  the authoritative translation without re-doing it. This *supersedes* the
+  earlier "user runs §1 manually" note below. Rationale for re-translating the
+  clean transcript rather than stitching the live fragments: the post-stop
+  transcript is re-segmented/deduped/speaker-labeled, and stranded partials leave
+  gaps — re-running §1 yields a complete, consistent result. **Egress:** it
+  reuses §1's audited path verbatim (LOCAL = zero egress; CLOUD redacts + logs a
+  metadata-only `translate` entry). The one behavioral shift is that, with §3 on,
+  a CLOUD send now fires on Stop rather than on an explicit click — gated on the
+  user's explicit §3 opt-in and disclosed via a visible "Translating → <lang>…"
+  toast. Privacy audit: PASS (no new egress mechanism). Orchestrated on
+  `EngineService.meetingSaved$` in `AppComponent.maybeAutoTranslateOnStop`.
 - **Renderer-orchestrated, engine untouched.** A new `LiveTranslationService`
   (renderer) listens on `EngineService.segmentFinalized$` — fired ONLY on
   `segment.final`, never partials, never the post-stop `meeting.transcript` swap

@@ -481,6 +481,33 @@
     </div>
   }
 
+  <!-- Auto-translate-on-stop status (ADR-0035 §3). Shown when live translation
+       was active: a "translating…" state (so a cloud send is visible), then a
+       saved/error confirmation that auto-dismisses. Sits above the bookmark
+       toast slot so the two don't collide. -->
+  @if (autoTranslate(); as at) {
+    <div
+      class="fixed bottom-6 left-1/2 -translate-x-1/2 inline-flex items-center gap-2 px-4 py-2 rounded-card bg-surface-2 border border-border-2 text-text text-sm shadow-lg"
+    >
+      @if (at.phase === 'translating') {
+        Translating meeting → {{ at.lang }}…
+      } @else if (at.phase === 'saved') {
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+          stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+          class="text-success" aria-hidden="true">
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+        Saved {{ at.lang }} translation to note
+      } @else {
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+          stroke-width="2.2" stroke-linecap="round" class="text-recording" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+        Couldn't translate → {{ at.lang }}: {{ at.detail }}
+      }
+    </div>
+  }
+
   <!-- Saved-confirmation card. Retained (carries the path + speaker roster
        the user may act on) until dismissed or the next capture start.
        Sits above the bookmark toast so the two never overlap. -->

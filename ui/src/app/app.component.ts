@@ -683,6 +683,24 @@ export class AppComponent implements OnInit, OnDestroy {
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private bookmarkSub: Subscription | null = null;
 
+  // ─── Auto-translate on stop (ADR-0035, §3 follow-up) ────────────────
+  //
+  // If live arbitrary-target translation (§3) was ACTIVE when the meeting
+  // stops, we automatically produce the authoritative translation and save it —
+  // so the user doesn't have to open the Translate panel and re-do it. We run
+  // the SAME end-of-meeting path (§1, llm.translate) on the CLEAN post-stop
+  // transcript (not the messy live fragments), then writeTranslation it. Reuses
+  // §1's egress governance: a LOCAL model = zero egress; a CLOUD model redacts +
+  // logs (and the toast makes the send visible). Live translation was the user's
+  // explicit opt-in, so finalizing it on stop is consistent with that choice.
+  readonly autoTranslate = signal<{
+    phase: 'translating' | 'saved' | 'error';
+    lang: string;
+    detail?: string;
+  } | null>(null);
+  private autoTranslateTimer: ReturnType<typeof setTimeout> | null = null;
+  private meetingSavedSub: Subscription | null = null;
+
   // ─── Saved-confirmation card (path + speaker roster) ────────────────
   //
   // The card carries actionable content (vault path + the editable roster) so,
@@ -772,6 +790,13 @@ export class AppComponent implements OnInit, OnDestroy {
     this.warningSub = this.engine.warnings$.subscribe((w) => {
       this.warning.set(w.message);
     });
+    // Auto-translate on stop (§3 follow-up): when a meeting saves AND live
+    // translation was active, produce + save the translation automatically. The
+    // clean post-stop transcript (`meeting.transcript`) arrives just BEFORE
+    // `meeting.saved`, so `segments()` already holds it here.
+    this.meetingSavedSub = this.engine.meetingSaved$.subscribe((saved) => {
+      void this.maybeAutoTranslateOnStop(saved);
+    });
     // Route tray Start/Stop to the same handlers the top-bar buttons use, so
     // the tray reuses the current source/language selections. No-op when
     // running outside Electron (window.hark undefined). The callback is
@@ -790,8 +815,49 @@ export class AppComponent implements OnInit, OnDestroy {
     if (this.timerId !== null) clearInterval(this.timerId);
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
     if (this.antiFlashTimer !== null) clearTimeout(this.antiFlashTimer);
+    if (this.autoTranslateTimer !== null) clearTimeout(this.autoTranslateTimer);
     this.bookmarkSub?.unsubscribe();
     this.warningSub?.unsubscribe();
+    this.meetingSavedSub?.unsubscribe();
+  }
+
+  /**
+   * Auto-translate + save on stop (ADR-0035, §3). Fires once per saved meeting:
+   * if live arbitrary-target translation was active (a target is set), translate
+   * the CLEAN post-stop transcript via the §1 path and persist it as a
+   * `## Transcript — <lang>` section — so the user gets the saved translation
+   * without re-doing it manually. A no-op when §3 wasn't active or there's
+   * nothing to translate. Surfaces a toast (incl. a "translating…" state, so a
+   * CLOUD send is visible). Reuses §1's egress governance — never a new send
+   * path; local stays zero-egress.
+   */
+  private async maybeAutoTranslateOnStop(saved: MeetingSavedPayload): Promise<void> {
+    const lang = this.live.targetLang();
+    if (!lang) return; // §3 wasn't active this meeting
+    const transcript = this.buildAskTranscript();
+    if (transcript.trim().length === 0) return;
+
+    if (this.autoTranslateTimer !== null) {
+      clearTimeout(this.autoTranslateTimer);
+      this.autoTranslateTimer = null;
+    }
+    this.autoTranslate.set({ phase: 'translating', lang });
+    const result = await this.llm.translate({
+      transcript,
+      targetLang: lang,
+      knownNames: this.buildAskKnownNames(),
+    });
+    if (result.ok) {
+      // Persist via the engine (single vault writer + git commit), exactly like
+      // the manual Translate panel's "Save to note".
+      this.engine.writeTranslation(saved.session_id, lang, result.translation);
+      this.autoTranslate.set({ phase: 'saved', lang });
+    } else {
+      this.autoTranslate.set({ phase: 'error', lang, detail: result.detail });
+    }
+    // Auto-dismiss the toast a few seconds after it settles (translating state
+    // persists until the result lands).
+    this.autoTranslateTimer = setTimeout(() => this.autoTranslate.set(null), 4000);
   }
 
   /** ⌘⇧B — mark the current moment (the design's shortcut). ⌘, — open
