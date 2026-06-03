@@ -8,8 +8,9 @@
 //     in the top bar). Changing one writes through PreferencesService.
 //   - Vault: the vault path (read-only) + "Reveal in Finder".
 //
-// Deliberately scoped: NO theme/redaction/Q&A controls — those are Phase 6
-// and would be dead UI today (per the build brief). The Privacy section IS
+// Appearance (light/dark/system) is wired (the design ships both themes); the
+// redaction toggles are still deferred (regex redaction is non-configurable in
+// v1). The Privacy section IS
 // wired (ADR-0027): the two storage gates (Keep audio, Remember speakers) are
 // read by the engine on capture.start; the two sync flags are forward-looking
 // intent (audio + voiceprints are already gitignored).
@@ -30,7 +31,7 @@ import {
 } from '@angular/core';
 import { EngineService } from '../services/engine.service';
 import { PreferencesService } from '../services/preferences.service';
-import type { RagBackend, RagTransport } from '../services/preferences.service';
+import type { RagBackend, RagTransport, ThemeChoice } from '../services/preferences.service';
 import { LlmService } from '../services/llm.service';
 import { LANGUAGE_CHOICES } from '../services/engine.types';
 import type { RagConnectionResult } from '../services/engine.types';
@@ -91,6 +92,18 @@ export class SettingsPanelComponent {
         return 'var(--status-recording)';
     }
   });
+
+  // ─── Appearance ─────────────────────────────────────────────────────
+  // Light / dark / follow-system. Bound straight through PreferencesService;
+  // ThemeService reacts to the pref signal and repaints by flipping
+  // <html data-theme>. Persisted immediately.
+  readonly theme = this.prefs.theme;
+
+  onThemeChange(value: string): void {
+    const choice: ThemeChoice =
+      value === 'light' || value === 'dark' ? value : 'system';
+    this.prefs.setTheme(choice);
+  }
 
   // ─── Audio defaults ─────────────────────────────────────────────────
   readonly languageChoices = LANGUAGE_CHOICES;

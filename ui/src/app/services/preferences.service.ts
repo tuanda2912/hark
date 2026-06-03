@@ -15,6 +15,10 @@
 
 import { Injectable, signal, Signal } from '@angular/core';
 
+/** UI appearance choice — 'system' follows the macOS Light/Dark setting.
+ *  Mirrors `Prefs.theme` in src/main/prefs.ts. */
+export type ThemeChoice = 'system' | 'light' | 'dark';
+
 /** Mirrors `Prefs` in src/main/prefs.ts. Versioned & minimal. */
 export interface Prefs {
   readonly version: 1;
@@ -25,6 +29,8 @@ export interface Prefs {
   };
   /** Whether the first-run onboarding flow has been completed. */
   readonly hasCompletedOnboarding: boolean;
+  /** UI appearance: 'system' (follow macOS) | 'light' | 'dark'. */
+  readonly theme: ThemeChoice;
   /** Privacy & data-control flags (ADR-0027). All default false. */
   readonly privacy: {
     readonly keepAudio: boolean;
@@ -60,6 +66,7 @@ const DEFAULT_PREFS: Prefs = {
   version: 1,
   audio: { mic: true, system: true, language: null },
   hasCompletedOnboarding: false,
+  theme: 'system',
   privacy: {
     keepAudio: false,
     rememberSpeakers: false,
@@ -92,6 +99,13 @@ export class PreferencesService {
   );
   readonly hasCompletedOnboarding: Signal<boolean> =
     this._hasCompletedOnboarding.asReadonly();
+
+  // ─── Appearance (light/dark/system) ─────────────────────────────────
+  // The user's theme choice; ThemeService reads this and applies the resolved
+  // theme to <html data-theme>. 'system' follows the OS. Seeded from disk;
+  // persisted immediately on change.
+  private readonly _theme = signal<ThemeChoice>(DEFAULT_PREFS.theme);
+  readonly theme: Signal<ThemeChoice> = this._theme.asReadonly();
 
   // ─── Privacy & data-control flags (ADR-0027) ────────────────────────
   // All default OFF (privacy-first). The engine gates audio/voiceprint
@@ -147,6 +161,8 @@ export class PreferencesService {
       // Tolerate an older main that doesn't yet send the field (reads as
       // first run) — the renderer must never throw on a partial response.
       this._hasCompletedOnboarding.set(!!res.prefs.hasCompletedOnboarding);
+      // Appearance: a missing/invalid value (old main) reads as 'system'.
+      this._theme.set(normalizeTheme(res.prefs.theme));
       // Privacy flags — a missing block (old main) reads as all-false, the
       // privacy-first state. `??`/`!!` keep us safe against a partial payload.
       const pv = res.prefs.privacy;
@@ -183,6 +199,13 @@ export class PreferencesService {
     if (opts.mic !== undefined) this._mic.set(opts.mic);
     if (opts.system !== undefined) this._system.set(opts.system);
     if (opts.language !== undefined) this._language.set(opts.language);
+    this.save();
+  }
+
+  /** Set the UI appearance and persist. ThemeService reacts to the signal and
+   *  applies the resolved theme to <html>. */
+  setTheme(theme: ThemeChoice): void {
+    this._theme.set(normalizeTheme(theme));
     this.save();
   }
 
@@ -272,6 +295,7 @@ export class PreferencesService {
         language: this._language(),
       },
       hasCompletedOnboarding: this._hasCompletedOnboarding(),
+      theme: this._theme(),
       privacy: {
         keepAudio: this._keepAudio(),
         rememberSpeakers: this._rememberSpeakers(),
@@ -281,4 +305,10 @@ export class PreferencesService {
       rag: this.ragSnapshot(),
     };
   }
+}
+
+/** Coerce an untrusted theme value to a known choice; anything unexpected
+ *  (missing, an old main that doesn't send it, a typo) reads as 'system'. */
+function normalizeTheme(v: unknown): ThemeChoice {
+  return v === 'light' || v === 'dark' ? v : 'system';
 }

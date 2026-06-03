@@ -60,6 +60,36 @@
         </dl>
       </section>
 
+      <!-- ─── Appearance ─── -->
+      <section class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <h3 class="text-[11px] font-mono uppercase tracking-wider text-text-3">
+            Appearance
+          </h3>
+          <p class="text-xs text-text-3">
+            Light, dark, or follow your macOS setting.
+          </p>
+        </div>
+        <div class="flex items-center justify-between gap-4">
+          <label class="flex flex-col" for="settings-theme">
+            <span class="text-sm text-text">Theme</span>
+            <span class="text-xs text-text-3">
+              “System” matches your Mac's Light/Dark mode automatically.
+            </span>
+          </label>
+          <select
+            id="settings-theme"
+            class="px-2 py-1 rounded-input border border-border-2 bg-surface text-text text-sm cursor-pointer"
+            [value]="theme()"
+            (change)="onThemeChange($any($event.target).value)"
+          >
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </div>
+      </section>
+
       <!-- ─── Audio defaults ─── -->
       <section class="flex flex-col gap-3">
         <div class="flex flex-col gap-1">

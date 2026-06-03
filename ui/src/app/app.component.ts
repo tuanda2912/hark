@@ -29,6 +29,7 @@ import {
   LiveTranslationService,
   LIVE_TRANSLATE_TARGETS,
 } from './services/live-translation.service';
+import { ThemeService } from './services/theme.service';
 import {
   LANGUAGE_CHOICES,
   DisplayedSegment,
@@ -84,6 +85,10 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly llm = inject(LlmService);
   private readonly retrieval = inject(RetrievalService);
   private readonly live = inject(LiveTranslationService);
+  // Injected for its construction side-effect: ThemeService applies the
+  // persisted appearance choice to <html data-theme> at app start and keeps it
+  // in sync with the pref + the OS Light/Dark setting. Not referenced further.
+  private readonly theme = inject(ThemeService);
 
   /** True when vault Ask is routed to the EXTERNAL retrieval backend (ADR-0033/
    *  0034) — drives the Ask panel's index indicator (external shows a backend

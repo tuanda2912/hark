@@ -91,6 +91,10 @@ contextBridge.exposeInMainWorld('hark', {
           typeof prefs.audio.language === 'string' ? prefs.audio.language : null,
       },
       hasCompletedOnboarding: !!prefs.hasCompletedOnboarding,
+      // Appearance pref — only the three known values cross the bridge; main's
+      // sanitizeTheme collapses anything else to 'system'.
+      theme:
+        prefs.theme === 'light' || prefs.theme === 'dark' ? prefs.theme : 'system',
       // ADR-0027 privacy flags — re-shaped to strict booleans so nothing
       // extra crosses the bridge; main re-validates again before writing.
       privacy: {
@@ -99,6 +103,11 @@ contextBridge.exposeInMainWorld('hark', {
         syncAudio: !!prefs.privacy?.syncAudio,
         syncSpeakers: !!prefs.privacy?.syncSpeakers,
       },
+      // Vault-retrieval backend (ADR-0033/0034). Forwarded so the user's
+      // backend choice actually persists across restarts — main's sanitizeRag
+      // is the final trust boundary (drops a half-config back to built-in).
+      // Whole-value passthrough; the renderer's ragSnapshot() builds the shape.
+      rag: prefs.rag,
     });
   },
 

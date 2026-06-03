@@ -51,6 +51,14 @@ export interface Prefs {
    */
   readonly hasCompletedOnboarding: boolean;
   /**
+   * UI appearance. 'system' (default) follows the macOS Light/Dark setting;
+   * 'light' / 'dark' force a theme regardless of the OS. Back-compat: a
+   * *missing* value (old prefs.json, fresh install) reads as 'system'. The
+   * renderer applies it by setting `data-theme` on <html> (ThemeService); the
+   * token cascade in styles/tokens.css does the rest. Config only — no content.
+   */
+  readonly theme: 'system' | 'light' | 'dark';
+  /**
    * Privacy & data-control flags (ADR-0027). ALL default false — privacy-first.
    * Two govern what the engine stores locally; two govern future sync intent.
    * The engine gates behavior on `keep_audio` / `remember_speakers` in the
@@ -138,6 +146,8 @@ export const DEFAULT_PREFS: Prefs = {
   version: 1,
   audio: { mic: true, system: true, language: null },
   hasCompletedOnboarding: false,
+  // Follow the macOS appearance by default — least surprising on first run.
+  theme: 'system',
   // Privacy-first: every sensitive/sync flag is OFF until the user opts in
   // (at onboarding or in Settings → Privacy). ADR-0027.
   privacy: {
@@ -225,6 +235,7 @@ export function savePrefs(input: unknown): void {
       'hasCompletedOnboarding' in patch
         ? patch['hasCompletedOnboarding']
         : existing.hasCompletedOnboarding,
+    theme: 'theme' in patch ? patch['theme'] : existing.theme,
     privacy: mergedPrivacy,
     window: 'window' in patch ? patch['window'] : existing.window,
     // The `llm` block is treated as a whole-value overlay (like `window`):
@@ -291,6 +302,10 @@ function sanitize(input: unknown): Prefs {
       ? o['hasCompletedOnboarding']
       : DEFAULT_PREFS.hasCompletedOnboarding;
 
+  // Appearance pref. 'light'/'dark' pass through; anything else (missing,
+  // 'system', or malformed) collapses to 'system' — follow the OS.
+  const theme = sanitizeTheme(o['theme']);
+
   // Privacy block (ADR-0027). Rebuilt flag-by-flag from DEFAULT_PREFS so a
   // missing block, a partial one, or any non-boolean value collapses to the
   // safe state: false. Only an explicit `true` on disk turns a flag on.
@@ -322,6 +337,7 @@ function sanitize(input: unknown): Prefs {
     version: 1,
     audio: { mic, system, language },
     hasCompletedOnboarding,
+    theme,
     privacy,
   };
   const withWindow = window ? { ...base, window } : base;
@@ -383,6 +399,13 @@ function sanitizeLlm(input: unknown): Prefs['llm'] | undefined {
     out.baseUrl = baseUrl;
   }
   return out;
+}
+
+/** Validate the appearance pref. 'light' | 'dark' pass through; anything else
+ *  (missing, the literal 'system', or malformed) collapses to 'system' — follow
+ *  the OS. So an old prefs.json with no `theme` reads as 'system'. */
+function sanitizeTheme(input: unknown): Prefs['theme'] {
+  return input === 'light' || input === 'dark' ? input : 'system';
 }
 
 /** Validate the privacy block. Each flag is a strict boolean; anything else

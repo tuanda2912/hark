@@ -182,10 +182,12 @@ export interface AnswerSource {
         background: var(--text-3);
       }
       .idx.ready .dot {
-        background: var(--status-ok, #3fb950);
+        /* Shared status token (defined in :root, identical in both themes) —
+           was an undefined --status-ok that always fell back to a stray hex. */
+        background: var(--status-success);
       }
       .idx.building .dot {
-        background: var(--status-cloud, #d29922);
+        background: var(--status-cloud);
         animation: idx-pulse 1100ms ease-in-out infinite;
       }
       .idx .idx-label {
