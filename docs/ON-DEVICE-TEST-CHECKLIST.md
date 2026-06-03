@@ -73,6 +73,18 @@ Use **Test connection** in Settings first — it should say OK.
       finalizes to be useful? (Local model speed depends on your Mac + model size.)
 - [ ] **Locked during capture:** the picker is disabled while recording (chosen
       before Start) — confirm.
+- [ ] **Auto-save on Stop (NEW):** with a target set, **Stop** → a toast shows
+      "Translating meeting → <lang>…" then "Saved <lang> translation to note", and
+      the saved meeting `.md` gains a `## Transcript — <lang>` section **without**
+      you opening the Translate panel. (Local model = nothing leaves the Mac;
+      cloud = the toast makes the send visible.)
+- [ ] **No stranded partial (NEW, engine fix):** during/after a meeting with
+      continuous speech, confirm an early line no longer gets stuck **untranslated
+      at the bottom** of the transcript while later lines sit above it. (This was
+      the "messy transcript" — a partial that never finalized; now retracted.)
+- [ ] **Translate no longer times out (NEW):** a longer end-of-meeting Translate
+      on a local model should now **complete** instead of timing out at ~60s (the
+      cap for heavy whole-transcript ops is now 10 min).
 
 ## 7. Privacy verification (the trust check)
 - [ ] **Local zero-egress:** after a LOCAL summary / Q&A / §3 live-translation
