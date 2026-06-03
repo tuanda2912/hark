@@ -279,11 +279,17 @@ rest. Three pieces, easiest first:
   - *Single-shot v1 (pick up):* one provider call with an 8192-token output cap — a very long
     transcript may truncate. Chunk the transcript (by speaker-turn / size), translate each, and
     reassemble for arbitrarily long meetings.
-- **Live → English (cheap, local).** WhisperKit has a built-in `task: .translate` that translates
-  any source-language audio → **English** text on-device (no extra model). Flip the session's
-  `DecodingOptions.task` to `.translate` when the user wants live English captions; the existing
-  `segment.translation` plumbing already displays it. Engine-side, zero egress. (Whisper only
-  translates *to English* — other targets need MT below.)
+- **Live → English — DONE (2026-06-03).** A `→ EN` toggle in the controls bar (locked while
+  capturing, pure-local — no model/provider needed) sends `capture.start.translation.enabled`; the
+  engine stores `liveTranslateToEnglish` and runs BOTH transcribe paths (live hops + flush-on-stop
+  drain) with WhisperKit `task: .translate` instead of `.transcribe`, so any source language shows
+  up as **English captions** (and the saved transcript is English). On-device, ZERO egress (same
+  local model, different decode task); `sessionLanguage` still passes the source hint. 179 engine
+  tests green (no regression to the streaming/ledger machinery). **Design note (chosen):** §2 puts
+  the English in `segment.text` (single inference, "cheap") — NOT a bilingual original+translation
+  view (that would be 2× inference per window + threading a translation field through the ledger).
+  - *Bilingual original+English (pick up):* if users want the source text AND English side-by-side,
+    run a second `.transcribe` pass and fill `segment.translation` — its own slice (2× RTF).
 - **Live → arbitrary language (the real lift).** Per-segment MT for any pair (English→Thai,
   Thai→Vietnamese, …). Options: a small **local MT model (NLLB-200) as CoreML in the engine** (same
   pattern as the RAG embedder, zero egress) **or Apple's on-device Translation framework** (lovely,

@@ -231,6 +231,12 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly micEnabled = signal(true);
   readonly systemEnabled = signal(true);
 
+  /** Live translate captions → English (BACKLOG translation §2). On-device,
+   *  zero egress — the engine flips WhisperKit to `task: .translate` so any
+   *  spoken language shows up as English captions (and the saved transcript is
+   *  English). Locked at capture.start, like the source/language selectors. */
+  readonly liveTranslate = signal(false);
+
   /** Settings modal visibility. Toggled by the gear button + ⌘, . */
   readonly settingsOpen = signal(false);
 
@@ -785,6 +791,12 @@ export class AppComponent implements OnInit, OnDestroy {
     if (!this.isCapturing()) this.systemEnabled.update((v) => !v);
   }
 
+  /** Toggle live → English translation (§2). Locked while capturing (the decode
+   *  task is fixed at capture.start). */
+  toggleLiveTranslate(): void {
+    if (!this.isCapturing()) this.liveTranslate.update((v) => !v);
+  }
+
   /** Re-evaluate whether to keep following the tail from the user's scroll
    *  position. Within ~48px of the bottom counts as "at the bottom", so a
    *  user reading back up isn't pulled down by new segments. */
@@ -858,6 +870,8 @@ export class AppComponent implements OnInit, OnDestroy {
       // choices. Off by default ⇒ the engine stores no audio / voiceprints.
       keepAudio: this.prefs.keepAudio(),
       rememberSpeakers: this.prefs.rememberSpeakers(),
+      // Live → English captions (§2) — on-device, zero egress.
+      translateToEnglish: this.liveTranslate(),
     });
   }
 

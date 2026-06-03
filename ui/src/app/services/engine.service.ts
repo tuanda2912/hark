@@ -346,6 +346,11 @@ export class EngineService {
     /** Store + match voiceprints (ADR-0026/0027). Default false ⇒ the engine
      *  performs zero `.speakers/` reads/writes. */
     rememberSpeakers?: boolean;
+    /** Live translate captions → English (BACKLOG translation §2). Default false.
+     *  When true the engine runs WhisperKit with `task: .translate` (any source
+     *  language → English text), on-device, zero egress. Whisper only translates
+     *  TO English; other live targets are §3. */
+    translateToEnglish?: boolean;
   }): void {
     // Payload is required by the engine's decoder even when empty —
     // see CaptureStartCommand type. Default to both sources unless the
@@ -356,6 +361,7 @@ export class EngineService {
       language?: string;
       keep_audio: boolean;
       remember_speakers: boolean;
+      translation?: { enabled: boolean; mode: string; target_lang: string };
     } = {
       sources,
       // Privacy gates (ADR-0027). Always sent explicitly from the user's
@@ -366,6 +372,12 @@ export class EngineService {
       remember_speakers: opts?.rememberSpeakers ?? false,
     };
     if (opts?.language) payload.language = opts.language;
+    // Live → English (§2). Only sent when on; the engine flips its decode task
+    // to `.translate`. mode/target_lang are carried for the §3 contract (live
+    // arbitrary target); §2 only does English, so target_lang is "en".
+    if (opts?.translateToEnglish) {
+      payload.translation = { enabled: true, mode: 'live', target_lang: 'en' };
+    }
     const cmd: EngineCommand = { type: 'capture.start', payload };
     // A fresh capture is a fresh meeting: reset the on-screen view so the
     // previous meeting's segments, saved card, bookmarks, and stale error

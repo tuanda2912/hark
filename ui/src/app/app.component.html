@@ -216,6 +216,28 @@
       </select>
     </label>
 
+    <!-- Live translate → English (BACKLOG translation §2). On-device, zero
+         egress: the engine flips WhisperKit to task=.translate so any spoken
+         language shows up as English captions. Locked while capturing (the
+         decode task is fixed at capture.start), like the source/language
+         selectors. Pure-local — no model/provider needed. -->
+    <button
+      type="button"
+      class="shrink-0 px-2 py-1 rounded-input border text-xs font-mono cursor-pointer disabled:cursor-not-allowed"
+      [class.border-accent]="liveTranslate()"
+      [class.text-accent]="liveTranslate()"
+      [class.bg-accent-soft]="liveTranslate()"
+      [class.border-border-2]="!liveTranslate()"
+      [class.text-text-3]="!liveTranslate()"
+      [class.opacity-60]="!liveTranslate()"
+      [disabled]="isCapturing()"
+      (click)="toggleLiveTranslate()"
+      [attr.aria-pressed]="liveTranslate()"
+      title="Translate live captions to English on-device (any spoken language → English). Nothing leaves your Mac."
+    >
+      → EN
+    </button>
+
     <!-- Trust lozenge — the product's defining affordance. Audio stays
          on this Mac; this is always-visible reassurance. The label text
          collapses (icon-only) at narrow widths via .ctl-label; the title

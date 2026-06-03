@@ -110,6 +110,15 @@ actor EngineSession {
     /// `DecodingOptions.language` at every hop + the flushOnStop drain.
     private var sessionLanguage: String?
 
+    /// Live translation → English (BACKLOG translation §2). When true, BOTH
+    /// transcribe paths (live hops + the flush-on-stop drain) run WhisperKit with
+    /// `task: .translate`, which emits ENGLISH text for any source language —
+    /// Whisper's only translation target (other live targets are §3, not built).
+    /// Set from `capture.start`'s `translation.enabled`; on-device, ZERO egress
+    /// (same local model, different decode task). `sessionLanguage` still passes
+    /// the SOURCE-language hint. Reset on stop, like `sessionLanguage`.
+    private var liveTranslateToEnglish = false
+
     /// Privacy gates for THIS session (ADR-0027). Both default false = privacy-
     /// safe; set from `capture.start` (absent ⇒ false). Retained for the meeting's
     /// whole lifetime — `rememberSpeakers` is read by the enroll-on-rename path
@@ -400,10 +409,15 @@ actor EngineSession {
                       message: "bad capture.start payload", recoverable: true)
             return
         }
-        // Translation is Phase 6 — accept the field, log it as pending.
-        if let t = cmd.translation, t.enabled == true {
+        // Live translation (BACKLOG translation §2): `translation.enabled` ⇒ run
+        // the live transcribe with WhisperKit `task: .translate`, which outputs
+        // ENGLISH for any source language (Whisper's only translation target;
+        // other live targets are §3, not built). On-device, zero egress. `mode`
+        // and `target_lang` are reserved for §3 — for §2, enabled means → English.
+        let liveTranslateToEnglish = (cmd.translation?.enabled == true)
+        if liveTranslateToEnglish {
             FileHandle.standardError.write(Data(
-                "harkd: translation_pending (mode=\(t.mode ?? "?") target=\(t.targetLang ?? "?"))\n".utf8))
+                "harkd: live translation → English enabled (task=.translate)\n".utf8))
         }
 
         let captureMic = cmd.sources?.mic ?? true
@@ -441,7 +455,8 @@ actor EngineSession {
                              captureSystem: captureSystem,
                              language: language,
                              keepAudio: keepAudio,
-                             rememberSpeakers: rememberSpeakers)
+                             rememberSpeakers: rememberSpeakers,
+                             liveTranslateToEnglish: liveTranslateToEnglish)
         } catch {
             sendError(client, id: id, code: "INTERNAL",
                       message: "could not start capture: \(error)", recoverable: false)
@@ -527,6 +542,7 @@ actor EngineSession {
         self.captureWallStart = nil
         self.sessionTimeSeconds = 0
         self.sessionLanguage = nil
+        self.liveTranslateToEnglish = false
         self.committedUpTo = 0
         self.rtfSum = 0
         self.rtfSamples = 0
@@ -919,7 +935,8 @@ actor EngineSession {
                               captureSystem: Bool,
                               language: String?,
                               keepAudio: Bool,
-                              rememberSpeakers: Bool) throws {
+                              rememberSpeakers: Bool,
+                              liveTranslateToEnglish: Bool) throws {
         self.sessionId = UUID().uuidString
         self.sessionStartDate = Date()
         self.captureWallStart = Date()
@@ -928,6 +945,7 @@ actor EngineSession {
         self.ledger = UtteranceLedger()
         self.vad = EnergyVAD()
         self.sessionLanguage = language
+        self.liveTranslateToEnglish = liveTranslateToEnglish
         // Retain the privacy gates for the meeting's lifetime (ADR-0027). These
         // deliberately persist past `dispatchCaptureStop`'s session-state wipe so
         // the enroll-on-rename path (which can fire after stop) reads the right
@@ -1033,8 +1051,9 @@ actor EngineSession {
         do {
             let opts = DecodingOptions(
                 verbose: false,
-                task: .transcribe,
-                language: self.sessionLanguage,  // nil = auto; "vi"/"en"/… = locked
+                // §2: `.translate` → English for any source; else faithful transcribe.
+                task: self.liveTranslateToEnglish ? .translate : .transcribe,
+                language: self.sessionLanguage,  // nil = auto; "vi"/"en"/… = source hint
                 withoutTimestamps: false
             )
             results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: opts)
@@ -1694,7 +1713,9 @@ actor EngineSession {
         let started = Date()
         let results: [TranscriptionResult]
         do {
-            let opts = DecodingOptions(verbose: false, task: .transcribe,
+            let opts = DecodingOptions(verbose: false,
+                                       // §2: match the live path's task on the final drain.
+                                       task: self.liveTranslateToEnglish ? .translate : .transcribe,
                                        language: self.sessionLanguage,
                                        withoutTimestamps: false)
             results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: opts)
