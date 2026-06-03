@@ -59,6 +59,18 @@ let package = Package(
         .package(
             url: "https://github.com/FluidInference/FluidAudio.git",
             exact: "0.14.8"
+        ),
+        // swift-transformers — Apple/HuggingFace tokenizers for the vault-RAG
+        // text embedder (Phase 6 slice 4a, ADR-0032). We use ONLY the offline
+        // `Tokenizers` product: `AutoTokenizer.from(tokenizerConfig:tokenizerData:)`
+        // parses local tokenizer.json + tokenizer_config.json with NO network,
+        // and the tokenizer files themselves are downloaded once through
+        // HarkPaths (rule #2) — swift-transformers' own `HubApi` cache dir is
+        // never touched. EXACT pin (API still <2.0, iterates) — documented under
+        // rule #6 in ADR-0032 (a dep that *can* network-fetch, pinned to offline use).
+        .package(
+            url: "https://github.com/huggingface/swift-transformers.git",
+            exact: "1.3.3"
         )
     ],
     targets: [
@@ -118,7 +130,12 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOWebSocket", package: "swift-nio"),
-                .product(name: "FluidAudio", package: "FluidAudio")
+                .product(name: "FluidAudio", package: "FluidAudio"),
+                // Offline tokenizers for the vault-RAG embedder (slice 4a).
+                // `Tokenizers` = AutoTokenizer/Unigram/Bert; `Hub` = HubApi/Repo
+                // for the one-time, HarkPaths-rooted model+tokenizer download.
+                .product(name: "Tokenizers", package: "swift-transformers"),
+                .product(name: "Hub", package: "swift-transformers")
             ],
             path: "Sources/Harkd"
         ),

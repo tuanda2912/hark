@@ -96,12 +96,16 @@ is being built **provider-agnostic now**; the integration lands later.
     test) + 4b (index + watcher + `rag.retrieve`/`rag.index_status`); (3) **external backend** —
     loopback MCP/HTTP client in main + connection/index-status check + loopback guard; (4) shared
     answer path — backend → redact → `llm.ask` → answer + citations + Ask-panel scope toggle.
-  - **4a status (parked, UNCOMMITTED):** engine embedder *scaffolding* built + `swift build` passes
-    (`TextEmbedder` actor, loader w/ progress frames, curated registry, masked-pool + normalize,
-    pure-math tests; `swift-transformers` 1.3.3 added per rule #6). BLOCKED on the CoreML conversion
-    (no `coremltools` in the agent sandbox) — a conversion recipe was produced to run on the Mac.
-    `swift test` not yet run. Finish + privacy-audit (the new network-capable `swift-transformers`
-    dep in the engine) + commit when building the built-in backend.
+  - **4a status — DONE + on-device validated (2026-06-03).** Engine `TextEmbedder` (CoreML, ANE)
+    + loader (+ `HARK_EMBEDDER_LOCAL_DIR` dev override) + curated registry + `swift-transformers`
+    1.3.3. The `multilingual-e5-small` CoreML conversion (`scripts/convert-embedder-coreml.py`)
+    was run on-device; the gated cross-lingual test (EN↔TH/VI closer than unrelated) **passes on
+    ANE**. 123 engine tests green; privacy-audited PASS (network use = the routed model download
+    only). **Deploy TODOs (built-in backend, before shipping):** (1) publish the `.mlpackage`
+    (FP16-quantize to ~112 MB) to a Hark-owned HF repo + point `EmbedderModels.repo` at it (today
+    production download can't resolve it; dev uses the local-dir override); (2) optionally cache the
+    compiled `.mlmodelc` under `HarkPaths` to skip recompiles. Next: **4b** (chunker + brute-force
+    index + FSEvents watcher + `rag.retrieve`/`rag.index_status` frames).
 - **Cloud-call log + PII redaction — SHIPPED (Slice 2).** Every cloud call redacts PII first +
   logs metadata-only; surfaced in Settings → Privacy "Cloud activity". Local calls need neither.
   (NER name redaction + a redaction toggle remain deferred — see the summary entry.)
