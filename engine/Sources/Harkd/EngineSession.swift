@@ -798,6 +798,17 @@ actor EngineSession {
     /// DIFFERENT `lang` appends its own section, so multiple languages coexist — the
     /// merge is the PURE `VaultWriter.mergeTranslationSection`.
     ///
+    /// TWO BODY SHAPES (exactly one per command):
+    ///   - `lines` (PREFERRED, background post-meeting translation): per-utterance
+    ///     translated text in the SAME ORDER as the retained `snapshot.labeled`. We zip
+    ///     it with those utterances' label + tStart and re-render via the engine's own
+    ///     `VaultWriter.renderTranscriptBody`, so the translated section is a STRUCTURAL
+    ///     MIRROR of the original `## Transcript` (same labels, same wall-clock
+    ///     timestamps, same blockquote format). The renderer supplied only text.
+    ///   - `translation` (LEGACY, manual Translate panel): a pre-formatted blob written
+    ///     verbatim — UNCHANGED behavior.
+    /// NEITHER present → `PROTOCOL_MISMATCH`.
+    ///
     /// Same MVP scope + ack/error shape as `summary.write`: only the single most-recent
     /// meeting is writable (located by the retained `lastSavedMeeting` snapshot's
     /// `sessionId`); a plain `ack` on success, `MEETING_NOT_FOUND` when the session id
@@ -828,11 +839,34 @@ actor EngineSession {
         let writer = VaultWriter()
         let result: VaultWriter.Result
         do {
-            result = try writer.appendTranslation(
-                to: snapshot.vaultPath,
-                lang: cmd.lang,
-                translation: cmd.translation,
-                commitMessage: "docs(meeting): \(cmd.lang) translation for \(slug)")
+            if let lines = cmd.lines {
+                // STRUCTURED path (preferred): zip the per-utterance translated lines with
+                // the engine's OWN retained `labeled` utterances (label + tStart) and render
+                // via the shared `renderTranscriptBody` — so `## Transcript — <lang>` is a
+                // structural mirror of the original `## Transcript` (same labels, same
+                // wall-clock timestamps, same blockquote format). The renderer supplied only
+                // the text; the engine owns all formatting.
+                result = try writer.appendTranslationStructured(
+                    to: snapshot.vaultPath,
+                    lang: cmd.lang,
+                    translatedLines: lines,
+                    utterances: snapshot.labeled,
+                    sessionStart: snapshot.sessionStart,
+                    commitMessage: "docs(meeting): \(cmd.lang) translation for \(slug)")
+            } else if let blob = cmd.translation {
+                // LEGACY blob path (manual Translate panel): write the renderer-supplied
+                // pre-formatted body verbatim — UNCHANGED behavior.
+                result = try writer.appendTranslation(
+                    to: snapshot.vaultPath,
+                    lang: cmd.lang,
+                    translation: blob,
+                    commitMessage: "docs(meeting): \(cmd.lang) translation for \(slug)")
+            } else {
+                // Neither body shape present — malformed command.
+                sendError(client, id: id, code: "PROTOCOL_MISMATCH",
+                          message: "translation.write needs lines or translation", recoverable: false)
+                return
+            }
         } catch {
             // The `.md` read-modify-write failed (read / atomic write). This is the
             // durable part — a failed write means the translation did NOT land, so it's
@@ -1139,6 +1173,29 @@ actor EngineSession {
         var maxCommittedEnd = committedUpTo
 
         for seg in winSegments {
+            // GROW path (ADR-0020 content-loss fix): if this is a fuller
+            // re-decode of an already-FINALIZED line (same conservative
+            // time+text-prefix+grew gate as ADR-0018 supersession), EXTEND that
+            // finalized line in place rather than letting its grown tail fall
+            // behind the watermark and get dropped. Re-emit its final with the
+            // fuller text (the renderer replaces by uid; the vault retains by
+            // uid) — no loss, no duplicate. The whole grown span is now
+            // committed. Runs BEFORE resolve so it can't double-process; an
+            // identical re-decode returns nil and falls through to the normal
+            // path (becomes a redundant orphan the prune-retraction handles —
+            // content is already saved, so no loss).
+            if let grownUid = ledger.extendFinalizedIfGrown(
+                tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text) {
+                // EXPORT-ONLY growth (ADR-0036): the grown re-decode updates the
+                // RETAINED finalized text so the SAVED transcript is complete,
+                // but we do NOT re-broadcast a segment.final — the LIVE view keeps
+                // the discrete short line it first finalized (the user's chosen
+                // "live clean, export recovers it"). The fuller text surfaces in
+                // the post-stop transcript / vault write, not in the live stream.
+                growRetainedFinalized(uid: grownUid, tEnd: seg.tEnd, text: seg.text)
+                maxCommittedEnd = max(maxCommittedEnd, seg.tEnd)
+                continue
+            }
             // Resolve utterance identity by overlap, not by t_start bucket.
             // See SlidingWindow.swift comments for rationale.
             let uid = ledger.resolve(tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text)
@@ -2296,6 +2353,10 @@ actor EngineSession {
         // a diarizer is attached) so the meeting file is written even if the
         // diarizer failed to load — those utterances just get "Speaker ?".
         if isFinal {
+            // Each uid is finalized exactly once (markFinalized gates re-finalize),
+            // so a plain append never duplicates a uid here. Grown re-decodes do
+            // NOT go through emitSegment — they update the retained row silently
+            // via growRetainedFinalized (export-only, no live re-broadcast).
             finalizedUtterances.append(FinalizedUtterance(
                 utteranceId: uid, tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text))
         }
@@ -2312,6 +2373,24 @@ actor EngineSession {
         let env = WireEnvelope(type: isFinal ? "segment.final" : "segment.partial",
                                payload: payload)
         broadcast(env)
+    }
+
+    /// Apply a grown re-decode to the RETAINED finalized utterance for `uid` —
+    /// for the post-stop transcript / vault write ONLY (ADR-0036). Unlike
+    /// `emitSegment`, this does NOT broadcast a `segment.final`, so the LIVE view
+    /// keeps the discrete short line it first finalized ("live clean, export
+    /// recovers it"): the fuller text reaches the saved transcript (built from
+    /// `finalizedUtterances`) without rewriting the live stream. Keeps the
+    /// original `tStart`; grows `tEnd` + text. No-op if the uid isn't retained
+    /// (defensive — `extendFinalizedIfGrown` only matches a finalized entry,
+    /// which was retained when it was emitted).
+    private func growRetainedFinalized(uid: String, tEnd: Double, text: String) {
+        guard let idx = finalizedUtterances.firstIndex(where: { $0.utteranceId == uid }) else { return }
+        finalizedUtterances[idx] = FinalizedUtterance(
+            utteranceId: uid,
+            tStart: finalizedUtterances[idx].tStart,
+            tEnd: tEnd,
+            text: text)
     }
 
     /// Drain any supersession events the ledger recorded since the last drain

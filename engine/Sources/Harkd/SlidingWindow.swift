@@ -353,6 +353,78 @@ final class UtteranceLedger {
         }
     }
 
+    // ─── Grow an already-finalized line in place (ADR-0020 content-loss fix) ──
+    //
+    // The commit watermark finalizes an audio region ONCE, when a segment's
+    // start first crosses the horizon (ADR-0019 `commitDecision`). For a long
+    // multi-clause utterance that means the SHORT decode present at that hop is
+    // what gets finalized; the watermark then advances past its start. A later
+    // hop re-decodes the GROWN version with the same start. `resolve` skips
+    // finalized entries (emitting a partial after a final confuses the UI), so
+    // the grown decode mints a fresh uid, `commitDecision` sees its start behind
+    // the watermark → `.skipAlreadyCommitted`, and the grown TAIL is dropped:
+    // the saved transcript truncates at the short version.
+    //
+    // The cure is to EXTEND the finalized line instead of dropping the tail.
+    // This is the supersession gate (ADR-0018), re-aimed at finalized entries:
+    // same conservative time-containment + text-PREFIX + actually-grew tests, so
+    // two genuinely-different utterances never merge. On a match we update the
+    // finalized entry's `tEnd`/`lastText` to the fuller values and hand back its
+    // id; the caller re-emits its `segment.final` with the full text (the
+    // renderer replaces by uid, the vault retains by uid — no loss, no dup). The
+    // entry STAYS finalized; we only grow its content.
+
+    /// If `[tStart, tEnd]`/`text` is a GROWN re-decode of an already-FINALIZED,
+    /// non-superseded entry — same gate as `detectSupersession`: time containment
+    /// (start ≤ e.tStart + supersedeStartSlack AND end ≥ e.tEnd - supersedeEndSlack)
+    /// plus text containment (normalized old text is a non-empty prefix of the
+    /// normalized new text, and the two differ) AND it genuinely extends
+    /// (tEnd > e.tEnd OR the normalized new text is strictly longer than the old)
+    /// — UPDATE that entry's `tEnd` + `lastText` to the fuller values and return
+    /// its id so the caller can re-emit its `segment.final` with the full text.
+    ///
+    /// Returns `nil` when no finalized entry matches (NEVER extends on a
+    /// non-prefix → two distinct utterances never merge) and when the only match
+    /// would be a no-op (an identical re-decode that adds nothing → no spurious
+    /// re-emit). Does NOT clear `finalized` — the line stays finalized, just with
+    /// fuller text. The entry's `tStart` is left untouched (the committed region
+    /// is anchored on its original start; only the end grows).
+    func extendFinalizedIfGrown(tStart: Double, tEnd: Double, text: String) -> String? {
+        let newNorm = Self.normalize(text)
+        if newNorm.isEmpty { return nil }
+
+        for i in entries.indices {
+            let e = entries[i]
+            guard e.finalized && !e.superseded else { continue }
+
+            // 1. Time containment: old ⊆ new, within boundary-jitter slack —
+            //    the same re-segmentation signature `detectSupersession` uses.
+            let startContained = tStart <= e.tStart + supersedeStartSlack
+            let endContained = tEnd >= e.tEnd - supersedeEndSlack
+            guard startContained && endContained else { continue }
+
+            // 2. Text containment: old normalized text is a prefix of new's, and
+            //    they differ (identical text is not a growth).
+            let oldNorm = Self.normalize(e.lastText)
+            guard !oldNorm.isEmpty else { continue }
+            guard oldNorm != newNorm else { continue }
+            guard newNorm.hasPrefix(oldNorm) else { continue }
+
+            // 3. Actually extends: the time-end grows OR the text is strictly
+            //    longer. (Prefix + differ already implies longer text here, but
+            //    keep the explicit guard so an identical re-decode that only
+            //    nudged tEnd within slack still grows, and a no-op returns nil.)
+            let grewInTime = tEnd > e.tEnd
+            let grewInText = newNorm.count > oldNorm.count
+            guard grewInTime || grewInText else { continue }
+
+            entries[i].tEnd = tEnd
+            entries[i].lastText = text
+            return e.id
+        }
+        return nil
+    }
+
     /// A live (non-finalized, non-superseded) ledger entry that still has a
     /// known interval + last-emitted text. Returned by `liveEntriesAbove` for
     /// the at-stop hot-region finalize (ADR-0019 content-loss fix). These are

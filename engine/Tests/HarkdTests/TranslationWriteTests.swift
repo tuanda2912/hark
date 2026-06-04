@@ -249,7 +249,158 @@ final class TranslationWriteTests: XCTestCase {
         XCTAssertEqual(cmd.sessionId, "sess-42")
         XCTAssertEqual(cmd.lang, "Thai", "lang is verbatim, not key-transformed")
         XCTAssertEqual(cmd.translation, "Hello: a translation.",
-                       "translation content is verbatim, not key-transformed")
+                       "legacy translation blob is verbatim, not key-transformed")
+        XCTAssertNil(cmd.lines, "no `lines` field present in the legacy-blob frame")
+    }
+
+    /// The NEW structured frame: `lines` (per-utterance translated text, in saved order)
+    /// decodes as a string array; `lines` is single-word so `.convertFromSnakeCase`
+    /// leaves it unchanged, and `translation` is ABSENT (decodes to nil — the optional).
+    func testTranslationWriteCommandDecodesStructuredLines() throws {
+        let json = """
+            {"v":1,"id":"abc","type":"translation.write",
+             "payload":{"session_id":"sess-7","lang":"Vietnamese",
+                        "lines":["Xin chào.","Tướng quân Kenobi."]}}
+            """
+        let cmd = try decodeInbound(Data(json.utf8), payloadType: TranslationWriteCommand.self)
+        XCTAssertEqual(cmd.sessionId, "sess-7")
+        XCTAssertEqual(cmd.lang, "Vietnamese")
+        XCTAssertNil(cmd.translation, "legacy blob absent in a structured frame")
+        XCTAssertEqual(cmd.lines, ["Xin chào.", "Tướng quân Kenobi."],
+                       "per-utterance lines decode verbatim, in order")
+    }
+
+    // MARK: - (g) structured translation MIRRORS the original transcript format
+
+    /// The crux of the fix: a translated `## Transcript — <lang>` section built from
+    /// per-utterance lines must carry the SAME `> **<label>** · HH:MM:SS` headers (same
+    /// wall-clock `clockOffset` base, same blockquote format) as the ORIGINAL
+    /// `## Transcript` — only the text differs. We render the original via the SAME
+    /// `renderMarkdown` the live save uses, then build the structured translation from
+    /// the IDENTICAL utterances (translated text) and assert the header lines match
+    /// byte-for-byte.
+    func testStructuredTranslationMirrorsOriginalHeaders() throws {
+        // A fixed wall-clock anchor so the expected HH:MM:SS is deterministic.
+        // 2026-06-04 07:03:45 +07:00 → epoch.
+        let sessionStart = Date(timeIntervalSince1970: 1_749_002_625)  // arbitrary fixed instant
+        let utterances = [
+            VaultWriter.Utterance(tStart: 2.0, label: "Mark", text: "Hello there."),
+            VaultWriter.Utterance(tStart: 7.5, label: "Speaker 2", text: "General Kenobi."),
+        ]
+        // The wall-clock headers the ENGINE renders for these utterances (single source
+        // of truth — the same formatter `renderMarkdown` and `appendTranslationStructured`
+        // both call). We compute the expected strings from that helper so the test stays
+        // timezone-agnostic (CI may not be +07:00).
+        let clock0 = VaultWriter.clockOffset(from: sessionStart, plus: 2.0)
+        let clock1 = VaultWriter.clockOffset(from: sessionStart, plus: 7.5)
+        let header0 = "> **Mark** · \(clock0)"
+        let header1 = "> **Speaker 2** · \(clock1)"
+
+        // 1. The ORIGINAL transcript body (what the saved `## Transcript` carries).
+        let original = VaultWriter.renderTranscriptBody(utterances, sessionStart: sessionStart)
+        XCTAssertTrue(original.contains(header0), "original carries Mark's wall-clock header")
+        XCTAssertTrue(original.contains(header1), "original carries Speaker 2's wall-clock header")
+        XCTAssertTrue(original.contains("> Hello there."), "original body line present")
+
+        // 2. The STRUCTURED translation: same utterances' label+tStart, translated text.
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hark-structured-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try Data(transcriptBody.utf8).write(to: tmp, options: .atomic)
+
+        let writer = VaultWriter()
+        _ = try writer.appendTranslationStructured(
+            to: tmp, lang: "Vietnamese",
+            translatedLines: ["Xin chào.", "Tướng quân Kenobi."],
+            utterances: utterances, sessionStart: sessionStart,
+            commitMessage: "docs(meeting): structured translation for test")
+        let disk = try String(contentsOf: tmp, encoding: .utf8)
+
+        // The translated section uses the engine's OWN headers — identical to the
+        // original's wall-clock + blockquote shape, NOT a renderer-supplied flat blob.
+        XCTAssertEqual(occurrences(of: "## Transcript — Vietnamese", in: disk), 1)
+        XCTAssertTrue(disk.contains(header0), "translated section mirrors Mark's wall-clock header")
+        XCTAssertTrue(disk.contains(header1), "translated section mirrors Speaker 2's header")
+        // Translated TEXT under those mirrored headers; original text not duplicated there.
+        XCTAssertTrue(disk.contains("> Xin chào."), "translated text under the mirrored header")
+        XCTAssertTrue(disk.contains("> Tướng quân Kenobi."), "second translated line present")
+        // Original `## Transcript` section still intact above the translation.
+        XCTAssertTrue(disk.contains("## Transcript\n"), "original transcript preserved")
+        XCTAssertTrue(disk.contains("> **Speaker 1** · 14:32:07"), "original transcript body preserved")
+    }
+
+    /// Structured translation is IDEMPOTENT PER LANG via the shared
+    /// `mergeTranslationSection`: re-running the same lang replaces the section in place
+    /// (no duplicate heading), and a DIFFERENT lang coexists as its own section.
+    func testStructuredTranslationIsIdempotentPerLang() throws {
+        let sessionStart = Date(timeIntervalSince1970: 1_749_002_625)
+        let utterances = [
+            VaultWriter.Utterance(tStart: 0.0, label: "Speaker 1", text: "Hello there."),
+            VaultWriter.Utterance(tStart: 5.0, label: "Speaker 2", text: "General Kenobi."),
+        ]
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hark-structured-idem-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try Data(transcriptBody.utf8).write(to: tmp, options: .atomic)
+
+        let writer = VaultWriter()
+        // First Thai.
+        _ = try writer.appendTranslationStructured(
+            to: tmp, lang: "Thai", translatedLines: ["สวัสดี", "นายพลเคโนบี"],
+            utterances: utterances, sessionStart: sessionStart, commitMessage: "test")
+        // Re-translate Thai (replace).
+        _ = try writer.appendTranslationStructured(
+            to: tmp, lang: "Thai", translatedLines: ["สวัสดีครับ", "ท่านนายพลเคโนบี"],
+            utterances: utterances, sessionStart: sessionStart, commitMessage: "test")
+        // Add French (coexists).
+        _ = try writer.appendTranslationStructured(
+            to: tmp, lang: "French", translatedLines: ["Bonjour.", "Général Kenobi."],
+            utterances: utterances, sessionStart: sessionStart, commitMessage: "test")
+
+        let disk = try String(contentsOf: tmp, encoding: .utf8)
+        XCTAssertEqual(occurrences(of: "## Transcript — Thai", in: disk), 1,
+                       "re-translate replaces in place — one Thai heading")
+        XCTAssertEqual(occurrences(of: "## Transcript — French", in: disk), 1, "French added")
+        XCTAssertTrue(disk.contains("> สวัสดีครับ"), "replaced Thai body present")
+        XCTAssertFalse(disk.contains("> สวัสดี\n"), "old Thai body gone (not stacked)")
+        XCTAssertTrue(disk.contains("> Bonjour."), "French body present")
+    }
+
+    /// DEFENSIVE index-zip: a count mismatch between `translatedLines` and the retained
+    /// utterances truncates to the shorter (never crashes / out-of-bounds). Counts should
+    /// always be 1:1 in practice, but a stray mismatch must not take down the daemon.
+    func testStructuredTranslationCountMismatchTruncatesSafely() throws {
+        let sessionStart = Date(timeIntervalSince1970: 1_749_002_625)
+        let utterances = [
+            VaultWriter.Utterance(tStart: 0.0, label: "Speaker 1", text: "One."),
+            VaultWriter.Utterance(tStart: 3.0, label: "Speaker 2", text: "Two."),
+            VaultWriter.Utterance(tStart: 6.0, label: "Speaker 3", text: "Three."),
+        ]
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hark-structured-mismatch-\(UUID().uuidString).md")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try Data(transcriptBody.utf8).write(to: tmp, options: .atomic)
+
+        let writer = VaultWriter()
+        // Fewer lines (2) than utterances (3): pairs the first 2, drops the 3rd.
+        let header2 = "> **Speaker 3** · \(VaultWriter.clockOffset(from: sessionStart, plus: 6.0))"
+        let r = try writer.appendTranslationStructured(
+            to: tmp, lang: "Thai", translatedLines: ["หนึ่ง", "สอง"],
+            utterances: utterances, sessionStart: sessionStart, commitMessage: "test")
+        XCTAssertEqual(r.fileURL.path, tmp.path)
+        var disk = try String(contentsOf: tmp, encoding: .utf8)
+        XCTAssertTrue(disk.contains("> หนึ่ง"), "first translated line present")
+        XCTAssertTrue(disk.contains("> สอง"), "second translated line present")
+        XCTAssertFalse(disk.contains(header2), "unpaired 3rd utterance header is NOT rendered")
+
+        // The symmetric case: more lines than utterances — extra lines are dropped, no crash.
+        try Data(transcriptBody.utf8).write(to: tmp, options: .atomic)
+        _ = try writer.appendTranslationStructured(
+            to: tmp, lang: "Thai", translatedLines: ["A", "B", "C", "D", "E"],
+            utterances: [utterances[0]], sessionStart: sessionStart, commitMessage: "test")
+        disk = try String(contentsOf: tmp, encoding: .utf8)
+        XCTAssertTrue(disk.contains("> A"), "the one paired line is rendered")
+        XCTAssertFalse(disk.contains("> B"), "surplus lines beyond the utterance count dropped")
     }
 
     // MARK: - helpers

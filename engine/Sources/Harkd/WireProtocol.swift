@@ -496,17 +496,33 @@ struct SummaryWriteCommand: Decodable {
 ///
 /// `sessionId` scopes the write to the most-recently-saved meeting (the same MVP
 /// limitation as `summary.write`); `lang` is a human language NAME (e.g. "Thai",
-/// "Vietnamese") used verbatim in the section heading `## Transcript — <lang>`, and
-/// `translation` is the markdown body dropped under it. A re-translate to the SAME
-/// `lang` REPLACES that section; a DIFFERENT `lang` adds a SEPARATE one (so multiple
-/// languages coexist). `session_id` arrives snake_case and is folded to `sessionId`
-/// by `decodeInbound`'s `.convertFromSnakeCase` — `lang` / `translation` are single-
-/// word, unchanged. As with the rename / summary commands, the STRING values are
-/// values, not keys, so the decoder passes their content through verbatim.
+/// "Vietnamese") used verbatim in the section heading `## Transcript — <lang>`.
+/// A re-translate to the SAME `lang` REPLACES that section; a DIFFERENT `lang` adds a
+/// SEPARATE one (so multiple languages coexist). `session_id` arrives snake_case and
+/// is folded to `sessionId` by `decodeInbound`'s `.convertFromSnakeCase` — `lang` is
+/// single-word, unchanged; the body string content passes through verbatim.
+///
+/// TWO MUTUALLY-EXCLUSIVE BODY SHAPES, exactly one is used per call:
+///   - `lines` (PREFERRED): per-utterance translated text, in the SAME ORDER as the
+///     engine's retained `labeled` utterances (the saved `## Transcript`). The engine
+///     ZIPS `lines[i]` with its own retained `labeled[i]` (label + tStart) and re-renders
+///     via `VaultWriter.renderTranscriptBody` — so the `## Transcript — <lang>` section
+///     is a STRUCTURAL MIRROR of the original (same speaker labels, same wall-clock
+///     `clockOffset` timestamps, same blockquote format). The renderer supplies ONLY the
+///     translated text; the engine owns all formatting. This is what the background
+///     post-meeting translation sends.
+///   - `translation` (LEGACY): a whole-transcript markdown BLOB, written verbatim under
+///     the heading. Used by the manual Translate panel, which hands over a single
+///     pre-formatted body rather than per-utterance lines. Kept for back-compat.
+///
+/// Both are `Decodable` optionals so a frame may carry either; the handler branches on
+/// which is present (`lines` wins) and emits `PROTOCOL_MISMATCH` if NEITHER is set.
+/// `lines` arrives as `lines` (single-word, unchanged by `.convertFromSnakeCase`).
 struct TranslationWriteCommand: Decodable {
     let sessionId: String          // ← session_id
     let lang: String
-    let translation: String
+    let translation: String?       // legacy whole-blob (manual Translate panel) — optional
+    let lines: [String]?           // NEW: translated text per utterance, in saved order
 }
 
 /// `rag.retrieve` (UI → engine, slice 4b). The UI asks the engine to embed `query`

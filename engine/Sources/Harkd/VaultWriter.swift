@@ -265,6 +265,52 @@ struct VaultWriter: Sendable {
         return Result(fileURL: fileURL, slug: slug, committed: committed)
     }
 
+    /// APPEND-OR-REPLACE a `## Transcript — <lang>` section that is a STRUCTURAL MIRROR
+    /// of the original `## Transcript`, built from per-utterance translated text. Unlike
+    /// `appendTranslation` (which writes a renderer-supplied flat blob verbatim), this
+    /// ZIPS each `translatedLines[i]` with the engine's own retained `utterances[i]`
+    /// (its `label` + `tStart`) and re-renders through `renderTranscriptBody` — so the
+    /// translated section carries the SAME speaker labels, the SAME wall-clock
+    /// `clockOffset` timestamps, and the SAME blockquote format as the original. The
+    /// renderer supplies ONLY the translated text, in saved order; the ENGINE owns all
+    /// formatting (single source of truth — no timestamp-base / format / line-count drift).
+    ///
+    /// Index-zip is DEFENSIVE: `min(translatedLines.count, utterances.count)`. Counts
+    /// should always match 1:1 (same retained utterances), but a mismatch truncates to
+    /// the shorter rather than crashing — privacy-safe and never out-of-bounds.
+    ///
+    /// Wrapping under the heading reuses the SAME pure `mergeTranslationSection` as the
+    /// legacy path, so re-translate-replaces-in-place / multiple-langs-coexist /
+    /// following-section-survives all behave identically. Same read → merge →
+    /// atomicWrite → commit I/O shape + best-effort-commit `Result` as `appendTranslation`.
+    ///
+    /// - Throws: only on the FILE I/O (read of the existing file / atomic write). Git
+    ///   failures are swallowed and reported via `Result.committed == false`.
+    func appendTranslationStructured(
+        to fileURL: URL,
+        lang: String,
+        translatedLines: [String],
+        utterances: [Utterance],
+        sessionStart: Date,
+        commitMessage: String
+    ) throws -> Result {
+        // Defensive index-zip: pair each translated line with its retained utterance's
+        // label + tStart, truncating to the shorter on any count mismatch.
+        let n = min(translatedLines.count, utterances.count)
+        let zipped: [Utterance] = (0..<n).map { i in
+            Utterance(tStart: utterances[i].tStart, label: utterances[i].label, text: translatedLines[i])
+        }
+        let body = Self.renderTranscriptBody(zipped, sessionStart: sessionStart)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let existing = try String(contentsOf: fileURL, encoding: .utf8)
+        let merged = Self.mergeTranslationSection(into: existing, lang: lang, translation: body)
+        try atomicWrite(merged, to: fileURL)
+        let slug = fileURL.deletingPathExtension().lastPathComponent
+        let committed = gitCommit(fileURL: fileURL, slug: slug, message: commitMessage)
+        return Result(fileURL: fileURL, slug: slug, committed: committed)
+    }
+
     /// PURE append-or-replace of a `## Transcript — <lang>` section in a meeting
     /// markdown body. No I/O, no state — unit-tested directly so the live
     /// `appendTranslation` path and the regression suite share one definition of
@@ -359,9 +405,26 @@ struct VaultWriter: Sendable {
         out += "hark_version: \(HARKD_ENGINE_VERSION)\n"
         out += "---\n\n"
         out += "## Transcript\n\n"
+        out += Self.renderTranscriptBody(utterances, sessionStart: sessionStart)
+        return out
+    }
 
+    /// SINGLE SOURCE OF TRUTH for the per-utterance blockquote body shared by the
+    /// original `## Transcript` (via `renderMarkdown`) and the translated
+    /// `## Transcript — <lang>` section (via `appendTranslationStructured`). Renders
+    /// each utterance as a `> **<label>** · HH:MM:SS` header (wall-clock via
+    /// `clockOffset` from the session start) followed by the blockquoted text line(s),
+    /// then one blank separator line — so a translated section built from this is a
+    /// byte-for-byte STRUCTURAL MIRROR of the original (same labels, same wall-clock
+    /// timestamps, same blockquote format). The caller controls trimming/wrapping
+    /// (e.g. the heading + trailing-newline policy of `mergeTranslationSection`).
+    ///
+    /// Pure value→string, no I/O — `static` so both the original-transcript render and
+    /// the translated-section render call the exact same formatter (no drift possible).
+    static func renderTranscriptBody(_ utterances: [Utterance], sessionStart: Date) -> String {
+        var out = ""
         for u in utterances {
-            let clock = Self.clockOffset(from: sessionStart, plus: u.tStart)
+            let clock = clockOffset(from: sessionStart, plus: u.tStart)
             // Header: `> **Speaker N** · HH:MM:SS` (ADR-0016 §3 / design 07).
             out += "> **\(u.label)** · \(clock)\n"
             // Body line(s): blockquote each line so multi-line text stays in

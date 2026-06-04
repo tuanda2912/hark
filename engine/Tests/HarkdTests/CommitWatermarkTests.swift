@@ -41,6 +41,15 @@ final class CommitWatermarkTests: XCTestCase {
         let text: String
     }
 
+    // Same as `Emit` but carries the utterance id, for the grow-path tests that
+    // assert the LIVE broadcasts (export-only growth re-broadcasts nothing).
+    private struct EmitWithId: Equatable {
+        let uid: String
+        let isFinal: Bool
+        let tStart: Double
+        let text: String
+    }
+
     private let hop = 5.0  // matches SlidingWindowBuffer(hopSeconds: 5)
 
     /// Faithful reimplementation of `runTranscription`'s commit loop + watermark
@@ -64,6 +73,18 @@ final class CommitWatermarkTests: XCTestCase {
             // the horizon consumes its full span and its tail isn't re-committed.
             var maxCommittedEnd = committedUpTo
             for seg in h.segments {
+                // ADR-0036 EXPORT-ONLY grow path: mirror `runTranscription` — a
+                // fuller re-decode of an already-finalized line updates the
+                // RETAINED row for the saved transcript but is NOT re-broadcast
+                // live (no emit here), so the live stream keeps the discrete short
+                // line. (runHops doesn't track the retained store; the grow is
+                // invisible to `emits` and only advances the watermark.)
+                if let grownUid = ledger.extendFinalizedIfGrown(
+                    tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text) {
+                    _ = grownUid
+                    maxCommittedEnd = max(maxCommittedEnd, seg.tEnd)
+                    continue
+                }
                 let uid = ledger.resolve(tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text)
                 if ledger.isFinalized(utteranceId: uid) { continue }
                 _ = ledger.updateText(seg.text, utteranceId: uid)
@@ -76,6 +97,58 @@ final class CommitWatermarkTests: XCTestCase {
                     maxCommittedEnd = max(maxCommittedEnd, seg.tEnd)
                 case .partial:
                     emits.append(Emit(isFinal: false, tStart: seg.tStart, text: seg.text))
+                case .skipAlreadyCommitted:
+                    break
+                }
+            }
+            let advanceTo = max(commitHorizon, maxCommittedEnd)
+            if advanceTo > committedUpTo { committedUpTo = advanceTo }
+        }
+        return emits
+    }
+
+    /// Same hop loop as `runHops`, but it ALSO mirrors the retained
+    /// `finalizedUtterances` store and returns every LIVE emission with its uid.
+    /// Used by the ADR-0036 grow-path tests: a grown re-decode updates the
+    /// retained row for the vault (export) WITHOUT a live re-broadcast, so the
+    /// tests assert the retained text grows while the live emission count stays 1.
+    /// `retained` is the post-write set the vault would receive, last value per
+    /// uid — what `finalizedUtterances` holds after `growRetainedFinalized`.
+    private func runHopsTracked(_ hops: [(windowStart: Double, segments: [Seg])],
+                                ledger: UtteranceLedger,
+                                committedUpTo: inout Double,
+                                retained: inout [String: (tStart: Double, tEnd: Double, text: String)],
+                                retainedOrder: inout [String]) -> [EmitWithId] {
+        var emits: [EmitWithId] = []
+        func retainFinal(_ uid: String, _ seg: Seg) {
+            if retained[uid] == nil { retainedOrder.append(uid) }
+            retained[uid] = (seg.tStart, seg.tEnd, seg.text)
+        }
+        for h in hops {
+            let commitHorizon = h.windowStart + hop
+            var maxCommittedEnd = committedUpTo
+            for seg in h.segments {
+                if let grownUid = ledger.extendFinalizedIfGrown(
+                    tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text) {
+                    // EXPORT-ONLY (ADR-0036): update the retained (vault) row but
+                    // do NOT broadcast — the live stream keeps the short line.
+                    retainFinal(grownUid, seg)
+                    maxCommittedEnd = max(maxCommittedEnd, seg.tEnd)
+                    continue
+                }
+                let uid = ledger.resolve(tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text)
+                if ledger.isFinalized(utteranceId: uid) { continue }
+                _ = ledger.updateText(seg.text, utteranceId: uid)
+                switch EngineSession.commitDecision(segmentStart: seg.tStart,
+                                                    committedUpTo: committedUpTo,
+                                                    commitHorizon: commitHorizon) {
+                case .finalize:
+                    ledger.markFinalized(utteranceId: uid)
+                    emits.append(EmitWithId(uid: uid, isFinal: true, tStart: seg.tStart, text: seg.text))
+                    retainFinal(uid, seg)
+                    maxCommittedEnd = max(maxCommittedEnd, seg.tEnd)
+                case .partial:
+                    emits.append(EmitWithId(uid: uid, isFinal: false, tStart: seg.tStart, text: seg.text))
                 case .skipAlreadyCommitted:
                     break
                 }
@@ -835,6 +908,136 @@ final class CommitWatermarkTests: XCTestCase {
         XCTAssertEqual(
             EngineSession.prunedOrphanDisposition(orphanStart: 10.01, committedUpTo: 10.0),
             .synthesizeFinal)
+    }
+
+    // MARK: - THE grown-after-commit content-loss regression (ADR-0020)
+    //
+    // The commit watermark finalizes a region ONCE, when a segment's START first
+    // crosses the horizon. For a long multi-clause utterance that finalizes the
+    // SHORT decode present at that hop; the watermark advances past its start.
+    // A later hop re-decodes the GROWN version (same start, fuller text):
+    // `resolve` skips finalized entries → fresh uid → `commitDecision` sees the
+    // start behind the watermark → `.skipAlreadyCommitted` → the grown TAIL is
+    // dropped and the saved transcript truncates at the short version.
+    //
+    // The fix (extendFinalizedIfGrown, gated like ADR-0018 supersession but aimed
+    // at finalized entries) EXTENDS the finalized line in place. These tests
+    // drive the REAL `UtteranceLedger.extendFinalizedIfGrown` and the REAL
+    // hop loop (which now mirrors the grow path), NOT a reimplementation.
+
+    /// THE defining test: finalize a short utterance, then feed a grown
+    /// re-decode (prefix superset, extends past). After the fix the finalized
+    /// line holds the FULL text, there is exactly ONE finalized row for that uid
+    /// (no orphan, no duplicate), and the grown tail is NOT lost.
+    ///
+    /// FAIL-BEFORE: the grown re-decode minted a fresh uid, hit
+    /// `.skipAlreadyCommitted` (its start behind the watermark), and the tail
+    /// ("You know, this is the first version…") never reached the vault.
+    func testGrownReDecodeExtendsFinalizedLineNoTruncation() {
+        let ledger = UtteranceLedger()
+        var committedUpTo = 0.0
+        var retained: [String: (tStart: Double, tEnd: Double, text: String)] = [:]
+        var retainedOrder: [String] = []
+
+        let short = "So, but this is just the beginning."
+        let grown = "So, but this is just the beginning. You know, this is the first version. It's a prototype."
+
+        // Hop 1: window [0..], horizon 5. The short decode [3.0, 6.0] starts at
+        // 3.0 (3 <= 5) → FINALIZED; watermark advances to its tEnd (6.0).
+        let shortSeg = Seg(tStart: 3.0, tEnd: 6.0, text: short)
+        // Hop 2: the SAME region re-decodes fuller — same start, extends to 11.0.
+        // windowStart 0 again here is irrelevant: the grow path fires before the
+        // commit decision, so the watermark can't drop it.
+        let grownSeg = Seg(tStart: 3.0, tEnd: 11.0, text: grown)
+
+        let emits = runHopsTracked(
+            [(0.0, [shortSeg]), (0.0, [grownSeg])],
+            ledger: ledger, committedUpTo: &committedUpTo,
+            retained: &retained, retainedOrder: &retainedOrder)
+
+        // EXPORT-ONLY growth (ADR-0036): only the SHORT final is broadcast live —
+        // the grow updates the retained (vault) row WITHOUT re-broadcasting, so
+        // the live stream keeps the one discrete short line (no rewrite live).
+        let finals = emits.filter(\.isFinal)
+        XCTAssertEqual(finals.count, 1, "only the short final is broadcast live; the grow is export-only (no re-emit)")
+        XCTAssertEqual(finals[0].text, short)
+
+        // Exactly ONE retained row for that uid, holding the FULL grown text — no
+        // orphan, no duplicate. This is what reaches the vault (export recovers
+        // the tail even though the live view never showed it).
+        XCTAssertEqual(retainedOrder.count, 1, "exactly one finalized utterance retained")
+        let uid = finals[0].uid
+        XCTAssertEqual(retained[uid]?.text, grown,
+            "the retained (saved) line holds the FULL grown text, not the truncated short version")
+        XCTAssertEqual(retained[uid]?.tEnd, 11.0,
+            "the retained line's tEnd grew to the fuller decode's end")
+
+        // The watermark consumed the grown span's full end.
+        XCTAssertEqual(committedUpTo, 11.0,
+            "the whole grown span is now committed")
+    }
+
+    /// A nearby-start segment whose text is NOT a prefix of the finalized line is
+    /// a DIFFERENT utterance — `extendFinalizedIfGrown` must return nil (never
+    /// merge two distinct utterances). Same conservative protection ADR-0018 uses.
+    func testDistinctUtteranceDoesNotExtendFinalizedLine() {
+        let ledger = UtteranceLedger()
+
+        // Finalize a line directly via the real ledger.
+        let id = ledger.resolve(tStart: 10.0, tEnd: 13.0, text: "Let's start the design review.")
+        _ = ledger.updateText("Let's start the design review.", utteranceId: id)
+        ledger.markFinalized(utteranceId: id)
+
+        // A nearby-start, time-contained segment whose text is NOT a prefix —
+        // genuinely different words. Must NOT extend.
+        let grown = ledger.extendFinalizedIfGrown(
+            tStart: 10.5, tEnd: 18.0,
+            text: "Completely different sentence about something else entirely.")
+        XCTAssertNil(grown,
+            "a non-prefix re-decode is a distinct utterance and must never merge")
+
+        // The finalized line is untouched: still its original text/end.
+        XCTAssertTrue(ledger.overlapsFinalized(tStart: 10.0, tEnd: 13.0))
+    }
+
+    /// An IDENTICAL re-decode of an already-finalized line adds nothing —
+    /// `extendFinalizedIfGrown` must return nil (no spurious re-emit). The
+    /// "actually grew" guard (tEnd > e.tEnd OR longer normalized text) is what
+    /// makes this a no-op.
+    func testIdenticalReDecodeIsNoOp() {
+        let ledger = UtteranceLedger()
+        let text = "This is a complete thought."
+        let id = ledger.resolve(tStart: 5.0, tEnd: 9.0, text: text)
+        _ = ledger.updateText(text, utteranceId: id)
+        ledger.markFinalized(utteranceId: id)
+
+        // Exact same interval + text.
+        XCTAssertNil(ledger.extendFinalizedIfGrown(tStart: 5.0, tEnd: 9.0, text: text),
+            "an identical re-decode must not re-emit")
+        // Same text, sub-slack end wobble that does NOT extend past the entry's
+        // end (9.0): still a no-op (normalized text is identical, tEnd not >).
+        XCTAssertNil(ledger.extendFinalizedIfGrown(tStart: 5.0, tEnd: 8.8, text: text),
+            "punctuation/boundary jitter with identical normalized text is a no-op")
+    }
+
+    /// Only FINALIZED entries are extended by this path. A non-finalized overlap
+    /// (a live partial that grows) is the existing supersession/partial path's
+    /// job, NOT this one — `extendFinalizedIfGrown` must return nil for it.
+    func testOnlyFinalizedEntriesAreExtended() {
+        let ledger = UtteranceLedger()
+
+        // A LIVE (non-finalized) partial.
+        let liveId = ledger.resolve(tStart: 20.0, tEnd: 23.0, text: "we are getting")
+        _ = ledger.updateText("we are getting", utteranceId: liveId)
+        XCTAssertFalse(ledger.isFinalized(utteranceId: liveId))
+
+        // A grown prefix-superset of that live partial — must NOT be taken by the
+        // finalized-extend path (it isn't finalized). Returns nil; the caller
+        // then handles it via resolve (live partial refresh) / supersession.
+        let grown = ledger.extendFinalizedIfGrown(
+            tStart: 20.0, tEnd: 27.0, text: "we are getting there now")
+        XCTAssertNil(grown,
+            "a non-finalized overlap is handled by the partial/supersession path, not the finalized-extend path")
     }
 
     // MARK: - Decision-function unit checks (boundaries)
