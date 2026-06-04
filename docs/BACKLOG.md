@@ -11,7 +11,7 @@ When an item here is done, move it out (cite the commit) — don't let this list
 **Format per item:** what it is · why we deferred · where to pick up (files / ADR refs).
 Add new items under the right area; create a new area if none fits.
 
-_Last updated: 2026-06-02_
+_Last updated: 2026-06-04_
 
 ---
 
@@ -265,54 +265,37 @@ Phase 4 surfaces" carries the live detail; summary:
   the design screenshots (02/08/10/12/16/21/24).
 - **Wikilink `[[term]]` parsing** in the transcript — vault-linking, a later phase.
 
-## Translation (designed, deferred behind RAG — user 2026-06-03)
+## Translation (on-demand post-stop only; LIVE deferred — ADR-0037, 2026-06-04)
 
-Translation is already half-wired: `capture.start` carries a `translation` config
-(`enabled`/`mode`/`target_lang`), `segment.translation` exists, and `TranscriptLine` renders it —
-only the translation *engine* is missing. Two-tier (local = zero egress / cloud = HQ), like the
-rest. Three pieces, easiest first:
+Translation is now a **post-stop, on-demand** action via the saved-card **Translate** panel. Live
+(translate-during-capture) translation was **removed and deferred** ([ADR-0037](decisions/0037-defer-live-translation.md)):
+it was hard to test, timeout-prone on a small local model, and rendered messily. Two-tier
+(local = zero egress / cloud = HQ) like the rest.
 
-- **End-of-meeting transcript translation — DONE (2026-06-03).** A post-stop "Translate" on the
-  saved card → `TranslatePanel` (target-language picker) → `llm.translate(transcript, targetLang)`
-  in main (near-clone of `summarize`: redact-for-cloud / full-for-local, a "translate to X" prompt,
-  provider completion, metadata-only cloud-log action `translate`) → translation + egress receipt +
-  **Save-to-note** via the engine (`translation.write` → `VaultWriter.appendTranslation`, appends a
-  `## Transcript — <lang>` section, idempotent per-language, git-commit). Works with any configured
-  cloud/local model; local ⇒ zero egress. 179 engine tests green (11 new); privacy-audited.
-  - *Single-shot v1 (pick up):* one provider call with an 8192-token output cap — a very long
-    transcript may truncate. Chunk the transcript (by speaker-turn / size), translate each, and
-    reassemble for arbitrarily long meetings.
-- **Live → English — DONE (2026-06-03).** A `→ EN` toggle in the controls bar (locked while
-  capturing, pure-local — no model/provider needed) sends `capture.start.translation.enabled`; the
-  engine stores `liveTranslateToEnglish` and runs BOTH transcribe paths (live hops + flush-on-stop
-  drain) with WhisperKit `task: .translate` instead of `.transcribe`, so any source language shows
-  up as **English captions** (and the saved transcript is English). On-device, ZERO egress (same
-  local model, different decode task); `sessionLanguage` still passes the source hint. 179 engine
-  tests green (no regression to the streaming/ledger machinery). **Design note (chosen):** §2 puts
-  the English in `segment.text` (single inference, "cheap") — NOT a bilingual original+translation
-  view (that would be 2× inference per window + threading a translation field through the ledger).
-  - *Bilingual original+English (pick up):* if users want the source text AND English side-by-side,
-    run a second `.transcribe` pass and fill `segment.translation` — its own slice (2× RTF).
-- **Live → arbitrary language (the real lift) — IMPLEMENTED via Option C ([ADR-0035](decisions/0035-live-translation-arbitrary-target.md)), 2026-06-03; on-device confirmation pending.**
-  Per-segment translation for any pair (Thai→Vietnamese, …) of FINALIZED segments via the
-  already-configured LLM. A new renderer `LiveTranslationService` listens on
-  `EngineService.segmentFinalized$` (finals only — never partials, never the post-stop transcript
-  swap), calls main's new `llm.translateSegment`, and writes back via `setSegmentTranslation` →
-  fills `segment.translation` for the bilingual live view. **Reuses §1's egress governance:** cloud
-  redacts each line first, **local (loopback) model ⇒ zero egress**. A non-English target **picker**
-  next to `→ EN` (mutually exclusive with it, locked during capture); discloses egress inline
-  (`↑ cloud · redacted` vs `on-device`). Per-segment cloud egress is **aggregated** into ONE
-  metadata-only `translate-live` cloud-log entry (not one row per line — would flood the 500-cap +
-  churn disk). No engine change, no model shipped. **Automated gates green** (build + privacy-audit
-  PASS); **needs the user:** live non-English audio → confirm translated captions + latency feel +
-  a local-model zero-egress run. **Deferred alternatives:** (A) **NLLB-200 CoreML in the engine** —
-  zero egress + 200 langs but **~3.2 GB** + seq2seq latency; (B) **Apple Translation framework** —
-  free/on-device/macOS-14.4 BUT a **purely SwiftUI API** (no standalone `TranslationSession`),
-  architecturally incompatible with the headless NIO engine + Electron UI. End-of-meeting → any
-  language is already covered by §1.
-  - *Future enhancements:* persist live per-segment translations (today the saved transcript stays
-    the original — use §1 for a translated copy); allow mid-meeting toggling (the service already
-    supports it — only the UI locks it during capture for §2-consistency).
+- **On-demand post-stop translation — SHIPPED (2026-06-04, structured; `aa5a2ea` + engine `6d8a353`).**
+  The saved-card **Translate** panel → target-language picker → the structured background job
+  (`TranslationJobService` → per-utterance `llm.translateSegment` → `EngineService.writeTranslationLines`
+  → engine `appendTranslationStructured`): each line is translated one at a time (progress banner,
+  non-blocking), then the engine renders a `## Transcript — <lang>` section that is a byte-for-byte
+  **mirror** of the original — same speaker labels / wall-clock / blockquote ([ADR-0036](decisions/0036-grow-in-place-finalization.md)).
+  Local ⇒ zero egress; cloud redacts each line + ONE aggregated metadata-only cloud-log entry.
+  Discloses egress before sending. Privacy-audited PASS.
+  - *Legacy single-blob path retained but DORMANT:* the old whole-transcript `llm.translate` →
+    `VaultWriter.appendTranslation` blob (the 8192-token-truncation risk) is no longer used by the
+    panel. A later cleanup may prune it (renderer `LlmService.translate` / `EngineService.writeTranslation`
+    + engine `appendTranslation` + the wire `translation` blob field).
+- **Revive LIVE translation — DEFERRED (ADR-0037).** Both the on-device `→ EN` toggle (§2, WhisperKit
+  `task:.translate`) and the per-line LLM arbitrary-target picker (§3, the deleted
+  `LiveTranslationService` → `llm.translateSegment` → `segment.translation` bilingual view) were
+  removed. The engine's `task:.translate` plumbing (`capture.start.translation`, `liveTranslateToEnglish`)
+  and the per-line LLM path are left **dormant**; reviving §2 is mostly re-adding the UI toggle, and the
+  removed §3 impl is at `aa5a2ea^` in git history.
+  - *Pick up (do it right this time):* (1) ship an **on-device MT model** so §3 needs no cloud and no
+    per-line LLM latency — **NLLB-200 CoreML** (zero egress, 200 langs, but ~3.2 GB + seq2seq latency)
+    or **Apple Translation** (free / on-device / macOS-14.4, but a purely-SwiftUI API with no standalone
+    `TranslationSession` — incompatible with the headless engine + Electron UI as-is); (2) **decouple
+    live translation from the finalization watermark** (ADR-0019) so the bilingual view doesn't churn —
+    translate only stable, committed lines, debounced.
 
 ## i18n / model quality
 
