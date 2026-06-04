@@ -77,11 +77,36 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
 
-  # Sign the sidecar too. electron-builder signs nested executables it finds;
-  # listing harkd here (path RELATIVE to Contents/Resources after copy) makes
-  # the binary part of the deep-sign pass so it inherits the app identity.
-  # (If electron-builder misses it, the afterSign/sign script signs it
-  # deepest-first explicitly — see PLAN §E.)
+  # Sign the sidecar EXPLICITLY. This is the load-bearing fix.
+  #
+  # WHY: electron-builder's deep-sign pass only re-signs Mach-Os that match its
+  # `nested` resource rule — `^(Frameworks|...|Helpers|MacOS|...)/`. A file
+  # copied via `extraResources` lands under `Contents/Resources/`, which is NOT
+  # in that rule, so it is sealed as an OPAQUE RESOURCE HASH (CodeResources
+  # `files`/`files2`), NOT code-signed with the inherit entitlements. Verified
+  # on the existing bundle: `Resources/engine/harkd` had a resource `hash2` but
+  # NO `cdhash`+`requirement` entry like the helpers/frameworks. So harkd kept
+  # whatever signature `swift build` left (ad-hoc — SwiftPM does not sign) and
+  # carried NO `com.apple.security.inherit`.
+  #
+  # Consequence (the bug this prevents): at runtime Electron spawns
+  # Contents/Resources/engine/harkd as a CHILD. Without cs.inherit it runs under
+  # its OWN (ad-hoc) identity, so the kTCCServiceAudioCapture grant attributes to
+  # "harkd" / an unstable identity, NOT to "Hark" — breaking the persist-across-
+  # launch behavior ADR-0011 #18 / ADR-0021 depend on, AND making the bundle
+  # fail notarization (an ad-hoc nested Mach-O is rejected).
+  #
+  # FIX: `mac.binaries` tells electron-builder's signer to ALSO sign these paths.
+  # Path is relative to the .app root (app-builder-lib resolves it via
+  # path.resolve(<...>.app, dest)). app-builder-lib 25.1.8 getOptionsForFile()
+  # applies `entitlementsInherit` (the inherit plist: cs.inherit + allow-jit +
+  # device.audio-input) and hardened runtime to every non-root file — so harkd
+  # gets the inherit entitlements, NOT the broad app-only
+  # allow-unsigned-executable-memory. The signer runs deepest-first, so harkd is
+  # signed before the parent re-seals it.
+  binaries:
+    - Contents/Resources/engine/harkd
+
   signIgnore: []
 
   # App icon. Provide build/icon.icns (1024px source). DECISION NEEDED: no
@@ -105,6 +130,17 @@ mac:
     # the default backend is Process Taps (no Screen Recording). If the SCK
     # fallback backend is ever made user-selectable in the shipped app, add it
     # then (and only then) — see ADR-0011.
+    #
+    # SUPPRESS Electron's default usage strings. electron-builder's bundled base
+    # Info.plist injects NSCameraUsageDescription + NSBluetooth*UsageDescription
+    # ("This app needs access to the camera/Bluetooth"). Hark uses NEITHER —
+    # those strings are misleading boilerplate and a privacy smell (a shipped app
+    # declaring camera access it never uses; privacy-auditor flags it). We blank
+    # them so no false capability is advertised. (extendInfo overrides win over
+    # the base template; an empty string neutralizes the prompt text.)
+    NSCameraUsageDescription: ""
+    NSBluetoothAlwaysUsageDescription: ""
+    NSBluetoothPeripheralUsageDescription: ""
 
 # DMG cosmetics (optional; safe defaults). No background asset required.
 dmg:
