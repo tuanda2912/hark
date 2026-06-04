@@ -225,38 +225,17 @@ export class LlmService {
     this.translating.set(false);
   }
 
-  /**
-   * Translate via main WITHOUT touching the `translating`/`translation` signals
-   * (those drive the manual Translate panel). For programmatic/batch callers —
-   * e.g. the post-meeting background job translating the transcript chunk by
-   * chunk — so a background run can't flicker the manual panel's state if it's
-   * open. Same egress governance as `translate` (main owns the cloud/local fork
-   * + redaction + log). Never throws; resolves `{ ok:false }` on any failure.
-   */
-  async translateQuiet(req: TranslateReq): Promise<TranslateResult> {
-    const llm = window.hark?.llm;
-    if (!llm) {
-      return { ok: false, detail: 'No model bridge available (running outside Electron).' };
-    }
-    try {
-      return await llm.translate(req);
-    } catch (err) {
-      return { ok: false, detail: err instanceof Error ? err.message : 'translate failed' };
-    }
-  }
-
-  // ─── Live per-segment translation (ADR-0035, §3) ────────────────────
+  // ─── Per-utterance translation (post-stop background job) ───────────
 
   /**
-   * Translate ONE finalized caption line to an arbitrary target via main
-   * (ADR-0035, §3 — live translation). Fired per finalized segment by
-   * LiveTranslationService when the user opted in. Main owns the cloud/local
-   * fork (cloud redacts the line, local sends as-is/zero-egress) and the
-   * AGGREGATED cloud-log entry. Returns a result (never throws — resolves
-   * `{ ok:false }` on any failure) so the orchestrator can quietly skip a line
-   * that didn't translate. No service signal: live translation state lives in
-   * LiveTranslationService + the per-segment `translation` field. No-op (a
-   * failure result) outside Electron.
+   * Translate ONE line to a target language via main (ADR-0035 path; live
+   * translation itself is deferred per ADR-0037). Now used ONLY by
+   * TranslationJobService — the post-stop background job that translates the
+   * saved transcript one utterance at a time. Main owns the cloud/local fork
+   * (cloud redacts the line, local sends as-is/zero-egress) and rolls every line
+   * into ONE AGGREGATED cloud-log entry (never one per line). Returns a result
+   * (never throws — resolves `{ ok:false }` on any failure) so the job can stop
+   * and surface a content-free detail. No-op (a failure result) outside Electron.
    */
   async translateSegment(req: TranslateSegmentReq): Promise<TranslateSegmentResult> {
     const llm = window.hark?.llm;
@@ -273,10 +252,11 @@ export class LlmService {
     }
   }
 
-  /** Commit main's pending live-translation roll-up to its single aggregated
-   *  cloud-log entry. Called when live translation stops (capture stop / toggle
-   *  off) so the metadata-only audit entry lands promptly. Fire-and-forget;
-   *  guarded for `window.hark?.llm` — a no-op outside Electron. */
+  /** Commit main's pending per-utterance translation roll-up to its single
+   *  aggregated cloud-log entry. Called by TranslationJobService when a
+   *  background translation finishes (or aborts) so the metadata-only audit
+   *  entry lands promptly. Fire-and-forget; guarded for `window.hark?.llm` — a
+   *  no-op outside Electron. */
   flushLiveTranslate(): void {
     window.hark?.llm?.flushLiveTranslate();
   }

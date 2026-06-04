@@ -5,7 +5,8 @@ they need real audio, a configured model, and your eyes. The automated gates
 (build, privacy-audit, logic review) are green for everything below; this is the
 second half of "done." Tick each as you go.
 
-**Last updated:** 2026-06-03 · After translation §3 (ADR-0035 Option C).
+**Last updated:** 2026-06-04 · Live translation removed/deferred (ADR-0037);
+translation is now on-demand after a meeting stops.
 
 ---
 
@@ -44,58 +45,39 @@ Use **Test connection** in Settings first — it should say OK.
 - [ ] **Expect:** an answer with **numbered [n] citations** + source cards
       (note name + heading + snippet). Retrieval is local (nothing leaves the Mac).
 
-## 4. Translation §1 — end-of-meeting (any language)
-- [ ] Saved card → **Translate** → pick a language → **Translate**.
-- [ ] **Expect:** a faithful, line-for-line translation (NOT a summary) + the same
-      honest egress receipt. **Save to note** → `## Transcript — <lang>` section.
+## 4. Translation — on-demand, AFTER the meeting stops  ⟵ CHANGED (today, ADR-0037)
+> Live (translate-during-capture) translation was **removed and deferred** to the
+> backlog. **Confirm there are NO translate controls during a meeting** — the
+> controls bar has neither a `→ EN` toggle nor a `translate…` picker. Translation is
+> now a post-stop action. Needs a configured model (step 0); best tested with the
+> **local Ollama model** (proves zero egress).
 
-## 5. Translation §2 — live → English (on-device, no model needed)
-- [ ] Before Start, toggle **`→ EN`** on. Start, **play/speak non-English audio**.
-- [ ] **Expect:** captions appear **in English** (the line text itself is English).
-      Pure on-device — no model required, nothing leaves the Mac.
+- [ ] **No live controls:** start a capture and confirm the controls bar shows no
+      `→ EN` and no `translate…` — only source/language selectors + the trust lozenge.
+- [ ] Capture a short meeting in a **non-English** language → **Stop**.
+- [ ] Saved card → **Translate** → the panel shows a language picker + an honest
+      **egress disclosure**: LOCAL → "Runs on your local model — nothing leaves your
+      Mac"; CLOUD → "Each line is sent to your cloud model (redacted) and recorded in
+      Settings → Privacy." Confirm it matches your configured model.
+- [ ] Pick a target (e.g. **Vietnamese**) → **Translate**. The panel **closes** and a
+      persistent banner shows **"Translating → <lang> N%"** that climbs to 100%
+      **while you keep using the app**, then **"<lang> translation ready"**.
+- [ ] **Expect in the saved `.md`:** a `## Transcript — <lang>` section that
+      **mirrors** the original `## Transcript` — same speaker labels, same wall-clock
+      timestamps, same blockquote format — just translated. No timestamp/format drift.
+- [ ] **Completeness (ADR-0036):** the translated section has the **same number of
+      lines** as the original, and a long run-on utterance is **not truncated**.
+- [ ] **Re-translate / switch language:** open Translate again, pick a different
+      language → the file gains/replaces that language's section.
 
-## 6. Translation §3 — live → arbitrary target  ⟵ NEW (today)
-> The new per-segment LLM path (ADR-0035 Option C). Needs a configured model.
-> **Best tested with the local Ollama model** (proves zero egress).
-
-- [ ] Before Start: the **`translate…` picker** sits right after `→ EN`. With **no
-      model** configured it's disabled (tooltip points you to Settings) — confirm.
-- [ ] Configure the **local** model (step 0), then pick a target (e.g. **Vietnamese**).
-- [ ] **Mutual exclusion:** picking a target clears `→ EN`; toggling `→ EN` back on
-      clears the picker. Confirm both directions.
-- [ ] **Egress hint:** with a LOCAL model the bar shows **`on-device`** (green).
-      With a CLOUD model it shows **`↑ cloud · redacted`**. Confirm the right one.
-- [ ] Start, **play/speak audio in a different language than the target**.
-- [ ] **Expect:** each finalized line keeps its **original** text, with the
-      **translation underneath** (bilingual). Lines already in the target language
-      are left alone (no duplicate echo).
-- [ ] **Latency feel:** does the translation appear soon enough after each line
-      finalizes to be useful? (Local model speed depends on your Mac + model size.)
-- [ ] **Locked during capture:** the picker is disabled while recording (chosen
-      before Start) — confirm.
-- [ ] **Auto-save on Stop (background, NEW):** with a target set, **Stop** → a
-      persistent banner shows **"Translating meeting → <lang> N%"** that climbs to
-      100% **while you keep using the app**, then **"<lang> translation ready"**.
-      The saved meeting `.md` then has a `## Transcript — <lang>` section (in the
-      target language) **without** opening the Translate panel. On a local model
-      a long meeting takes a while — that's expected; watch the % climb. (Local =
-      nothing leaves the Mac; cloud sends each chunk redacted.)
-- [ ] **No stranded partial (NEW, engine fix):** during/after a meeting with
-      continuous speech, confirm an early line no longer gets stuck **untranslated
-      at the bottom** of the transcript while later lines sit above it. (This was
-      the "messy transcript" — a partial that never finalized; now retracted.)
-- [ ] **Translate no longer times out (NEW):** a longer end-of-meeting Translate
-      on a local model should now **complete** instead of timing out at ~60s (the
-      cap for heavy whole-transcript ops is now 10 min).
-
-## 7. Privacy verification (the trust check)
-- [ ] **Local zero-egress:** after a LOCAL summary / Q&A / §3 live-translation
-      session, open **Settings → Privacy** (cloud-activity log). Entries should be
-      marked **`local`** with **0 redactions** — nothing left the Mac.
-- [ ] **§3 aggregation:** with a CLOUD model + §3 on, after you **stop** the
-      meeting there should be **ONE** `translate-live` entry (not one per line),
-      showing a line count + char volume + redaction total — metadata only, never
-      the text.
+## 5. Privacy verification (the trust check)
+- [ ] **Local zero-egress:** after a LOCAL summary / Q&A / post-stop translation,
+      open **Settings → Privacy** (cloud-activity log). Entries should be marked
+      **`local`** with **0 redactions** — nothing left the Mac.
+- [ ] **Translation aggregation:** with a CLOUD model, after a post-stop **Translate**
+      completes there should be **ONE** aggregated translation entry (not one per
+      line), showing a line count + char volume + redaction total — metadata only,
+      never the text.
 - [ ] **Cloud redaction:** a cloud summary of a transcript containing an email /
       phone / amount should report N redactions in the receipt.
 

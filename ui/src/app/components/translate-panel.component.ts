@@ -1,32 +1,32 @@
-// TranslatePanel — translate the meeting transcript into a chosen language
-// (Phase 6, ADR-0029 / ADR-0031). A near-clone of SummaryPanel.
+// TranslatePanel — translate the saved meeting transcript into a chosen
+// language, on demand, AFTER the meeting stops (ADR-0029 / ADR-0031 / ADR-0037).
 //
-// A centered modal opened from the meeting-saved card. It:
-//   1. Assembles the transcript TEXT from EngineService.segments() (the clean,
-//      post-stop labeled utterances) as "<speaker> <mm:ss>: <text>" lines, and
-//      the applied speaker display-names as `knownNames` — IDENTICAL to the
-//      Summary panel's assembly.
-//   2. Unlike Summary it does NOT auto-run on open: translation needs a chosen
-//      target language. The user picks a target from TRANSLATE_TARGETS and
-//      clicks "Translate"; we send the transcript + the ENGLISH language NAME
-//      (the model + vault heading want the canonical name) + knownNames to main
-//      via LlmService.translate — the renderer makes NO network call. Main owns
-//      the cloud/local fork, the redaction (cloud only), and the provider HTTP.
-//   3. Renders the returned translation readably (whitespace-pre body — no
-//      markdown dependency) plus the SAME honest egress receipt as Summary:
-//        cloud → "Sent to {model} · cloud · redacted N item(s) · text only —
-//                 never audio"
-//        local → "Ran on {model} · ran locally · nothing left your Mac"
-//      and a redaction breakdown by category when there is one. The user can
-//      change the language + re-translate; a re-translate replaces the result.
-//   4. On "Save to note" sends the translation back through the ENGINE
-//      (EngineService.writeTranslation → `translation.write`), which appends a
-//      `## Transcript — <lang>` section to the meeting file + git-commits
-//      (ADR-0031 — the renderer never writes the vault). Shows a transient
-//      "Saved to note ✓"; switching language + re-translating resets it.
+// This is the ONLY translation surface now that live (translate-during-capture)
+// translation is deferred to the backlog (ADR-0037). A centered modal opened
+// from the meeting-saved card. It:
+//   1. Lets the user pick a target language from TRANSLATE_TARGETS.
+//   2. On "Translate", hands the CLEAN post-stop transcript — one text per saved
+//      utterance, in order (EngineService.segments(), the labeled post-stop swap)
+//      — plus the applied speaker display-names to TranslationJobService, which
+//      translates each line ONE AT A TIME in the BACKGROUND (non-blocking, with a
+//      progress %), then persists the result via the ENGINE
+//      (EngineService.writeTranslationLines → `translation.write` with `lines`).
+//      The engine ZIPS each translated line with its OWN retained utterance
+//      (speaker label + wall-clock tStart) and re-renders the blockquote body, so
+//      the appended `## Transcript — <lang>` section is a byte-for-byte STRUCTURAL
+//      MIRROR of the original — same labels, timestamps, blockquote format.
+//   3. Closes immediately; the host's progress banner shows "Translating →
+//      <lang> N%" and a "ready" / error state. The user keeps using the app.
+//
+// PRIVACY (ADR-0031 / ADR-0035): the renderer makes NO network call. Each line
+// goes through LlmService.translateSegment → Electron MAIN (the egress
+// chokepoint): a LOCAL (loopback) model = ZERO egress; a CLOUD model redacts each
+// line and records ONE aggregated, metadata-only entry in the cloud-call log
+// (Settings → Privacy). The panel discloses which BEFORE the user commits, using
+// the same loopback-baseUrl test main applies.
 //
 // Token-only styling, OnPush, signals, @if/@for, strict-CSP-safe (no inline
-// handlers). Modal chrome mirrors SummaryPanel exactly.
+// handlers).
 
 import {
   ChangeDetectionStrategy,
@@ -40,6 +40,7 @@ import {
 } from '@angular/core';
 import { EngineService } from '../services/engine.service';
 import { LlmService } from '../services/llm.service';
+import { TranslationJobService } from '../services/translation-job.service';
 
 /** A target language the user can translate INTO. `label` is the friendly,
  *  native-script display string shown in the picker; `name` is the canonical
@@ -91,8 +92,7 @@ export const TRANSLATE_TARGETS: readonly TranslateTarget[] = [
         display: flex;
         flex-direction: column;
         width: 100%;
-        max-width: 640px;
-        max-height: 82vh;
+        max-width: 520px;
         background: var(--surface);
         border: 1px solid var(--border-2);
         border-radius: var(--r-card);
@@ -164,11 +164,8 @@ export const TRANSLATE_TARGETS: readonly TranslateTarget[] = [
         background: var(--highlight);
       }
 
-      /* ── Body (scrolls) ─────────────────────────────────────────────── */
+      /* ── Body ───────────────────────────────────────────────────────── */
       .body {
-        flex: 1;
-        min-height: 0;
-        overflow-y: auto;
         padding: var(--s-4);
         display: flex;
         flex-direction: column;
@@ -204,132 +201,44 @@ export const TRANSLATE_TARGETS: readonly TranslateTarget[] = [
         border-color: var(--accent);
         box-shadow: 0 0 0 3px var(--accent-soft);
       }
-      .lang-select:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
 
-      /* Generating state — a small spinner + label, no fake percentage. */
-      .generating {
-        display: flex;
-        align-items: center;
-        gap: var(--s-2);
-        padding: var(--s-8) 0;
-        justify-content: center;
-        color: var(--text-2);
-        font-size: 13px;
-      }
-      .spinner {
-        width: 16px;
-        height: 16px;
-        border: 2px solid var(--border-2);
-        border-top-color: var(--accent);
-        border-radius: 50%;
-        animation: translate-spin 700ms linear infinite;
-      }
-      @keyframes translate-spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-
-      /* The translated transcript body. We don't pull in a markdown renderer;
-         the text is shown with preserved whitespace + wrapping so lines read
-         sensibly. */
-      .translation-text {
-        margin: 0;
-        font-family: var(--font-ui);
-        font-size: 13.5px;
-        line-height: 1.6;
-        color: var(--text);
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-      }
-
-      /* Idle hint shown before the first translate. */
-      .idle-hint {
-        padding: var(--s-6) 0;
-        text-align: center;
-        color: var(--text-3);
-        font-size: 12.5px;
-        line-height: 1.5;
-      }
-
-      /* Error state. */
-      .error {
+      /* ── Egress disclosure (local vs cloud) ─────────────────────────── */
+      .disclosure {
         display: flex;
         align-items: flex-start;
-        gap: var(--s-2);
-        padding: var(--s-3);
-        border-radius: var(--r-panel);
-        border: 1px solid
-          color-mix(in oklab, var(--status-recording) 40%, transparent);
-        background: color-mix(in oklab, var(--status-recording) 8%, transparent);
-        color: var(--text);
-        font-size: 12.5px;
-        line-height: 1.5;
-      }
-      .error svg {
-        flex-shrink: 0;
-        margin-top: 1px;
-        color: var(--status-recording);
-      }
-
-      /* ── Receipt (egress disclosure) ────────────────────────────────── */
-      .receipt {
-        display: flex;
-        flex-direction: column;
         gap: var(--s-2);
         padding: var(--s-3);
         border-radius: var(--r-panel);
         border: 1px solid var(--border);
         background: var(--bg-2);
-      }
-      .receipt.cloud {
-        border-color: color-mix(in oklab, var(--status-cloud) 35%, transparent);
-        background: color-mix(in oklab, var(--status-cloud) 8%, transparent);
-      }
-      .receipt-line {
-        display: flex;
-        align-items: flex-start;
-        gap: var(--s-2);
         font-size: 11.5px;
         line-height: 1.5;
         color: var(--text-2);
       }
-      .receipt-line .r-icon {
+      .disclosure.cloud {
+        border-color: color-mix(in oklab, var(--status-cloud) 35%, transparent);
+        background: color-mix(in oklab, var(--status-cloud) 8%, transparent);
+      }
+      .disclosure .d-icon {
         flex-shrink: 0;
         margin-top: 1px;
       }
-      .receipt.cloud .r-icon {
+      .disclosure.cloud .d-icon {
         color: var(--status-cloud);
       }
-      .receipt:not(.cloud) .r-icon {
+      .disclosure:not(.cloud) .d-icon {
         color: var(--status-success);
       }
-      .receipt-line strong {
+      .disclosure strong {
         color: var(--text);
         font-weight: 600;
       }
-      .redaction-list {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--s-1);
-        margin: 0;
-        padding: 0;
-        list-style: none;
-      }
-      .redaction-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 2px 7px;
-        border-radius: 999px;
-        border: 1px solid var(--border-2);
-        background: var(--surface);
-        font-family: var(--font-mono);
-        font-size: 10.5px;
-        color: var(--text-2);
+
+      .idle-hint {
+        text-align: center;
+        color: var(--text-3);
+        font-size: 12px;
+        line-height: 1.5;
       }
 
       /* ── Footer ─────────────────────────────────────────────────────── */
@@ -340,14 +249,6 @@ export const TRANSLATE_TARGETS: readonly TranslateTarget[] = [
         padding: var(--s-3) var(--s-4);
         border-top: 1px solid var(--border);
         flex-shrink: 0;
-      }
-      .saved-note {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        margin-right: auto;
-        font-size: 11.5px;
-        color: var(--status-success);
       }
       .spacer {
         flex: 1;
@@ -395,9 +296,9 @@ export const TRANSLATE_TARGETS: readonly TranslateTarget[] = [
           <div class="head-text">
             <div class="title">Translate</div>
             <div class="subtitle">
-              A model translates this meeting's transcript into another
-              language. Text only — your audio never leaves the Mac, and a
-              local model means zero egress.
+              A model translates this meeting's transcript into another language
+              and saves it into the note. Text only — your audio never leaves the
+              Mac.
             </div>
           </div>
           <button
@@ -417,15 +318,12 @@ export const TRANSLATE_TARGETS: readonly TranslateTarget[] = [
 
         <!-- Body -->
         <div class="body">
-          <!-- Target-language picker. Always available so the user can change
-               the language and re-translate; disabled only while a call is in
-               flight. -->
+          <!-- Target-language picker. -->
           <div class="lang-row">
             <label class="lang-label" for="translate-target">Translate to</label>
             <select
               id="translate-target"
               class="lang-select"
-              [disabled]="translating()"
               [value]="targetName()"
               (change)="onTargetChange($any($event.target).value)"
             >
@@ -435,94 +333,49 @@ export const TRANSLATE_TARGETS: readonly TranslateTarget[] = [
             </select>
           </div>
 
-          @if (translating()) {
-            <div class="generating" aria-live="polite">
-              <span class="spinner" aria-hidden="true"></span>
-              Translating to {{ targetName() }}…
-            </div>
-          } @else if (translation(); as result) {
-            @if (result.ok) {
-              <!-- Receipt — the honest egress disclosure for this call. -->
-              <div class="receipt" [class.cloud]="result.egress === 'cloud'">
-                <div class="receipt-line">
-                  <svg class="r-icon" viewBox="0 0 24 24" width="13" height="13"
-                    fill="none" stroke="currentColor" stroke-width="1.7"
-                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    @if (result.egress === 'cloud') {
-                      <path d="M7 18a4 4 0 0 1 .5-7.97A6 6 0 0 1 19 11a3.5 3.5 0 0 1-.5 7H7z" />
-                    } @else {
-                      <rect x="5" y="11" width="14" height="9" rx="2" />
-                      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-                    }
-                  </svg>
-                  <span [innerText]="receiptText()"></span>
-                </div>
-                @if (result.egress === 'cloud' && redactionChips().length > 0) {
-                  <ul class="redaction-list" aria-label="Redaction breakdown">
-                    @for (chip of redactionChips(); track chip.category) {
-                      <li class="redaction-chip">
-                        {{ chip.category }} · {{ chip.count }}
-                      </li>
-                    }
-                  </ul>
-                }
-              </div>
+          <!-- Egress disclosure — honest about where the text goes. -->
+          <div class="disclosure" [class.cloud]="usesCloud()">
+            <svg class="d-icon" viewBox="0 0 24 24" width="13" height="13"
+              fill="none" stroke="currentColor" stroke-width="1.7"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              @if (usesCloud()) {
+                <path d="M7 18a4 4 0 0 1 .5-7.97A6 6 0 0 1 19 11a3.5 3.5 0 0 1-.5 7H7z" />
+              } @else {
+                <rect x="5" y="11" width="14" height="9" rx="2" />
+                <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+              }
+            </svg>
+            <span>
+              @if (usesCloud()) {
+                Each line is sent to your <strong>cloud</strong> model (redacted)
+                and recorded in Settings → Privacy. Switch to a local model to
+                keep everything on your Mac.
+              } @else {
+                Runs on your <strong>local</strong> model — nothing leaves your
+                Mac.
+              }
+            </span>
+          </div>
 
-              <!-- Translated transcript (rendered as preserved-whitespace text). -->
-              <pre class="translation-text">{{ result.translation }}</pre>
-            } @else {
-              <div class="error" role="alert">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
-                  stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-                  stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 8v5M12 16.5v.01" />
-                </svg>
-                <span>{{ result.detail }}</span>
-              </div>
-            }
-          } @else {
-            <div class="idle-hint">
-              Pick a language and choose Translate to render the whole
-              transcript in {{ targetName() }}.
-            </div>
-          }
+          <div class="idle-hint">
+            Translation runs in the background; a progress indicator appears once
+            you start. You can keep using the app.
+          </div>
         </div>
 
         <!-- Footer -->
         <div class="footer">
-          @if (savedConfirmed()) {
-            <span class="saved-note" aria-live="polite">
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="none"
-                stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
-                stroke-linejoin="round" aria-hidden="true">
-                <path d="M20 6 9 17l-5-5" />
-              </svg>
-              Saved to note
-            </span>
-          }
           <div class="spacer"></div>
+          <button type="button" class="btn" (click)="onClose()">Close</button>
           <button
             type="button"
-            class="btn"
-            [disabled]="translating()"
+            class="btn btn-primary"
+            [disabled]="!hasTranscript()"
             (click)="translate()"
             [title]="'Translate the transcript into ' + targetName()"
           >
-            {{ hasTranslation() ? 'Re-translate' : 'Translate' }}
+            Translate
           </button>
-          <button type="button" class="btn" (click)="onClose()">Close</button>
-          @if (hasTranslation()) {
-            <button
-              type="button"
-              class="btn btn-primary"
-              [disabled]="savedConfirmed()"
-              (click)="saveToNote()"
-              title="Append this translation to the saved meeting note"
-            >
-              Save to note
-            </button>
-          }
         </div>
       </div>
     </div>
@@ -531,105 +384,78 @@ export const TRANSLATE_TARGETS: readonly TranslateTarget[] = [
 export class TranslatePanelComponent {
   private readonly engine = inject(EngineService);
   private readonly llm = inject(LlmService);
+  private readonly translationJob = inject(TranslationJobService);
 
   /** The session id of the meeting being translated — the `translation.write`
    *  target (the most-recently-saved meeting). Threaded from the host. */
   readonly sessionId = input.required<string>();
 
-  /** Host closes the panel (Esc / backdrop / × / Close). */
+  /** Host closes the panel (Esc / backdrop / × / Close / on launch). */
   readonly close = output<void>();
 
   /** The offered target languages (for the template @for). */
   protected readonly targets = TRANSLATE_TARGETS;
 
   /** Currently-selected target language NAME (English). Defaults to the first
-   *  offered target. We do NOT auto-translate on open — translation needs a
-   *  deliberate choice — so this just seeds the picker. */
+   *  offered target. */
   protected readonly targetName = signal<string>(TRANSLATE_TARGETS[0].name);
 
-  /** Projection of the service translate state. */
-  protected readonly translating = this.llm.translating;
-  protected readonly translation = this.llm.translation;
+  /** True once there's a transcript to translate (gates the Translate button). */
+  protected readonly hasTranscript = computed(
+    () => this.engine.segments().length > 0,
+  );
 
-  /** Transient "Saved to note" confirmation after a successful
-   *  translation.write dispatch (the engine acks; failures land on the shared
-   *  error channel). Reset on language change / re-translate. */
-  protected readonly savedConfirmed = signal(false);
-
-  /** True once a successful translation exists (gates Save to note). */
-  protected readonly hasTranslation = computed(() => {
-    const r = this.translation();
-    return !!r && r.ok;
-  });
-
-  /** The egress receipt line. Per ADR-0031: cloud names the model + redaction
-   *  count + the text-only-never-audio guarantee; local says nothing left the
-   *  Mac. Identical to the Summary panel's receipt. */
-  protected readonly receiptText = computed(() => {
-    const r = this.translation();
-    if (!r || !r.ok) return '';
-    if (r.egress === 'local') {
-      return `Ran on ${r.model} · ran locally · nothing left your Mac`;
+  /**
+   * Whether the configured model would send each line to the CLOUD (vs a LOCAL
+   * loopback model = zero egress). Mirrors main's `isLocalEgress` so the panel
+   * discloses honestly BEFORE the user commits. Anthropic (no baseUrl) and any
+   * non-loopback baseUrl ⇒ cloud; a loopback OpenAI-compatible baseUrl ⇒ local.
+   * Null config ⇒ treat as cloud (the safe assumption).
+   */
+  protected readonly usesCloud = computed(() => {
+    const cfg = this.llm.config();
+    if (!cfg || cfg.provider !== 'openai-compatible') return true;
+    const base = cfg.baseUrl;
+    if (typeof base !== 'string' || base.length === 0) return true;
+    try {
+      const h = new URL(base).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+      return !(h === 'localhost' || h === '127.0.0.1' || h === '::1');
+    } catch {
+      return true;
     }
-    const n = r.redaction.total;
-    const items = `${n} item${n === 1 ? '' : 's'}`;
-    return `Sent to ${r.model} · cloud · redacted ${items} · text only — never audio`;
   });
 
-  /** Per-category redaction breakdown for the cloud receipt chips (non-zero
-   *  categories only). Empty for local / no redaction. */
-  protected readonly redactionChips = computed(() => {
-    const r = this.translation();
-    if (!r || !r.ok || r.egress !== 'cloud') return [];
-    return Object.entries(r.redaction.byCategory)
-      .filter(([, count]) => count > 0)
-      .map(([category, count]) => ({ category, count }));
-  });
-
-  constructor() {
-    // Clear any prior meeting's translation so a stale result doesn't flash
-    // when the panel mounts. Unlike Summary we do NOT kick off a call here —
-    // the user must pick a target and press Translate.
-    this.llm.resetTranslation();
-  }
-
-  /** The user picked a different target language. Reset the saved note (a
-   *  pending translation for a new language hasn't been saved). */
+  /** The user picked a different target language. */
   protected onTargetChange(value: string): void {
     this.targetName.set(value);
-    this.savedConfirmed.set(false);
-  }
-
-  /** Assemble the transcript + known names and dispatch the translate call.
-   *  Re-runnable (the button stays available); a new result replaces the shown
-   *  one. Reads the transcript/names off the engine signals at call time. */
-  protected async translate(): Promise<void> {
-    this.savedConfirmed.set(false);
-    const transcript = this.buildTranscript();
-    const knownNames = this.buildKnownNames();
-    await this.llm.translate({
-      transcript,
-      targetLang: this.targetName(),
-      knownNames,
-    });
   }
 
   /**
-   * Build the transcript text from the clean, post-stop labeled utterances
-   * (EngineService.segments(), already sorted by tStart). Each line is
-   * "<speaker> <mm:ss>: <text>", with the speaker omitted when unknown so we
-   * never fabricate one. Text only — no audio, no per-line ids. Identical to
-   * the Summary panel's assembler.
+   * Hand the transcript to the background translation job and close. The job
+   * translates each line via main (LOCAL = zero egress; CLOUD redacts + logs)
+   * and persists a structural mirror via the engine; the host's banner shows
+   * progress. Re-running for the same meeting replaces that language's section.
    */
-  private buildTranscript(): string {
-    return this.engine
-      .segments()
-      .map((s) => {
-        const stamp = this.formatTime(s.tStart);
-        const speaker = s.speaker ? `${s.speaker} ` : '';
-        return `${speaker}${stamp}: ${s.text}`;
-      })
-      .join('\n');
+  protected translate(): void {
+    const texts = this.buildTexts();
+    if (texts.length === 0) return;
+    this.translationJob.start(
+      this.sessionId(),
+      this.targetName(),
+      texts,
+      this.buildKnownNames(),
+    );
+    this.close.emit();
+  }
+
+  /**
+   * The clean post-stop transcript as one text per utterance, in the SAME ORDER
+   * the engine saved them (EngineService.segments() == the `meeting.transcript`
+   * swap == the engine's saved utterances). The engine zips translated[i] back
+   * onto its retained utterance[i] (speaker label + wall-clock tStart).
+   */
+  private buildTexts(): string[] {
+    return this.engine.segments().map((s) => s.text);
   }
 
   /**
@@ -637,7 +463,7 @@ export class TranslatePanelComponent {
    * collapses to labels before a cloud send (ADR-0031). We take each speaker's
    * applied name: `matched_name` when set, else the label only if it isn't the
    * generic "Speaker N" placeholder (a bare placeholder carries no PII to
-   * protect). De-duped, non-empty. Identical to the Summary panel's assembler.
+   * protect). De-duped, non-empty.
    */
   private buildKnownNames(): string[] {
     const saved = this.engine.lastMeetingSaved();
@@ -655,17 +481,6 @@ export class TranslatePanelComponent {
     return Array.from(names);
   }
 
-  /** Send the generated translation back through the engine to be appended to
-   *  the meeting note as a `## Transcript — <lang>` section + git-committed
-   *  (ADR-0031). The engine acks; failures land on the shared error channel
-   *  (AppComponent's banner). Shows a transient note. */
-  protected saveToNote(): void {
-    const r = this.translation();
-    if (!r || !r.ok) return;
-    this.engine.writeTranslation(this.sessionId(), r.targetLang, r.translation);
-    this.savedConfirmed.set(true);
-  }
-
   protected onClose(): void {
     this.close.emit();
   }
@@ -673,16 +488,5 @@ export class TranslatePanelComponent {
   @HostListener('document:keydown.escape')
   protected onEscape(): void {
     this.close.emit();
-  }
-
-  /** Seconds → mm:ss (or h:mm:ss past an hour). Clamps NaN/negative to 0. */
-  private formatTime(seconds: number): string {
-    const total =
-      Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
-    const s = total % 60;
-    const m = Math.floor(total / 60) % 60;
-    const h = Math.floor(total / 3600);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
   }
 }

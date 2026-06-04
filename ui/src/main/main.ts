@@ -382,6 +382,37 @@ ipcMain.on('hark:reveal-vault', () => {
   });
 });
 
+// Reveal a SPECIFIC vault file in Finder (open its folder + select it) — used by
+// the saved-meeting card so "Reveal in Finder" lands ON the meeting note instead
+// of dumping the user in the vault root. The path arrives as UNTRUSTED IPC data,
+// so main is the trust boundary (the SAME gate as hark:read-meeting-audio,
+// CLAUDE.md hard rules #2/#4): canonicalize with path.resolve, require a true
+// descendant of VAULT_DIR (path.relative escape check — immune to the
+// `/vault-evil` sibling-prefix trap), and ONLY ever reveal (never read/write/
+// delete). A reveal cannot exfiltrate — it just opens Finder — but we still
+// refuse arbitrary paths so a compromised renderer can't point Finder anywhere.
+ipcMain.on('hark:reveal-path', (_ev, raw: unknown) => {
+  if (typeof raw !== 'string' || raw.length === 0) return;
+  const resolved = path.resolve(raw);
+  const root = path.resolve(VAULT_DIR);
+  const rel = path.relative(root, resolved);
+  const insideVault =
+    rel.length > 0 && !rel.startsWith('..') && !path.isAbsolute(rel);
+  if (!insideVault) {
+    // eslint-disable-next-line no-console
+    console.error('[hark] refused reveal outside vault:', resolved);
+    return;
+  }
+  // showItemInFolder no-ops on a missing target; fall back to the vault root so
+  // the button never feels dead (e.g. the file was moved/renamed since save).
+  if (fs.existsSync(resolved)) {
+    shell.showItemInFolder(resolved);
+  } else {
+    ensureVaultDir();
+    void shell.openPath(VAULT_DIR);
+  }
+});
+
 // ─── Meeting-audio read IPC (Post-Meeting Review) ─────────────────────
 // The renderer is sandboxed (contextIsolation + sandbox + no nodeIntegration)
 // and cannot touch the filesystem. The Post-Meeting Review screen needs the

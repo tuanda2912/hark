@@ -81,6 +81,10 @@ declare global {
       savePrefs(prefs: Prefs): void;
       /** Reveal the vault folder in Finder. */
       revealVault(): void;
+      /** Reveal a specific vault file in Finder (open its folder + select it),
+       *  e.g. the saved meeting note. main validates the path is inside the
+       *  vault and only reveals — never reads/writes. */
+      revealPath(filePath: string): void;
       /** Read a persisted meeting-audio .wav (validated vault-internal path in
        *  main) for the Post-Meeting Review screen. Resolves with the raw bytes;
        *  rejects if the path is outside the vault / not a .wav / unreadable. */
@@ -131,15 +135,17 @@ declare global {
          */
         ask(req: AskReq): Promise<AskResult>;
         /**
-         * Translate ONE finalized caption line to an arbitrary target (ADR-0035,
-         * §3 — live translation). Fired per finalized segment when the user
-         * opted in. Same egress model as the other calls: CLOUD redacts the line
-         * first, LOCAL (loopback) sends it as-is (zero egress). Egress is
-         * AGGREGATED into one metadata-only cloud-log entry — never one per line.
+         * Translate ONE line to a target language. Used by the post-stop
+         * background translation job (TranslationJobService) — live translation
+         * is deferred (ADR-0037). Same egress model as the other calls: CLOUD
+         * redacts the line first, LOCAL (loopback) sends it as-is (zero egress).
+         * Egress is AGGREGATED into one metadata-only cloud-log entry — never one
+         * per line.
          */
         translateSegment(req: TranslateSegmentReq): Promise<TranslateSegmentResult>;
-        /** Commit the pending live-translation roll-up to its single aggregated
-         *  cloud-log entry (called when live translation stops). Fire-and-forget. */
+        /** Commit the pending per-utterance translation roll-up to its single
+         *  aggregated cloud-log entry (called when a background translation job
+         *  finishes/aborts). Fire-and-forget. */
         flushLiveTranslate(): void;
         /** Read the local cloud-activity log (metadata only — never content)
          *  for Settings → Privacy. */
@@ -233,17 +239,6 @@ export class EngineService {
   readonly bookmarkCreated$ = new Subject<BookmarkCreatedPayload>();
   /** Fired once per meeting when the engine reports a vault write complete. */
   readonly meetingSaved$ = new Subject<MeetingSavedPayload>();
-
-  /**
-   * Fired each time a `segment.final` lands during a LIVE capture — the hook
-   * LiveTranslationService listens on to translate finalized lines to an
-   * arbitrary target (ADR-0035, §3). Deliberately NOT fired by the post-stop
-   * `meeting.transcript` swap (those clean labeled lines are §1's job, not live
-   * per-segment translation), so the orchestrator only ever sees genuine live
-   * finals. Emits the merged DisplayedSegment so a listener has the
-   * utteranceId + text + speaker without re-reading the map.
-   */
-  readonly segmentFinalized$ = new Subject<DisplayedSegment>();
 
   /**
    * The most recent `meeting.saved` payload, retained so a component that
@@ -466,6 +461,30 @@ export class EngineService {
     this.send({
       type: 'translation.write',
       payload: { session_id: sessionId, lang, translation },
+    });
+  }
+
+  /**
+   * Persist a STRUCTURED transcript translation: one translated text per
+   * utterance, in the SAME ORDER as the saved `## Transcript`. Unlike
+   * `writeTranslation` (a single pre-formatted blob), this sends the
+   * `translation.write` frame with `{ session_id, lang, lines }` — the engine
+   * ZIPS each line with its OWN retained utterances (speaker label + wall-clock
+   * tStart) and re-renders the blockquote body itself, so the
+   * `## Transcript — <lang>` section is a byte-for-byte STRUCTURAL MIRROR of the
+   * original (same labels, same timestamps, same blockquote format). The
+   * renderer supplies ONLY the translated text; the engine owns formatting.
+   *
+   * Sent over the same socket; the engine appends/replaces the language section,
+   * git-commits, then acks. No-op for an empty session/lang or empty `lines`.
+   * Failure arrives as an `error` frame on the existing `errors$` / `lastError`
+   * channel.
+   */
+  writeTranslationLines(sessionId: string, lang: string, lines: readonly string[]): void {
+    if (!sessionId || !lang.trim() || lines.length === 0) return;
+    this.send({
+      type: 'translation.write',
+      payload: { session_id: sessionId, lang, lines },
     });
   }
 
@@ -860,29 +879,6 @@ export class EngineService {
       isFinal,
     };
     this.segmentsMap.set(p.utterance_id, seg);
-    this._segmentsTick.update((v) => v + 1);
-    // Live per-segment translation hook (ADR-0035, §3): notify listeners ONLY
-    // on a final (never partials — bounds the LLM call count). The orchestrator
-    // dedupes by utteranceId and writes any translation back via
-    // setSegmentTranslation(). Emitted after the map update so a synchronous
-    // listener reading segments() sees this line.
-    if (isFinal) this.segmentFinalized$.next(seg);
-  }
-
-  /**
-   * Set the live translation for a displayed segment by utterance id (ADR-0035,
-   * §3). Called by LiveTranslationService when a per-segment translation comes
-   * back from main. A NO-OP if the segment is gone (superseded, or the view was
-   * cleared / swapped for the post-stop labeled transcript) — so a late
-   * translation for a retracted line can't resurrect it. Bumps the tick so the
-   * `segments()` computed re-evaluates and the line re-renders with its
-   * translation under the original. Never networks — main produced the text.
-   */
-  setSegmentTranslation(utteranceId: string, translation: string): void {
-    const seg = this.segmentsMap.get(utteranceId);
-    if (!seg) return;
-    if (seg.translation === translation) return;
-    this.segmentsMap.set(utteranceId, { ...seg, translation });
     this._segmentsTick.update((v) => v + 1);
   }
 }

@@ -216,65 +216,9 @@
       </select>
     </label>
 
-    <!-- Live translate → English (BACKLOG translation §2). On-device, zero
-         egress: the engine flips WhisperKit to task=.translate so any spoken
-         language shows up as English captions. Locked while capturing (the
-         decode task is fixed at capture.start), like the source/language
-         selectors. Pure-local — no model/provider needed. -->
-    <button
-      type="button"
-      class="shrink-0 px-2 py-1 rounded-input border text-xs font-mono cursor-pointer disabled:cursor-not-allowed"
-      [class.border-accent]="liveTranslate()"
-      [class.text-accent]="liveTranslate()"
-      [class.bg-accent-soft]="liveTranslate()"
-      [class.border-border-2]="!liveTranslate()"
-      [class.text-text-3]="!liveTranslate()"
-      [class.opacity-60]="!liveTranslate()"
-      [disabled]="isCapturing()"
-      (click)="toggleLiveTranslate()"
-      [attr.aria-pressed]="liveTranslate()"
-      title="Translate live captions to English on-device (any spoken language → English). Nothing leaves your Mac."
-    >
-      → EN
-    </button>
-
-    <!-- Live translate → arbitrary (non-English) target (ADR-0035, §3). LLM-backed:
-         each finalized line goes through the configured model (renderer makes no
-         network call — main is the egress chokepoint). LOCAL model = zero egress
-         (recommended); CLOUD model sends each finalized line (redacted) — the
-         hint + tooltip disclose which. Disabled with no model configured; locked
-         while capturing (chosen before Start), and mutually exclusive with → EN. -->
-    <label
-      class="flex items-center gap-1 text-text-3 text-xs shrink-0"
-      [title]="liveTargetTitle()"
-    >
-      <span class="font-mono">→</span>
-      <select
-        class="px-2 py-1 rounded-input border bg-surface text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-        [class.border-accent]="liveTranslateArbitrary()"
-        [class.border-border-2]="!liveTranslateArbitrary()"
-        [disabled]="isCapturing() || !modelConfigured()"
-        [value]="liveTarget() ?? ''"
-        (change)="onLiveTargetChange($any($event.target).value)"
-      >
-        <option value="">translate…</option>
-        @for (t of liveTargets; track t.code) {
-          <option [value]="t.name">{{ t.label }}</option>
-        }
-      </select>
-    </label>
-    @if (liveTranslateArbitrary()) {
-      <!-- Egress honesty: confirm at a glance whether live lines stay on-device
-           or go to the cloud (redacted). Full sentence in the picker's title. -->
-      <span
-        class="shrink-0 text-[11px] font-mono"
-        [class.text-success]="!liveUsesCloud()"
-        [class.text-cloud]="liveUsesCloud()"
-        [title]="liveTargetTitle()"
-      >
-        {{ liveUsesCloud() ? '↑ cloud · redacted' : 'on-device' }}
-      </span>
-    }
+    <!-- Live translation is deferred (ADR-0037): no translate-during-capture
+         controls. Translation is an on-demand, post-stop action — the Translate
+         affordance on the saved-meeting card opens the panel. -->
 
     <!-- Trust lozenge — the product's defining affordance. Audio stays
          on this Mac; this is always-visible reassurance. The label text
@@ -411,7 +355,6 @@
                   [text]="s.text"
                   [speaker]="s.speaker"
                   [speakerColor]="speakerColorFor(s.speaker)"
-                  [translation]="s.translation"
                   [bookmarked]="isBookmarked(s)"
                 />
               }
@@ -420,7 +363,6 @@
                   [time]="formatTime(s.tStart)"
                   [text]="s.text"
                   [speaker]="s.speaker"
-                  [translation]="s.translation"
                   [partial]="true"
                   [caret]="last"
                   [bookmarked]="isBookmarked(s)"
@@ -549,7 +491,7 @@
       <hark-meeting-saved-toast
         [saved]="saved"
         (dismiss)="dismissMeetingSaved()"
-        (reveal)="revealVault()"
+        (reveal)="revealMeeting()"
         (review)="openReview()"
         (summarize)="openSummary()"
         (translate)="openTranslation()"

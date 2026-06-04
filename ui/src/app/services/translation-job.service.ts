@@ -1,24 +1,26 @@
 // TranslationJobService — post-meeting background transcript translation.
 //
-// When live translation (§3) was active and the meeting stops, translating the
-// WHOLE transcript in one shot is slow on a local model (minutes) and opaque
-// (no progress, all-or-nothing). This service instead runs it as a BACKGROUND
-// job: it splits the clean transcript into small chunks, translates them one at
-// a time (each call is fast — no timeout, and a small local model adheres better
-// to a short input than one giant prompt), tracks progress as a percentage, and
-// on completion persists the assembled translation to the meeting file via the
-// engine (the single vault writer) and surfaces a "ready" state. The user keeps
-// using the app while it runs.
+// When live translation (§3) was active and the meeting stops, this translates
+// the saved transcript into the target language as a BACKGROUND job: it
+// translates each utterance's text ONE AT A TIME (per-utterance, so progress is
+// smooth — one step per line — and a small local model adheres better to a short
+// input), tracks a progress percentage, and on completion sends the ORDERED
+// translated lines to the engine, which renders the `## Transcript — <lang>`
+// section from its OWN retained structure (same speaker + wall-clock + blockquote
+// as the original) — so the translated section is a structural MIRROR of the
+// original, not a divergent reconstruction. The user keeps using the app while
+// it runs.
 //
-// Layering / privacy: this is an ORCHESTRATOR — it owns no socket and no network.
-// Each chunk goes through `LlmService.translateQuiet` → Electron main (the egress
+// Layering / privacy: this is an ORCHESTRATOR — no socket, no network. Each line
+// goes through `LlmService.translateSegment` → Electron main (the egress
 // chokepoint, ADR-0029/0031): a LOCAL model = zero egress; a CLOUD model redacts
-// each chunk first + logs metadata-only. Chunks are COARSE (tens of lines), so a
-// cloud run logs a handful of `translate` entries, not hundreds. The result is
-// written ONLY via `EngineService.writeTranslation` (single writer + git commit).
+// each line + aggregates a metadata-only log entry. The result is persisted ONLY
+// via `EngineService.writeTranslationLines` (the engine is the single vault
+// writer + git committer); the engine zips the lines with its retained
+// per-utterance label + tStart.
 //
-// Jobs queue: if a second meeting stops while one is translating, it queues and
-// runs after — each writes to its own `session_id`, so neither is lost.
+// Jobs queue: a second meeting stopping while one is translating runs after —
+// each writes to its own `session_id`, so neither is lost.
 
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { EngineService } from './engine.service';
@@ -30,9 +32,9 @@ export interface TranslationJobState {
   readonly sessionId: string;
   /** Human language name being translated INTO (e.g. "Vietnamese"). */
   readonly lang: string;
-  /** Total chunks to translate. */
+  /** Total lines (utterances) to translate. */
   readonly total: number;
-  /** Chunks completed so far. */
+  /** Lines completed so far. */
   readonly done: number;
   readonly phase: 'running' | 'done' | 'error';
   /** Short, content-free failure detail when phase === 'error'. */
@@ -42,7 +44,9 @@ export interface TranslationJobState {
 interface PendingJob {
   readonly sessionId: string;
   readonly lang: string;
-  readonly transcript: string;
+  /** Original utterance texts, in the SAME order the engine saved them (so the
+   *  engine can zip translated[i] with its retained utterance[i]). */
+  readonly texts: readonly string[];
   readonly knownNames: string[];
 }
 
@@ -50,11 +54,6 @@ interface PendingJob {
 export class TranslationJobService {
   private readonly llm = inject(LlmService);
   private readonly engine = inject(EngineService);
-
-  /** Transcript lines per chunk. Small enough that each call is quick + a small
-   *  local model translates it faithfully; large enough that a meeting is a
-   *  handful of chunks (coarse progress + few cloud-log entries). */
-  private static readonly LINES_PER_CHUNK = 24;
 
   /** The active (or most-recently-finished) job, or null when idle / dismissed.
    *  Drives the progress banner. */
@@ -72,14 +71,15 @@ export class TranslationJobService {
   private running = false;
 
   /**
-   * Enqueue a background translation of `transcript` (the CLEAN post-stop
-   * transcript text) into `lang`, to be saved to `sessionId`'s meeting file.
+   * Enqueue a background translation of `texts` (one entry per saved-transcript
+   * utterance, in order) into `lang`, to be saved to `sessionId`'s meeting file.
    * No-op for empty input / no language. Returns immediately; progress shows via
    * `job()` / `percent()`.
    */
-  start(sessionId: string, lang: string, transcript: string, knownNames: string[]): void {
-    if (!sessionId || !lang.trim() || transcript.trim().length === 0) return;
-    this.queue.push({ sessionId, lang: lang.trim(), transcript, knownNames });
+  start(sessionId: string, lang: string, texts: readonly string[], knownNames: string[]): void {
+    const clean = texts.filter((t) => t.trim().length > 0);
+    if (!sessionId || !lang.trim() || clean.length === 0) return;
+    this.queue.push({ sessionId, lang: lang.trim(), texts: clean, knownNames });
     void this.drain();
   }
 
@@ -104,43 +104,36 @@ export class TranslationJobService {
   }
 
   private async run(j: PendingJob): Promise<void> {
-    const chunks = TranslationJobService.chunk(j.transcript);
-    if (chunks.length === 0) return;
-    this._job.set({ sessionId: j.sessionId, lang: j.lang, total: chunks.length, done: 0, phase: 'running' });
+    this._job.set({ sessionId: j.sessionId, lang: j.lang, total: j.texts.length, done: 0, phase: 'running' });
 
     const out: string[] = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const res = await this.llm.translateQuiet({
-        transcript: chunks[i],
+    for (let i = 0; i < j.texts.length; i++) {
+      // Per-utterance single-line translation (ADR-0035 §3 path): correct prompt
+      // for a bare line, LOCAL = zero egress, CLOUD redacts + aggregates the log.
+      const res = await this.llm.translateSegment({
+        text: j.texts[i],
         targetLang: j.lang,
         knownNames: j.knownNames,
       });
       if (!res.ok) {
-        // Abort the whole job on a chunk failure — a partial translation written
+        // Abort the whole job on a line failure — a partial translation written
         // to the vault would be misleading. Surface the content-free detail.
         this._job.update((s) => (s ? { ...s, phase: 'error', detail: res.detail } : s));
+        this.llm.flushLiveTranslate();
         return;
       }
-      out.push(res.translation);
+      // Fall back to the original line if the model returned nothing, so the
+      // section never has a blank entry (timestamp/speaker with no body).
+      out.push(res.translation.trim().length > 0 ? res.translation.trim() : j.texts[i]);
       this._job.update((s) => (s ? { ...s, done: i + 1 } : s));
     }
 
-    // Persist via the engine (single vault writer + git commit) — appends the
-    // `## Transcript — <lang>` section to this meeting's file.
-    this.engine.writeTranslation(j.sessionId, j.lang, out.join('\n'));
+    // Persist via the engine: it renders `## Transcript — <lang>` from its OWN
+    // retained per-utterance structure (label + wall-clock), zipping in these
+    // ordered translated lines — a structural mirror of the original transcript.
+    this.engine.writeTranslationLines(j.sessionId, j.lang, out);
+    // Commit the aggregated cloud-log roll-up from the per-line sends.
+    this.llm.flushLiveTranslate();
     this._job.update((s) => (s ? { ...s, phase: 'done' } : s));
-  }
-
-  /** Split a transcript into chunks of up to LINES_PER_CHUNK non-empty lines.
-   *  Each chunk is itself a mini "Speaker mm:ss: text" block, so §1's
-   *  structure-preserving prompt translates it cleanly; joining the results with
-   *  newlines reassembles the full transcript order. */
-  private static chunk(transcript: string): string[] {
-    const lines = transcript.split('\n').filter((l) => l.trim().length > 0);
-    const chunks: string[] = [];
-    for (let i = 0; i < lines.length; i += TranslationJobService.LINES_PER_CHUNK) {
-      chunks.push(lines.slice(i, i + TranslationJobService.LINES_PER_CHUNK).join('\n'));
-    }
-    return chunks;
   }
 }

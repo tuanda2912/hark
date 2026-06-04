@@ -399,13 +399,32 @@ export interface RagRetrieveCommand {
  * heading (e.g. "Thai"); a re-translate to the same `lang` REPLACES that
  * section (idempotent), while a different `lang` adds a separate section. The
  * engine replies `ack` on success, `error` on failure (existing channel).
+ *
+ * TWO MUTUALLY-EXCLUSIVE BODY SHAPES — exactly one is sent per command:
+ *   - `lines` (PREFERRED): the per-utterance TRANSLATED TEXT, one entry per
+ *     utterance, in the SAME ORDER as the saved `## Transcript`. The engine ZIPS
+ *     each line with its OWN retained utterances (speaker label + wall-clock
+ *     tStart) and re-renders the blockquote body itself — so the
+ *     `## Transcript — <lang>` section becomes a byte-for-byte STRUCTURAL MIRROR
+ *     of the original (same labels, same wall-clock timestamps, same blockquote
+ *     format). The renderer supplies ONLY the text; the engine owns formatting.
+ *     This is what the background post-meeting translation sends
+ *     (`EngineService.writeTranslationLines`).
+ *   - `translation` (LEGACY): a single pre-formatted markdown BLOB written
+ *     verbatim under the heading. Used by the manual Translate panel
+ *     (`EngineService.writeTranslation`), which hands over one whole body rather
+ *     than per-utterance lines.
+ * Both optional so a frame carries either; the engine prefers `lines` and emits
+ * a PROTOCOL_MISMATCH error if neither is present. Mirrors the Swift
+ * `TranslationWriteCommand` (`translation: String?`, `lines: [String]?`).
  */
 export interface TranslationWriteCommand {
   readonly type: 'translation.write';
   readonly payload: {
     readonly session_id: string;
     readonly lang: string;
-    readonly translation: string;
+    readonly translation?: string;
+    readonly lines?: readonly string[];
   };
 }
 

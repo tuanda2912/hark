@@ -25,10 +25,6 @@ import { EngineService } from './services/engine.service';
 import { PreferencesService } from './services/preferences.service';
 import { LlmService } from './services/llm.service';
 import { RetrievalService } from './services/retrieval.service';
-import {
-  LiveTranslationService,
-  LIVE_TRANSLATE_TARGETS,
-} from './services/live-translation.service';
 import { ThemeService } from './services/theme.service';
 import { TranslationJobService } from './services/translation-job.service';
 import {
@@ -85,11 +81,11 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly prefs = inject(PreferencesService);
   private readonly llm = inject(LlmService);
   private readonly retrieval = inject(RetrievalService);
-  private readonly live = inject(LiveTranslationService);
   private readonly translationJob = inject(TranslationJobService);
 
-  /** Background post-meeting translation progress (ADR-0035 §3): drives the
-   *  persistent "Translating → <lang> N%" / "ready" banner. */
+  /** Background post-meeting translation progress: drives the persistent
+   *  "Translating → <lang> N%" / "ready" banner. Started on demand from the
+   *  Translate panel after a meeting is saved. */
   readonly translationJobState = this.translationJob.job;
   readonly translationJobPercent = this.translationJob.percent;
   /** Dismiss the finished/errored translation banner. */
@@ -252,56 +248,14 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly micEnabled = signal(true);
   readonly systemEnabled = signal(true);
 
-  /** Live translate captions → English (BACKLOG translation §2). On-device,
-   *  zero egress — the engine flips WhisperKit to `task: .translate` so any
-   *  spoken language shows up as English captions (and the saved transcript is
-   *  English). Locked at capture.start, like the source/language selectors. */
-  readonly liveTranslate = signal(false);
-
-  // ─── Live translate → arbitrary target (ADR-0035, translation §3) ────
-  //
-  // For NON-English live targets there's no on-device model (NLLB deferred), so
-  // each FINALIZED line goes through the configured LLM via LiveTranslationService
-  // (the renderer makes no network call — main is the egress chokepoint). A LOCAL
-  // model = zero egress (recommended); a CLOUD model sends each finalized line
-  // (redacted), so the picker discloses that. Mutually exclusive with → EN (§2)
-  // and, like it, locked while capturing (chosen before Start).
-
-  /** Offered live targets (non-English; English is the §2 on-device path). */
-  readonly liveTargets = LIVE_TRANSLATE_TARGETS;
-  /** Selected live target NAME, or null when off. */
-  readonly liveTarget = this.live.targetLang;
-  /** True when live arbitrary-target translation is on. */
-  readonly liveTranslateArbitrary = this.live.enabled;
-  /** Whether the configured model would send each line to the cloud (vs a local
-   *  loopback model = zero egress). Drives the honesty hint + tooltip. */
-  readonly liveUsesCloud = this.live.usesCloud;
-
-  /**
-   * The user picked a live target (or "off"). Sets it on LiveTranslationService
-   * and, because §2 (→ EN) and §3 are mutually exclusive, turns → EN OFF when a
-   * target is chosen. A no-op selection ("") clears the target (and commits the
-   * cloud-log roll-up). Locked during capture via the template `disabled`.
-   */
-  onLiveTargetChange(name: string): void {
-    const next = name && name.length > 0 ? name : null;
-    if (next) this.liveTranslate.set(false);
-    this.live.setTargetLang(next);
-  }
-
-  /** Tooltip for the live-target picker — honest about egress for the current
-   *  model. */
-  liveTargetTitle(): string {
-    if (!this.modelConfigured()) {
-      return 'Configure a model in Settings to translate live to other languages.';
-    }
-    if (this.liveTranslateArbitrary()) {
-      return this.liveUsesCloud()
-        ? 'Live translation on: each finalized line is sent to your cloud model (redacted) as it lands. Switch to a local model to keep it on-device.'
-        : 'Live translation on: translated on your local model — nothing leaves your Mac.';
-    }
-    return 'Translate live captions into another language using your configured model. A local model keeps everything on-device; a cloud model sends each finalized line (redacted). Mutually exclusive with → EN.';
-  }
+  // Live translation (translate captions as they land — both on-device → English
+  // and per-line LLM → arbitrary target) is DEFERRED to the backlog (ADR-0037):
+  // it was hard to test, timeout-prone on a small local model, and the bilingual
+  // live view rendered messily. Translation now happens ONLY after a meeting
+  // stops, on demand, via the Translate panel (the structured background job that
+  // writes a `## Transcript — <lang>` mirror into the saved note). The engine's
+  // `task: .translate` + per-segment translate plumbing is left dormant for an
+  // easy future revival, but nothing in the UI drives it.
 
   /** Settings modal visibility. Toggled by the gear button + ⌘, . */
   readonly settingsOpen = signal(false);
@@ -694,19 +648,6 @@ export class AppComponent implements OnInit, OnDestroy {
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private bookmarkSub: Subscription | null = null;
 
-  // ─── Auto-translate on stop (ADR-0035, §3 follow-up) ────────────────
-  //
-  // If live arbitrary-target translation (§3) was ACTIVE when the meeting stops,
-  // we automatically produce the authoritative translation and save it — so the
-  // user doesn't re-do it in the Translate panel. The work is handed to
-  // TranslationJobService, which translates the CLEAN post-stop transcript in
-  // small chunks IN THE BACKGROUND (non-blocking, with a progress %), then
-  // persists it via the engine. The user keeps using the app; a banner shows
-  // progress and a "ready" state. Reuses §1's egress governance per chunk
-  // (local = zero egress; cloud redacts + logs). Live translation was the user's
-  // explicit opt-in, so finalizing it on stop is consistent with that choice.
-  private meetingSavedSub: Subscription | null = null;
-
   // ─── Saved-confirmation card (path + speaker roster) ────────────────
   //
   // The card carries actionable content (vault path + the editable roster) so,
@@ -796,13 +737,6 @@ export class AppComponent implements OnInit, OnDestroy {
     this.warningSub = this.engine.warnings$.subscribe((w) => {
       this.warning.set(w.message);
     });
-    // Auto-translate on stop (§3 follow-up): when a meeting saves AND live
-    // translation was active, produce + save the translation automatically. The
-    // clean post-stop transcript (`meeting.transcript`) arrives just BEFORE
-    // `meeting.saved`, so `segments()` already holds it here.
-    this.meetingSavedSub = this.engine.meetingSaved$.subscribe((saved) => {
-      this.maybeAutoTranslateOnStop(saved);
-    });
     // Route tray Start/Stop to the same handlers the top-bar buttons use, so
     // the tray reuses the current source/language selections. No-op when
     // running outside Electron (window.hark undefined). The callback is
@@ -823,24 +757,6 @@ export class AppComponent implements OnInit, OnDestroy {
     if (this.antiFlashTimer !== null) clearTimeout(this.antiFlashTimer);
     this.bookmarkSub?.unsubscribe();
     this.warningSub?.unsubscribe();
-    this.meetingSavedSub?.unsubscribe();
-  }
-
-  /**
-   * Auto-translate + save on stop (ADR-0035, §3). Fires once per saved meeting:
-   * if live arbitrary-target translation was active (a target is set), hand the
-   * CLEAN post-stop transcript to TranslationJobService, which translates it in
-   * the BACKGROUND (chunked, with a progress %) and persists it as a
-   * `## Transcript — <lang>` section when done. A no-op when §3 wasn't active or
-   * there's nothing to translate. Non-blocking — the user keeps using the app
-   * while the banner shows progress.
-   */
-  private maybeAutoTranslateOnStop(saved: MeetingSavedPayload): void {
-    const lang = this.live.targetLang();
-    if (!lang) return; // §3 wasn't active this meeting
-    const transcript = this.buildAskTranscript();
-    if (transcript.trim().length === 0) return;
-    this.translationJob.start(saved.session_id, lang, transcript, this.buildAskKnownNames());
   }
 
   /** ⌘⇧B — mark the current moment (the design's shortcut). ⌘, — open
@@ -893,16 +809,6 @@ export class AppComponent implements OnInit, OnDestroy {
 
   toggleSystem(): void {
     if (!this.isCapturing()) this.systemEnabled.update((v) => !v);
-  }
-
-  /** Toggle live → English translation (§2). Locked while capturing (the decode
-   *  task is fixed at capture.start). Turning it ON clears any §3 arbitrary-target
-   *  selection — the two live-translation modes are mutually exclusive. */
-  toggleLiveTranslate(): void {
-    if (this.isCapturing()) return;
-    const next = !this.liveTranslate();
-    this.liveTranslate.set(next);
-    if (next) this.live.setTargetLang(null);
   }
 
   /** Re-evaluate whether to keep following the tail from the user's scroll
@@ -978,8 +884,9 @@ export class AppComponent implements OnInit, OnDestroy {
       // choices. Off by default ⇒ the engine stores no audio / voiceprints.
       keepAudio: this.prefs.keepAudio(),
       rememberSpeakers: this.prefs.rememberSpeakers(),
-      // Live → English captions (§2) — on-device, zero egress.
-      translateToEnglish: this.liveTranslate(),
+      // Live translation is deferred (ADR-0037): we never ask the engine to
+      // translate during capture. Transcription stays in the source language;
+      // translation is an on-demand, post-stop action (the Translate panel).
     });
   }
 
@@ -1042,11 +949,15 @@ export class AppComponent implements OnInit, OnDestroy {
     if (saved) this.dismissedSavedSession.set(saved.session_id);
   }
 
-  /** Open the vault folder in Finder. Reuses the existing revealVault bridge
-   *  (opens the vault root, not the specific file). A reveal-specific-file
-   *  IPC is a possible Phase 5.x follow-up. No-op outside Electron. */
-  revealVault(): void {
-    this.prefs.revealVault();
+  /** "Reveal in Finder" on the saved-meeting card: open the vault folder with
+   *  the meeting's OWN note (`vault_path`) selected, so the user lands on the
+   *  file and can open it — not dumped in the vault root. main validates the
+   *  path is inside the vault. Falls back to the vault root if the meeting (or
+   *  its path) is somehow gone. No-op outside Electron. */
+  revealMeeting(): void {
+    const file = this.engine.lastMeetingSaved()?.vault_path;
+    if (file) this.prefs.revealPath(file);
+    else this.prefs.revealVault();
   }
 
   private showBookmarkToast(message: string): void {

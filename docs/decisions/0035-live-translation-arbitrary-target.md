@@ -1,7 +1,7 @@
 # ADR-0035: Live translation to an arbitrary target language — per-segment LLM (opt-in), defer local MT model + Apple Translation
 
 - **Date:** 2026-06-03
-- **Status:** Accepted — Option C implemented (automated gates green; on-device confirmation pending)
+- **Status:** Superseded in part by [ADR-0037](0037-defer-live-translation.md) — the *live* (translate-during-capture) feature was removed and deferred to the backlog on 2026-06-04. The post-stop, structured per-utterance translation path introduced here is RETAINED and is now the only translation surface (the on-demand Translate panel). The engine/main plumbing remains dormant for an easy revival.
 - **Deciders:** Dang Anh Tuan
 
 ## Context

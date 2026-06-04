@@ -276,6 +276,14 @@ export class PreferencesService {
     window.hark?.revealVault?.();
   }
 
+  /** Reveal a specific vault file in Finder (open its folder + select it) — e.g.
+   *  the saved meeting note. main validates the path is inside the vault. No-op
+   *  for an empty path / outside Electron. */
+  revealPath(filePath: string): void {
+    if (!filePath) return;
+    window.hark?.revealPath?.(filePath);
+  }
+
   /** Mark the first-run onboarding flow complete and persist it. Called
    *  when the user taps "Start using Hark". Idempotent; the overlay reads
    *  the inverse of `hasCompletedOnboarding` and dismisses for good once

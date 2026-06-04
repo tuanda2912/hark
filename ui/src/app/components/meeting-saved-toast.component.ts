@@ -169,8 +169,13 @@ interface RosterRow {
         box-shadow: 0 0 0 3px var(--accent-soft);
       }
 
+      /* Up to five actions live here (Apply names · Summarize · Translate ·
+         Review & tag · Reveal). They must WRAP instead of forcing the card past
+         its max-width — otherwise the non-shrinking buttons balloon the whole
+         toast and stretch the name inputs. (gap covers both row + column gaps.) */
       .footer {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         gap: var(--s-2);
         justify-content: flex-end;
@@ -404,7 +409,7 @@ interface RosterRow {
             Review &amp; tag
           </button>
         }
-        <button type="button" class="btn" (click)="reveal.emit()" title="Open the vault folder in Finder">
+        <button type="button" class="btn" (click)="reveal.emit()" title="Show this meeting's note in Finder">
           Reveal in Finder
         </button>
       </div>
@@ -423,7 +428,8 @@ export class MeetingSavedToastComponent {
 
   /** User dismissed the card (the × button). */
   readonly dismiss = output<void>();
-  /** User asked to reveal the vault in Finder. AppComponent owns the IPC. */
+  /** User asked to reveal this meeting's note in Finder. AppComponent owns the
+   *  IPC and reads the saved meeting's `vault_path` to select it. */
   readonly reveal = output<void>();
   /** User asked to open the Post-Meeting Review screen (verify-by-ear speaker
    *  tagging). Emitted ONLY from the affordance shown when audio was kept

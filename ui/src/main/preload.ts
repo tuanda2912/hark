@@ -116,6 +116,14 @@ contextBridge.exposeInMainWorld('hark', {
     ipcRenderer.send('hark:reveal-vault');
   },
 
+  /** Reveal a SPECIFIC vault file in Finder (open its folder + select it) —
+   *  e.g. the saved meeting note, so the user lands on it instead of the vault
+   *  root. main validates the path is inside the vault (untrusted-input gate)
+   *  and only reveals; never reads/writes. */
+  revealPath(filePath: string): void {
+    ipcRenderer.send('hark:reveal-path', filePath);
+  },
+
   /** Read a persisted meeting-audio file (vault/.audio/<id>.wav) for the
    *  Post-Meeting Review screen. The path comes from MeetingSavedPayload
    *  .audio_path. main VALIDATES it (must be a .wav inside the vault root) and
