@@ -40,10 +40,13 @@ interface PrefsResult {
 }
 
 /** Tray actions the main process can ask the renderer to perform. The
- *  WHITELIST below is the trust boundary: only these two strings are ever
- *  forwarded to the renderer callback, regardless of what main sends. */
-type TrayAction = 'start' | 'stop';
-const TRAY_ACTIONS: readonly TrayAction[] = ['start', 'stop'];
+ *  WHITELIST below is the trust boundary: only these strings are ever
+ *  forwarded to the renderer callback, regardless of what main sends.
+ *  `settings` (from the popover's Settings… row) asks the renderer to open
+ *  its Settings modal; start/stop drive capture. (`openMain`/`quit` are
+ *  handled in MAIN and never reach the renderer.) */
+type TrayAction = 'start' | 'stop' | 'settings';
+const TRAY_ACTIONS: readonly TrayAction[] = ['start', 'stop', 'settings'];
 
 contextBridge.exposeInMainWorld('hark', {
   /** Returns the port number harkd is listening on. */

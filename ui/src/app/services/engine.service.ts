@@ -64,8 +64,10 @@ export interface TrayState {
   connected: boolean;
 }
 
-/** Tray-initiated actions routed from main → renderer. */
-export type TrayAction = 'start' | 'stop';
+/** Tray-initiated actions routed from main → renderer. `settings` comes from
+ *  the styled tray popover's "Settings…" row (main brings the window up, then
+ *  asks the renderer to open its Settings modal). */
+export type TrayAction = 'start' | 'stop' | 'settings';
 
 declare global {
   interface Window {

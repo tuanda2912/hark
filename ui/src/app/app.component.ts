@@ -746,6 +746,9 @@ export class AppComponent implements OnInit, OnDestroy {
         if (this.canStart()) this.onStart();
       } else if (action === 'stop') {
         this.onStop();
+      } else if (action === 'settings') {
+        // Tray popover's "Settings…" row — main already brought the window up.
+        this.openSettings();
       }
     });
     void this.engine.connect();

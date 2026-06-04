@@ -28,3 +28,13 @@ html, body {
 ::selection {
   background: var(--selection);
 }
+
+/* TRAY popover surface (src/main.ts sets data-surface="tray" when the renderer
+ * loads with the #tray hash). The popover window is transparent:true and the
+ * TrayPopoverComponent draws its own rounded card + shadow, so html/body must
+ * stay see-through — otherwise the global opaque app background above would
+ * paint a solid rectangle and clip the corners/shadow. */
+html[data-surface="tray"],
+html[data-surface="tray"] body {
+  background: transparent;
+}

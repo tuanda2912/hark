@@ -11,7 +11,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { spawnHarkd, HarkdHandle } from './harkd-spawn';
-import { HarkTray, TrayState } from './tray';
+import { HarkTray, TrayState, TrayAction } from './tray';
+import { TrayPopover } from './tray-popover';
 import { loadPrefs, savePrefs, getPrefsPath, Prefs } from './prefs';
 import * as llm from './llm';
 import type { LlmStatus, LlmTestResult, SummarizeResult, AskResult, TranslateResult, TranslateSegmentResult, CloudCallLogEntry } from './llm/types';
@@ -45,6 +46,9 @@ function ensureVaultDir(): void {
 let mainWindow: BrowserWindow | null = null;
 let harkd: HarkdHandle | null = null;
 let tray: HarkTray | null = null;
+// The styled menu-bar popover (frameless BrowserWindow loaded with the `#tray`
+// hash). Lazily creates its window on first left-click; see TrayPopover.
+let trayPopover: TrayPopover | null = null;
 
 // True once the user has chosen to quit (tray "Quit Hark" or ⌘Q). The
 // window's `close` handler reads this to decide between hiding (the normal
@@ -186,6 +190,16 @@ function toggleWindow(): void {
   }
 }
 
+/** Show + focus the main window unconditionally (the tray popover's
+ *  "Open main window" and "Settings…" rows both need it up front, not toggled
+ *  shut if it happened to be visible). */
+function showMainWindow(): void {
+  const win = mainWindow;
+  if (!win) return;
+  win.show();
+  win.focus();
+}
+
 /** Begin a real quit: flip the flag so the window stops intercepting close,
  *  then let Electron run the normal quit sequence (before-quit tears down
  *  harkd + the tray). */
@@ -298,6 +312,7 @@ async function createWindow(): Promise<void> {
 let lastTrayState: TrayState = { capturing: false, ready: false, connected: false };
 
 function createTray(): void {
+  trayPopover = new TrayPopover();
   tray = new HarkTray({
     getWindow: () => mainWindow,
     // Start/Stop live in the renderer (EngineService owns capture). Forward
@@ -307,8 +322,41 @@ function createTray(): void {
     },
     onToggleWindow: toggleWindow,
     onQuit: quitApp,
+    // LEFT-click → toggle the styled popover under the icon. Right-click keeps
+    // the native fallback menu (handled inside HarkTray).
+    onLeftClick: (bounds) => trayPopover?.toggle(bounds),
   });
 }
+
+// Popover renderer → main: a whitelisted action string. The tray-preload
+// already validated it against its whitelist; we re-validate here (the IPC
+// payload is still untrusted at the main boundary) and dispatch. Every branch
+// hides the popover afterward — a menu-bar popover dismisses once you act.
+ipcMain.on('hark:tray:action', (_ev, raw: unknown) => {
+  if (typeof raw !== 'string') return;
+  switch (raw) {
+    case 'start':
+    case 'stop':
+      // Capture lives in the renderer — forward exactly as the native menu does.
+      mainWindow?.webContents.send('hark:tray-action', raw as TrayAction);
+      break;
+    case 'openMain':
+      showMainWindow();
+      break;
+    case 'settings':
+      // Bring the window up AND ask the renderer to open its Settings modal.
+      showMainWindow();
+      mainWindow?.webContents.send('hark:tray-action', 'settings' as TrayAction);
+      break;
+    case 'quit':
+      quitApp();
+      break;
+    default:
+      // Off-whitelist — ignore (defense in depth; preload already filtered).
+      return;
+  }
+  trayPopover?.hide();
+});
 
 async function bootstrap(): Promise<void> {
   // Make the vault's home directory exist before anything tries to open it.
@@ -340,6 +388,9 @@ ipcMain.on('hark:tray-state', (_ev, raw: unknown) => {
   if (!isTrayState(raw)) return;
   lastTrayState = raw;
   tray?.setState(raw);
+  // Mirror the same snapshot into the styled popover so its pill/button/
+  // enablement track the renderer (cached even if the popover isn't built yet).
+  trayPopover?.pushState(raw);
 });
 
 function isTrayState(v: unknown): v is TrayState {
@@ -704,12 +755,16 @@ app.on('before-quit', async (ev) => {
       // eslint-disable-next-line no-console
       console.warn('[hark] error stopping harkd:', err);
     }
+    trayPopover?.destroy();
+    trayPopover = null;
     tray?.destroy();
     tray = null;
     app.quit();
     return;
   }
-  // No harkd to stop (e.g. spawn failed) — still drop the tray cleanly.
+  // No harkd to stop (e.g. spawn failed) — still drop the tray + popover cleanly.
+  trayPopover?.destroy();
+  trayPopover = null;
   tray?.destroy();
   tray = null;
 });

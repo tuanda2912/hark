@@ -24,6 +24,11 @@
                    base-uri 'self';">
   </head>
   <body>
+    <!-- Surface hosts. src/main.ts bootstraps EXACTLY ONE of these based on the
+         URL hash: the main app shell normally, or the menu-bar popover when the
+         frameless tray window loads index.html with `#tray`. The unmatched host
+         stays an inert, empty custom element. -->
     <hark-root></hark-root>
+    <hark-tray-popover></hark-tray-popover>
   </body>
 </html>
