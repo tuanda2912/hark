@@ -1173,7 +1173,7 @@ actor EngineSession {
         var maxCommittedEnd = committedUpTo
 
         for seg in winSegments {
-            // GROW path (ADR-0020 content-loss fix): if this is a fuller
+            // GROW path (ADR-0036 content-loss fix): if this is a fuller
             // re-decode of an already-FINALIZED line (same conservative
             // time+text-prefix+grew gate as ADR-0018 supersession), EXTEND that
             // finalized line in place rather than letting its grown tail fall

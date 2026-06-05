@@ -353,7 +353,7 @@ final class UtteranceLedger {
         }
     }
 
-    // ─── Grow an already-finalized line in place (ADR-0020 content-loss fix) ──
+    // ─── Grow an already-finalized line in place (ADR-0036 content-loss fix) ──
     //
     // The commit watermark finalizes an audio region ONCE, when a segment's
     // start first crosses the horizon (ADR-0019 `commitDecision`). For a long
