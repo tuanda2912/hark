@@ -1,0 +1,4473 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "8efdfde01c54f516bd6135e2edfd074b2bc8ee8c",
+  "generatedAt": "2026-06-05T04:04:48.878Z",
+  "files": {
+    ".understand-anything/.understandignore": {
+      "filePath": ".understand-anything/.understandignore",
+      "contentHash": "b75da2e2ce8ce58f565f8afe2813a1fd22ec2d6138854bf7d4310641026fc252",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 39,
+      "hasStructuralAnalysis": false
+    },
+    ".understand-anything/config.json": {
+      "filePath": ".understand-anything/config.json",
+      "contentHash": "4b66f98f8a815dfeb2d3a29eeb73418e07c40ed020a1498c07e908b2254f0c8c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 2,
+      "hasStructuralAnalysis": true
+    },
+    "engine/Package.swift": {
+      "filePath": "engine/Package.swift",
+      "contentHash": "90aef5ce8d19018e444db750baaecbd04557775e89e2aaae589a1a84dd8976d1",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 170,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Results/.gitkeep": {
+      "filePath": "engine/Results/.gitkeep",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": false
+    },
+    "engine/scripts/convert-embedder-coreml.py": {
+      "filePath": "engine/scripts/convert-embedder-coreml.py",
+      "contentHash": "88882ca926f380d7ba7f6671a8277d6a7bfe45f6c2d7655c613f9ae3d51a1337",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Wrap",
+          "methods": [
+            "__init__",
+            "forward"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 10
+        }
+      ],
+      "imports": [
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "numpy",
+          "specifiers": [
+            "np"
+          ]
+        },
+        {
+          "source": "torch",
+          "specifiers": [
+            "torch"
+          ]
+        },
+        {
+          "source": "coremltools",
+          "specifiers": [
+            "ct"
+          ]
+        },
+        {
+          "source": "transformers",
+          "specifiers": [
+            "AutoModel",
+            "AutoTokenizer"
+          ]
+        },
+        {
+          "source": "coremltools.models",
+          "specifiers": [
+            "ctm"
+          ]
+        }
+      ],
+      "exports": [
+        "Wrap"
+      ],
+      "totalLines": 65,
+      "hasStructuralAnalysis": true
+    },
+    "engine/scripts/hark-tap.entitlements": {
+      "filePath": "engine/scripts/hark-tap.entitlements",
+      "contentHash": "d70ae7a3f925e53536fe56d205e4bab9bc1df03495738bf8dfdb6cb6dbb53c7d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 9,
+      "hasStructuralAnalysis": false
+    },
+    "engine/scripts/publish-embedder-hf.sh": {
+      "filePath": "engine/scripts/publish-embedder-hf.sh",
+      "contentHash": "bab3a9adee33c8d65c1f570a08193daf27bb2f9f4593a29a68e0d5cb65b2aa23",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 91,
+      "hasStructuralAnalysis": true
+    },
+    "engine/scripts/quantize-embedder-int8.py": {
+      "filePath": "engine/scripts/quantize-embedder-int8.py",
+      "contentHash": "bde103fb40c7284448090bb049b7cf9a22bfa403a76a9f484bdcc5b069608d3b",
+      "functions": [
+        {
+          "name": "size_mb",
+          "params": [
+            "pkg"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "embed",
+          "params": [
+            "model",
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 10
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "shutil",
+          "specifiers": [
+            "shutil"
+          ]
+        },
+        {
+          "source": "numpy",
+          "specifiers": [
+            "np"
+          ]
+        },
+        {
+          "source": "coremltools",
+          "specifiers": [
+            "ct"
+          ]
+        },
+        {
+          "source": "coremltools.optimize.coreml",
+          "specifiers": [
+            "cto"
+          ]
+        },
+        {
+          "source": "transformers",
+          "specifiers": [
+            "AutoTokenizer"
+          ]
+        }
+      ],
+      "exports": [
+        "size_mb",
+        "embed"
+      ],
+      "totalLines": 94,
+      "hasStructuralAnalysis": true
+    },
+    "engine/scripts/sign-dev-bundle.sh": {
+      "filePath": "engine/scripts/sign-dev-bundle.sh",
+      "contentHash": "a7ca388158fae8f58a46d257142e19245a00f0b59d25ff75c6fd2b8033cd5998",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 90,
+      "hasStructuralAnalysis": true
+    },
+    "engine/Sources/HarkBench/main.swift": {
+      "filePath": "engine/Sources/HarkBench/main.swift",
+      "contentHash": "6a80d6542fa29e32d917e715e51f7b518df6985954a09135e61e9966553b744b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 450,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCapture/CapturePipeline.swift": {
+      "filePath": "engine/Sources/HarkCapture/CapturePipeline.swift",
+      "contentHash": "ddbd6a8b4d6da51ceee309597e0b6b172d24dd767f3fb174fc953cecbe3cb18e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 309,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCapture/CoreAudioProcessTap.swift": {
+      "filePath": "engine/Sources/HarkCapture/CoreAudioProcessTap.swift",
+      "contentHash": "05160473bc42eb150766a6deff66b25a5d8c4a6ab06eaa8b7e0f9784906f3463",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 627,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCapture/MicCapture.swift": {
+      "filePath": "engine/Sources/HarkCapture/MicCapture.swift",
+      "contentHash": "fe4a3f160124e0d60901db045b183beab9b2fc8a98b2f769d06d675a1ddd6e33",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 43,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCapture/Mixer.swift": {
+      "filePath": "engine/Sources/HarkCapture/Mixer.swift",
+      "contentHash": "3c1b68e5950a34d2e5612cef0b225069283dd60fc947e2551bef68c2755af18a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 64,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCapture/PermissionGate.swift": {
+      "filePath": "engine/Sources/HarkCapture/PermissionGate.swift",
+      "contentHash": "99e487f5ed44ad45ca615e64691e9afe9713576ee2d6a3224ec965972a7ab32b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 205,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCapture/Resampler.swift": {
+      "filePath": "engine/Sources/HarkCapture/Resampler.swift",
+      "contentHash": "8a1ce2844aa2496badb6b78bdd6ba2d478beea665e055470f73215780c7b736a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 62,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCapture/SystemAudioCapturing.swift": {
+      "filePath": "engine/Sources/HarkCapture/SystemAudioCapturing.swift",
+      "contentHash": "a29baf071678b84b915204978a120ee71773da838a59042cd9dd4b4d616a9d6d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 45,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCapture/SystemAudioTap.swift": {
+      "filePath": "engine/Sources/HarkCapture/SystemAudioTap.swift",
+      "contentHash": "a9703dceeb183bd81f50e405f9066ef3ee7487eb19143a9f7beac212373768db",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 398,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCaptureCLI/HarkCaptureCLI.swift": {
+      "filePath": "engine/Sources/HarkCaptureCLI/HarkCaptureCLI.swift",
+      "contentHash": "24face499815e37f29a19b78164e4075018dda26ac3db1579b5f4db2a6b8b2da",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 151,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCore/HarkPaths.swift": {
+      "filePath": "engine/Sources/HarkCore/HarkPaths.swift",
+      "contentHash": "ff4174de88b23ee93f594915de48decb25d66909342ab4fdb7c2a7b715b94dde",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 44,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCore/Heartbeat.swift": {
+      "filePath": "engine/Sources/HarkCore/Heartbeat.swift",
+      "contentHash": "2036c0dba809b79778e472a6d332387c21dd42c2b0e3da5b3ba8a2732bfef0c4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 32,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCore/ModelLoader.swift": {
+      "filePath": "engine/Sources/HarkCore/ModelLoader.swift",
+      "contentHash": "6fd7c325c6ca1ca6cf223474f538e3fb74e8664ed21ee98cf0de65f014336157",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 142,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCore/ProgressRenderer.swift": {
+      "filePath": "engine/Sources/HarkCore/ProgressRenderer.swift",
+      "contentHash": "1edd2321b8b19bc1f75381ee3efa07dd29d44156eca559a171eb2f071ba13f64",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 115,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkCore/WAVWriter.swift": {
+      "filePath": "engine/Sources/HarkCore/WAVWriter.swift",
+      "contentHash": "f5d052d95cb71d4b756ff965ff6f8a66b7768b35398bf66a1f3cae8952c37753",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 118,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/AudioStore.swift": {
+      "filePath": "engine/Sources/Harkd/AudioStore.swift",
+      "contentHash": "1079f44a9335a326583137b51c88ea648b0245d30b0202dc19118e17b32b83fe",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 138,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/Diarizer.swift": {
+      "filePath": "engine/Sources/Harkd/Diarizer.swift",
+      "contentHash": "738ff58966b738ccbbe33b1a9a898c2696748d602f47c6bad6c23c670cf14d43",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 47,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/DiarizerLoader.swift": {
+      "filePath": "engine/Sources/Harkd/DiarizerLoader.swift",
+      "contentHash": "ea612b569a4589d5d7670e836a779e438db6ee823e45661f0ab00458f465921d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 209,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/EmbedderLoader.swift": {
+      "filePath": "engine/Sources/Harkd/EmbedderLoader.swift",
+      "contentHash": "3494521344b2006d0e967e6e66d9ce07fae32e5d3b1b13adfe9dedfb59f8f764",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 194,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/EmbedderModels.swift": {
+      "filePath": "engine/Sources/Harkd/EmbedderModels.swift",
+      "contentHash": "526306525083e1057b7a65e0052621167bbf108c7410791f6a3420bfeaaa22a4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 129,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/EngineSession.swift": {
+      "filePath": "engine/Sources/Harkd/EngineSession.swift",
+      "contentHash": "c84f59c864e09a5c201abbeb98824e3ffa0536e01fe88fddb31d6fb09bd992d8",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 2541,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/HarkdCommand.swift": {
+      "filePath": "engine/Sources/Harkd/HarkdCommand.swift",
+      "contentHash": "6c87c1076d97bd9fde5c93902fdb5909a695aec2c9b2500951cc65173aa0bf06",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 360,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/RagChunker.swift": {
+      "filePath": "engine/Sources/Harkd/RagChunker.swift",
+      "contentHash": "5d19f7a9cdbe38cc3d097d75d332775a6f81e6c255ed5c64efd0429f7138374a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 417,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/RagIndex.swift": {
+      "filePath": "engine/Sources/Harkd/RagIndex.swift",
+      "contentHash": "c1db377539219bd3f1ae5e3f2e95398993664eb600b23e1b2ba9ec3e4173696c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 389,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/RagIndexer.swift": {
+      "filePath": "engine/Sources/Harkd/RagIndexer.swift",
+      "contentHash": "89421ca445012ef41dbf11ca912223e961500796f3c17c44851deed8271d336e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 577,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/SlidingWindow.swift": {
+      "filePath": "engine/Sources/Harkd/SlidingWindow.swift",
+      "contentHash": "82b4ba58ec4f23512b4ecbe20e63d149a672b1884e4858462bccd44af918bef9",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 650,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/SpeakerEnrollment.swift": {
+      "filePath": "engine/Sources/Harkd/SpeakerEnrollment.swift",
+      "contentHash": "f4b5a21160ca434eb9fa6e8981ff8a41dc2cf310833d7ccb0e77921ce97667cf",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 333,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/TextEmbedder.swift": {
+      "filePath": "engine/Sources/Harkd/TextEmbedder.swift",
+      "contentHash": "5382b109fcf63ca2f29629c189ee3037afd993a7a3074b3faf4cfc5d1b57214f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 268,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/VAD.swift": {
+      "filePath": "engine/Sources/Harkd/VAD.swift",
+      "contentHash": "b9e5ef37544b60e8151b5c15d6397334e1b838e2de96ba0e1741632786e0ba51",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 93,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/VaultWriter.swift": {
+      "filePath": "engine/Sources/Harkd/VaultWriter.swift",
+      "contentHash": "5e4ae906db4cf18eb7a966198397299a2a37ce0594915610a81e5c738ad974a5",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 669,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/WebSocketServer.swift": {
+      "filePath": "engine/Sources/Harkd/WebSocketServer.swift",
+      "contentHash": "41a8fa0c5ef217ce05b2759a39855a63cc3c653999c2eabcbee8a52262e7e5c4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 290,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/Harkd/WireProtocol.swift": {
+      "filePath": "engine/Sources/Harkd/WireProtocol.swift",
+      "contentHash": "27afca46525ab982dae7dba783b29ee7fb6e44bd73f9bc6fac79976462958915",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 542,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Sources/HarkEngine/HarkEngine.swift": {
+      "filePath": "engine/Sources/HarkEngine/HarkEngine.swift",
+      "contentHash": "5ad3be19efe8abd598d26507d7dee74c3f816a3212c2b4153f108c311d5c4360",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 390,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkCaptureTests/HarkCaptureTests.swift": {
+      "filePath": "engine/Tests/HarkCaptureTests/HarkCaptureTests.swift",
+      "contentHash": "a123777b9a125e8552a1d59ecc4393323d58c60462be12151616f2ab1657cc39",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 11,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkCaptureTests/WAVWriterTests.swift": {
+      "filePath": "engine/Tests/HarkCaptureTests/WAVWriterTests.swift",
+      "contentHash": "c488a00a86f8da5578f2a35d1f7866a8e0f33f1ba3f0e33f0aaec2bdda124a4d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 58,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/AudioPersistenceTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/AudioPersistenceTests.swift",
+      "contentHash": "8a92b240cc60d391a633e49ba66161b8f4cfa184e6364eb2d6c18ea1e1c26c75",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 242,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/CommitWatermarkTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/CommitWatermarkTests.swift",
+      "contentHash": "51e96a2aef7d93761484ebbd9417d6112f726b85cfde78a5c8395bd294d31476",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1069,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/DedupTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/DedupTests.swift",
+      "contentHash": "f6ba69c5cb1d39f77287bdf9dd25b1d628546a9e4e6ae0cb63c6b5721401a906",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 203,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/EmbedderTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/EmbedderTests.swift",
+      "contentHash": "ff9de720a63c6aa404cf8744791b6087de544b932db84b960e5e9ed1c594bccf",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 241,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/MeetingTranscriptTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/MeetingTranscriptTests.swift",
+      "contentHash": "c2c1732a4b1111fc2b12cd2f68ac47f983676957774adbf54855d28544c8e105",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 63,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/ModelProgressTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/ModelProgressTests.swift",
+      "contentHash": "a3b20cf21e06d9119980dda759233cd129493da71cc3961492790d5addea8b72",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 121,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/RagChunkerTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/RagChunkerTests.swift",
+      "contentHash": "f4185314129a36f0ec2f5f1e752738c3b45b19363debacc06728db25ba721b89",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 240,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/RagIndexerTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/RagIndexerTests.swift",
+      "contentHash": "cb34800451b3dd3af817dbd0b88c37f51552def8d0928e2e2d35ded667ee1796",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 355,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/RagIndexTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/RagIndexTests.swift",
+      "contentHash": "ef118d09b35ab29d418534003d933174567aac0ec8b522cf74cd86c029d33329",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 309,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/RagWireTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/RagWireTests.swift",
+      "contentHash": "e562fed58229c00cd103eb44960f09b7d852237a297bd0ad811d8f7ec52d0066",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 102,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/SpeakerEnrollmentTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/SpeakerEnrollmentTests.swift",
+      "contentHash": "c6254aa1708c262b45b8d46bceb75743350c8d5a71f0543c72ce2d6221987876",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 301,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/SpeakerRenameTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/SpeakerRenameTests.swift",
+      "contentHash": "484775b4658ccb18c261a0c8d8b1300e788b0e9dd071ae58e6eab38903644edc",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 155,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/SummaryWriteTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/SummaryWriteTests.swift",
+      "contentHash": "8cbd8602c2dc86ab70939eddca73ce856d599f7a62099d04b05c2d30b122a5cc",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 202,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/TranslationWriteTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/TranslationWriteTests.swift",
+      "contentHash": "2865e88e4daebf8c9136fc06f34f430e051a33f3ec119e2fa192d30c17617c3f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 419,
+      "hasStructuralAnalysis": false
+    },
+    "engine/Tests/HarkdTests/UtteranceLedgerTests.swift": {
+      "filePath": "engine/Tests/HarkdTests/UtteranceLedgerTests.swift",
+      "contentHash": "89bc4e2d34a156d8de65ae300041a3d4cee23badfe0dcb76aaa33a20c6e84a21",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 340,
+      "hasStructuralAnalysis": false
+    },
+    "ui/.nvmrc": {
+      "filePath": "ui/.nvmrc",
+      "contentHash": "5378796307535df3ec8d8b15a2e2dc5641419c3d3060cfe32238c0fa973f7aa3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 2,
+      "hasStructuralAnalysis": false
+    },
+    "ui/angular.json": {
+      "filePath": "ui/angular.json",
+      "contentHash": "e0961a7db77a6ef18552ff47a65f2831bda11e9e5772e1934c6bbc69e065f642",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 67,
+      "hasStructuralAnalysis": true
+    },
+    "ui/electron-builder.yml": {
+      "filePath": "ui/electron-builder.yml",
+      "contentHash": "f85fe62ebdd910ed3346b704c357b42f0a6f46b96717c2efc18b28efc9e68f6b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 166,
+      "hasStructuralAnalysis": true
+    },
+    "ui/package.json": {
+      "filePath": "ui/package.json",
+      "contentHash": "ac24880275fe66419face4b696ca94e12654bbf2446c7011dd44ec2a9a661e9a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 54,
+      "hasStructuralAnalysis": true
+    },
+    "ui/postcss.config.js": {
+      "filePath": "ui/postcss.config.js",
+      "contentHash": "fa650b380adfabb151a0b352f7135e107e6352345f899060f1c5c231228f94bf",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 7,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/app.component.css": {
+      "filePath": "ui/src/app/app.component.css",
+      "contentHash": "6543284047248b27a7684d416225e6e68f9abcee6970a5de8a709fae42842b54",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 179,
+      "hasStructuralAnalysis": false
+    },
+    "ui/src/app/app.component.html": {
+      "filePath": "ui/src/app/app.component.html",
+      "contentHash": "07e9537de2afdcab9d19ef96e28c59657e8409d3803ea31c2ca2b34a3765545c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 578,
+      "hasStructuralAnalysis": false
+    },
+    "ui/src/app/app.component.ts": {
+      "filePath": "ui/src/app/app.component.ts",
+      "contentHash": "7d701696f3b52c738a9d2c62b32a71e48bccadef4c63363b0c927e8feeb011be",
+      "functions": [],
+      "classes": [
+        {
+          "name": "AppComponent",
+          "methods": [
+            "dismissTranslationJob",
+            "toggleLeftPanel",
+            "toggleRightPanel",
+            "onTagSpeaker",
+            "closeTagging",
+            "onSpeakerTagged",
+            "openReview",
+            "closeReview",
+            "openSummary",
+            "closeSummary",
+            "openTranslation",
+            "closeTranslation",
+            "setAskScope",
+            "onAsk",
+            "askMeeting",
+            "askVault",
+            "chunkToSource",
+            "noteName",
+            "truncate",
+            "buildAskTranscript",
+            "buildAskKnownNames",
+            "ngOnInit",
+            "ngOnDestroy",
+            "onKeydown",
+            "openSettings",
+            "closeSettings",
+            "isCapturing",
+            "isConnected",
+            "canStart",
+            "toggleMic",
+            "toggleSystem",
+            "onTranscriptScroll",
+            "connectionLabel",
+            "rtfDisplay",
+            "formatTime",
+            "speakerColorFor",
+            "isBookmarked",
+            "formatClock",
+            "onStart",
+            "onNewMeeting",
+            "canClear",
+            "onStop",
+            "onBookmark",
+            "elapsedSeconds",
+            "dismissMeetingSaved",
+            "revealMeeting",
+            "showBookmarkToast",
+            "onLanguageChange"
+          ],
+          "properties": [
+            "engine",
+            "prefs",
+            "llm",
+            "retrieval",
+            "translationJob",
+            "translationJobState",
+            "translationJobPercent",
+            "theme",
+            "retrievalIsExternal",
+            "modelConfigured",
+            "askInFlight",
+            "askAnswer",
+            "askScope",
+            "askSources",
+            "ragIndexStatus",
+            "connection",
+            "capture",
+            "heartbeat",
+            "hello",
+            "ready",
+            "segments",
+            "lastError",
+            "modelProgress",
+            "bookmarks",
+            "warmingUp",
+            "showOnboarding",
+            "ANTI_FLASH_MS",
+            "showLoadingOverlay",
+            "antiFlashTimer",
+            "_overlayGate",
+            "warning",
+            "warningSub",
+            "languageChoices",
+            "language",
+            "micEnabled",
+            "systemEnabled",
+            "settingsOpen",
+            "leftPanelOpen",
+            "rightPanelOpen",
+            "taggingTarget",
+            "taggingSessionId",
+            "taggingChipColor",
+            "reviewOpen",
+            "reviewMeeting",
+            "reviewSessionId",
+            "_reviewGuard",
+            "summaryOpen",
+            "summarySessionId",
+            "_summaryGuard",
+            "translationOpen",
+            "translationSessionId",
+            "_translationGuard",
+            "seeded",
+            "_seedFromPrefs",
+            "_persistDefaults",
+            "bookmarkToast",
+            "toastTimer",
+            "bookmarkSub",
+            "dismissedSavedSession",
+            "meetingSaved",
+            "nowMs",
+            "timerId",
+            "finalizedSegments",
+            "liveSegments",
+            "transcriptScroll",
+            "followTail",
+            "_autoscroll",
+            "_trayStatePush",
+            "recCounter"
+          ],
+          "exported": true,
+          "lineCount": 898
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "afterRenderEffect",
+            "ChangeDetectionStrategy",
+            "Component",
+            "effect",
+            "ElementRef",
+            "HostListener",
+            "OnDestroy",
+            "OnInit",
+            "computed",
+            "inject",
+            "signal",
+            "viewChild"
+          ]
+        },
+        {
+          "source": "rxjs",
+          "specifiers": [
+            "Subscription"
+          ]
+        },
+        {
+          "source": "./services/engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "./services/preferences.service",
+          "specifiers": [
+            "PreferencesService"
+          ]
+        },
+        {
+          "source": "./services/llm.service",
+          "specifiers": [
+            "LlmService"
+          ]
+        },
+        {
+          "source": "./services/retrieval.service",
+          "specifiers": [
+            "RetrievalService"
+          ]
+        },
+        {
+          "source": "./services/theme.service",
+          "specifiers": [
+            "ThemeService"
+          ]
+        },
+        {
+          "source": "./services/translation-job.service",
+          "specifiers": [
+            "TranslationJobService"
+          ]
+        },
+        {
+          "source": "./services/engine.types",
+          "specifiers": [
+            "LANGUAGE_CHOICES",
+            "DisplayedSegment",
+            "MeetingSavedPayload",
+            "RagResultChunk"
+          ]
+        },
+        {
+          "source": "./components/transcript-line.component",
+          "specifiers": [
+            "TranscriptLineComponent"
+          ]
+        },
+        {
+          "source": "./components/status-banner.component",
+          "specifiers": [
+            "StatusBannerComponent"
+          ]
+        },
+        {
+          "source": "./components/settings-panel.component",
+          "specifiers": [
+            "SettingsPanelComponent"
+          ]
+        },
+        {
+          "source": "./components/meeting-saved-toast.component",
+          "specifiers": [
+            "MeetingSavedToastComponent"
+          ]
+        },
+        {
+          "source": "./components/model-loading.component",
+          "specifiers": [
+            "ModelLoadingComponent"
+          ]
+        },
+        {
+          "source": "./components/onboarding.component",
+          "specifiers": [
+            "OnboardingComponent"
+          ]
+        },
+        {
+          "source": "./components/attendees-panel.component",
+          "specifiers": [
+            "AttendeesPanelComponent",
+            "TagSpeakerRequest"
+          ]
+        },
+        {
+          "source": "./components/ask-panel.component",
+          "specifiers": [
+            "AskPanelComponent",
+            "AnswerSource",
+            "AskScope"
+          ]
+        },
+        {
+          "source": "./components/eyebrow.component",
+          "specifiers": [
+            "EyebrowComponent"
+          ]
+        },
+        {
+          "source": "./components/speaker-tagging.component",
+          "specifiers": [
+            "SpeakerTaggingComponent"
+          ]
+        },
+        {
+          "source": "./components/post-meeting-review.component",
+          "specifiers": [
+            "PostMeetingReviewComponent"
+          ]
+        },
+        {
+          "source": "./components/summary-panel.component",
+          "specifiers": [
+            "SummaryPanelComponent"
+          ]
+        },
+        {
+          "source": "./components/translate-panel.component",
+          "specifiers": [
+            "TranslatePanelComponent"
+          ]
+        }
+      ],
+      "exports": [
+        "AppComponent"
+      ],
+      "totalLines": 977,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/app.config.ts": {
+      "filePath": "ui/src/app/app.config.ts",
+      "contentHash": "705f9b86a2baea1a30e302af953167c1e0ecba04278112bf7fbce6cd3886cd5a",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ApplicationConfig",
+            "provideZoneChangeDetection"
+          ]
+        }
+      ],
+      "exports": [
+        "appConfig"
+      ],
+      "totalLines": 11,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/ask-panel.component.ts": {
+      "filePath": "ui/src/app/components/ask-panel.component.ts",
+      "contentHash": "1a57d640d2f72b6660d63fd1f72e80255b39010a35200d9f1528d5fd36b7127f",
+      "functions": [],
+      "classes": [
+        {
+          "name": "AskPanelComponent",
+          "methods": [
+            "onSubmit"
+          ],
+          "properties": [
+            "modelConfigured",
+            "enabled",
+            "loading",
+            "answer",
+            "answerCitations",
+            "sources",
+            "scope",
+            "indexStatus",
+            "externalBackend",
+            "ask",
+            "scopeChange",
+            "openSettings",
+            "dismiss",
+            "sourcesLabel",
+            "inputPlaceholder",
+            "indexState",
+            "indexLabel"
+          ],
+          "exported": true,
+          "lineCount": 112
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "computed",
+            "input",
+            "output"
+          ]
+        },
+        {
+          "source": "./eyebrow.component",
+          "specifiers": [
+            "EyebrowComponent"
+          ]
+        },
+        {
+          "source": "./citation-chip.component",
+          "specifiers": [
+            "CitationChipComponent"
+          ]
+        },
+        {
+          "source": "../services/engine.types",
+          "specifiers": [
+            "RagIndexStatusPayload"
+          ]
+        }
+      ],
+      "exports": [
+        "AskPanelComponent"
+      ],
+      "totalLines": 882,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/attendees-panel.component.ts": {
+      "filePath": "ui/src/app/components/attendees-panel.component.ts",
+      "contentHash": "902c80ad0fdd38a11059eb07fc7eb85d36fa0be55fec9aba3c9b976436237eb1",
+      "functions": [
+        {
+          "name": "confidenceMeta",
+          "params": [
+            "confidence"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 4
+        }
+      ],
+      "classes": [
+        {
+          "name": "AttendeesPanelComponent",
+          "methods": [
+            "emitTag",
+            "toRow",
+            "speakerColor"
+          ],
+          "properties": [
+            "engine",
+            "capturing",
+            "tagSpeaker",
+            "lastMeeting",
+            "rows",
+            "headerLabel"
+          ],
+          "exported": true,
+          "lineCount": 54
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "computed",
+            "inject",
+            "input",
+            "output"
+          ]
+        },
+        {
+          "source": "../services/engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "../services/engine.types",
+          "specifiers": [
+            "MeetingSpeaker"
+          ]
+        },
+        {
+          "source": "./eyebrow.component",
+          "specifiers": [
+            "EyebrowComponent"
+          ]
+        }
+      ],
+      "exports": [
+        "AttendeesPanelComponent"
+      ],
+      "totalLines": 369,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/citation-chip.component.ts": {
+      "filePath": "ui/src/app/components/citation-chip.component.ts",
+      "contentHash": "d8365e27b8c2ac15443a72df743537571eede111510d8e191394a9dce741db1d",
+      "functions": [],
+      "classes": [
+        {
+          "name": "CitationChipComponent",
+          "methods": [],
+          "properties": [
+            "n",
+            "label",
+            "interactive",
+            "select"
+          ],
+          "exported": true,
+          "lineCount": 12
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "input",
+            "output"
+          ]
+        }
+      ],
+      "exports": [
+        "CitationChipComponent"
+      ],
+      "totalLines": 95,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/eyebrow.component.ts": {
+      "filePath": "ui/src/app/components/eyebrow.component.ts",
+      "contentHash": "8b464f1016c01c4ac926d8df6748d41f3556fafb285c2ab559328e7cd2be5d14",
+      "functions": [],
+      "classes": [
+        {
+          "name": "EyebrowComponent",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 1
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component"
+          ]
+        }
+      ],
+      "exports": [
+        "EyebrowComponent"
+      ],
+      "totalLines": 29,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/meeting-saved-toast.component.ts": {
+      "filePath": "ui/src/app/components/meeting-saved-toast.component.ts",
+      "contentHash": "f736dfe29ed8b39d16e9409f91cf85e57a2fe4122f9d4651efa7349cc5aedf38",
+      "functions": [],
+      "classes": [
+        {
+          "name": "MeetingSavedToastComponent",
+          "methods": [
+            "onNameInput",
+            "apply",
+            "onSummarize",
+            "onTranslate",
+            "speakerColor"
+          ],
+          "properties": [
+            "engine",
+            "llm",
+            "saved",
+            "modelConfigured",
+            "dismiss",
+            "reveal",
+            "review",
+            "summarize",
+            "translate",
+            "openSettings",
+            "rows",
+            "seededSession",
+            "_seed",
+            "savedConfirmed",
+            "hasChanges",
+            "speakerCountLabel",
+            "hasAudio",
+            "pathTail"
+          ],
+          "exported": true,
+          "lineCount": 146
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "computed",
+            "effect",
+            "inject",
+            "input",
+            "output",
+            "signal"
+          ]
+        },
+        {
+          "source": "../services/engine.types",
+          "specifiers": [
+            "MeetingSavedPayload"
+          ]
+        },
+        {
+          "source": "../services/engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "../services/llm.service",
+          "specifiers": [
+            "LlmService"
+          ]
+        }
+      ],
+      "exports": [
+        "MeetingSavedToastComponent"
+      ],
+      "totalLines": 565,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/model-loading.component.ts": {
+      "filePath": "ui/src/app/components/model-loading.component.ts",
+      "contentHash": "eae116ac6c5be878a6d42c249100ebfea468e3d291cb8b231077950d82d92f8a",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ModelLoadingComponent",
+          "methods": [],
+          "properties": [
+            "detail",
+            "fraction",
+            "detailText",
+            "percent"
+          ],
+          "exported": true,
+          "lineCount": 27
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "computed",
+            "input"
+          ]
+        }
+      ],
+      "exports": [
+        "ModelLoadingComponent"
+      ],
+      "totalLines": 258,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/onboarding.component.css": {
+      "filePath": "ui/src/app/components/onboarding.component.css",
+      "contentHash": "154dbd757136f7e40cef6bb86012b5dc7812e3c4561377138f4558b866297a99",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 384,
+      "hasStructuralAnalysis": false
+    },
+    "ui/src/app/components/onboarding.component.html": {
+      "filePath": "ui/src/app/components/onboarding.component.html",
+      "contentHash": "a6d523f99572da1ac42bc2cea4fc02d64983d11410186d3678546b1422e9e111",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 482,
+      "hasStructuralAnalysis": false
+    },
+    "ui/src/app/components/onboarding.component.ts": {
+      "filePath": "ui/src/app/components/onboarding.component.ts",
+      "contentHash": "c0d3008f7ed59b54971644c24377f133c6544abf5aba78da8bfb397b1795ba49",
+      "functions": [],
+      "classes": [
+        {
+          "name": "OnboardingComponent",
+          "methods": [
+            "toggleKeepAudio",
+            "toggleRememberSpeakers",
+            "setRagBackend",
+            "ngOnInit",
+            "refreshMicStatus",
+            "narrow",
+            "grantMic",
+            "micGranted",
+            "canPromptMic",
+            "micBadgeLabel",
+            "revealVault",
+            "next",
+            "back",
+            "finish",
+            "onEnter"
+          ],
+          "properties": [
+            "prefs",
+            "lastStep",
+            "step",
+            "vaultPath",
+            "keepAudio",
+            "rememberSpeakers",
+            "ragBackend",
+            "micStatus",
+            "micAsking"
+          ],
+          "exported": true,
+          "lineCount": 154
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "HostListener",
+            "OnInit",
+            "inject",
+            "signal"
+          ]
+        },
+        {
+          "source": "../services/preferences.service",
+          "specifiers": [
+            "PreferencesService"
+          ]
+        }
+      ],
+      "exports": [
+        "OnboardingComponent"
+      ],
+      "totalLines": 211,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/post-meeting-review.component.ts": {
+      "filePath": "ui/src/app/components/post-meeting-review.component.ts",
+      "contentHash": "5f3c7f39388659bfcec4bdd274d6462a8afe2d32b3d7348de1c0b5ac4a503889",
+      "functions": [],
+      "classes": [
+        {
+          "name": "PostMeetingReviewComponent",
+          "methods": [
+            "ngOnDestroy",
+            "loadAudioFor",
+            "revokeObjectUrl",
+            "togglePlay",
+            "onRowClick",
+            "onScrub",
+            "onLoadedMetadata",
+            "onTimeUpdate",
+            "onPlayEvent",
+            "onPauseEvent",
+            "onEnded",
+            "onAudioError",
+            "onNameInput",
+            "applyNames",
+            "onClose",
+            "onEscape",
+            "speakerColor",
+            "speakerColorByIndex",
+            "formatTime"
+          ],
+          "properties": [
+            "engine",
+            "saved",
+            "sessionId",
+            "close",
+            "segments",
+            "audioRef",
+            "utterancesScroll",
+            "audioStatus",
+            "objectUrl",
+            "destroyed",
+            "playing",
+            "currentTime",
+            "duration",
+            "readout",
+            "nowPlayingIndex",
+            "rows",
+            "savedConfirmed",
+            "seededSession",
+            "_seedRoster",
+            "_loadAudio",
+            "hasChanges",
+            "lastScrolledIndex",
+            "_followPlayhead"
+          ],
+          "exported": true,
+          "lineCount": 276
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "ElementRef",
+            "HostListener",
+            "OnDestroy",
+            "afterRenderEffect",
+            "computed",
+            "effect",
+            "inject",
+            "input",
+            "output",
+            "signal",
+            "viewChild"
+          ]
+        },
+        {
+          "source": "../services/engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "../services/engine.types",
+          "specifiers": [
+            "MeetingSavedPayload"
+          ]
+        },
+        {
+          "source": "./eyebrow.component",
+          "specifiers": [
+            "EyebrowComponent"
+          ]
+        }
+      ],
+      "exports": [
+        "PostMeetingReviewComponent"
+      ],
+      "totalLines": 901,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/settings-panel.component.css": {
+      "filePath": "ui/src/app/components/settings-panel.component.css",
+      "contentHash": "db353e479f32e0aa735fafb1eb5ed8de70ea2dc89ebb19b046ecde9950f0417a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 138,
+      "hasStructuralAnalysis": false
+    },
+    "ui/src/app/components/settings-panel.component.html": {
+      "filePath": "ui/src/app/components/settings-panel.component.html",
+      "contentHash": "a385d1bde7d3edb873a37a3e01551e850474a0aac74d14945696f2c95254df84",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 767,
+      "hasStructuralAnalysis": false
+    },
+    "ui/src/app/components/settings-panel.component.ts": {
+      "filePath": "ui/src/app/components/settings-panel.component.ts",
+      "contentHash": "0a68f2edb41d50eeda04108c353d1d52f0da20468491f0ccedc53080899440a4",
+      "functions": [],
+      "classes": [
+        {
+          "name": "SettingsPanelComponent",
+          "methods": [
+            "constructor",
+            "onThemeChange",
+            "toggleMicDefault",
+            "toggleSystemDefault",
+            "onLanguageChange",
+            "toggleKeepAudio",
+            "toggleRememberSpeakers",
+            "toggleSyncAudio",
+            "toggleSyncSpeakers",
+            "onProviderChange",
+            "onModelChange",
+            "onBaseUrlChange",
+            "onApiKeyChange",
+            "saveModelConfig",
+            "saveApiKey",
+            "clearApiKey",
+            "testConnection",
+            "formatCallTime",
+            "onRagBackendChange",
+            "onRagTransportChange",
+            "onRagEndpointChange",
+            "onRagToolNameChange",
+            "testRagConnection",
+            "revealVault",
+            "onEscape",
+            "onBackdropClick",
+            "onClose"
+          ],
+          "properties": [
+            "close",
+            "engine",
+            "prefs",
+            "llm",
+            "hello",
+            "connection",
+            "engineVersion",
+            "modelLoaded",
+            "connectionLabel",
+            "connectionColor",
+            "theme",
+            "languageChoices",
+            "mic",
+            "system",
+            "language",
+            "keepAudio",
+            "rememberSpeakers",
+            "syncAudio",
+            "syncSpeakers",
+            "llmConfigured",
+            "llmHasKey",
+            "llmConfig",
+            "llmTesting",
+            "llmTestResult",
+            "draftProvider",
+            "draftModel",
+            "draftBaseUrl",
+            "draftApiKey",
+            "seededDraft",
+            "_seedDraft",
+            "showBaseUrl",
+            "modelPlaceholder",
+            "cloudLog",
+            "ragBackend",
+            "ragTransport",
+            "ragEndpoint",
+            "ragToolName",
+            "ragTestResult",
+            "ragTesting",
+            "ragBridgeAvailable",
+            "canTestRag",
+            "vaultPath"
+          ],
+          "exported": true,
+          "lineCount": 350
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "HostListener",
+            "computed",
+            "effect",
+            "inject",
+            "signal",
+            "output"
+          ]
+        },
+        {
+          "source": "../services/engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "../services/preferences.service",
+          "specifiers": [
+            "PreferencesService"
+          ]
+        },
+        {
+          "source": "../services/preferences.service",
+          "specifiers": [
+            "RagBackend",
+            "RagTransport",
+            "ThemeChoice"
+          ]
+        },
+        {
+          "source": "../services/llm.service",
+          "specifiers": [
+            "LlmService"
+          ]
+        },
+        {
+          "source": "../services/engine.types",
+          "specifiers": [
+            "LANGUAGE_CHOICES"
+          ]
+        },
+        {
+          "source": "../services/engine.types",
+          "specifiers": [
+            "RagConnectionResult"
+          ]
+        },
+        {
+          "source": "../services/llm.types",
+          "specifiers": [
+            "LlmProviderId"
+          ]
+        }
+      ],
+      "exports": [
+        "SettingsPanelComponent"
+      ],
+      "totalLines": 397,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/speaker-tag.component.ts": {
+      "filePath": "ui/src/app/components/speaker-tag.component.ts",
+      "contentHash": "9649566503bcf27290dc5c988eb86c7da88e072b5c25da10601cb77549784cb3",
+      "functions": [],
+      "classes": [
+        {
+          "name": "SpeakerTagComponent",
+          "methods": [],
+          "properties": [
+            "name",
+            "color",
+            "tagged"
+          ],
+          "exported": true,
+          "lineCount": 8
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "input"
+          ]
+        }
+      ],
+      "exports": [
+        "SpeakerTagComponent"
+      ],
+      "totalLines": 81,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/speaker-tagging.component.ts": {
+      "filePath": "ui/src/app/components/speaker-tagging.component.ts",
+      "contentHash": "cc5007abd861a4f1fdfe6cd86ab5fb52f04230f22d040c17bd5a07a05eaed22b",
+      "functions": [],
+      "classes": [
+        {
+          "name": "SpeakerTaggingComponent",
+          "methods": [
+            "onInput",
+            "clear",
+            "save",
+            "onBackdrop",
+            "onClose",
+            "onEscape",
+            "onKeydown"
+          ],
+          "properties": [
+            "engine",
+            "prefs",
+            "rememberSpeakers",
+            "label",
+            "displayName",
+            "sessionId",
+            "chipColor",
+            "confidence",
+            "close",
+            "saved",
+            "nameInput",
+            "cardEl",
+            "name",
+            "isRetag",
+            "subtitle",
+            "recognized",
+            "canSave",
+            "_seed"
+          ],
+          "exported": true,
+          "lineCount": 148
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "ElementRef",
+            "HostListener",
+            "computed",
+            "effect",
+            "inject",
+            "input",
+            "output",
+            "signal",
+            "viewChild"
+          ]
+        },
+        {
+          "source": "../services/engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "../services/preferences.service",
+          "specifiers": [
+            "PreferencesService"
+          ]
+        },
+        {
+          "source": "./eyebrow.component",
+          "specifiers": [
+            "EyebrowComponent"
+          ]
+        }
+      ],
+      "exports": [
+        "SpeakerTaggingComponent"
+      ],
+      "totalLines": 637,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/status-banner.component.ts": {
+      "filePath": "ui/src/app/components/status-banner.component.ts",
+      "contentHash": "d86068c459a8bbf5971798d51cae7d1154862aa33da211bb862a31f27d8479d5",
+      "functions": [],
+      "classes": [
+        {
+          "name": "StatusBannerComponent",
+          "methods": [],
+          "properties": [
+            "message",
+            "severity",
+            "color",
+            "severityClass"
+          ],
+          "exported": true,
+          "lineCount": 19
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "computed",
+            "input"
+          ]
+        }
+      ],
+      "exports": [
+        "StatusBannerComponent"
+      ],
+      "totalLines": 88,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/summary-panel.component.ts": {
+      "filePath": "ui/src/app/components/summary-panel.component.ts",
+      "contentHash": "17931df4f418fc5726b7b69fe1a44ee0ed6b524033170ffb5b824791755e12ac",
+      "functions": [],
+      "classes": [
+        {
+          "name": "SummaryPanelComponent",
+          "methods": [
+            "generate",
+            "buildTranscript",
+            "buildKnownNames",
+            "saveToNote",
+            "onClose",
+            "onEscape",
+            "formatTime"
+          ],
+          "properties": [
+            "engine",
+            "llm",
+            "sessionId",
+            "close",
+            "summarizing",
+            "summary",
+            "savedConfirmed",
+            "hasSummary",
+            "canRetry",
+            "receiptText",
+            "redactionChips",
+            "_autoGenerate"
+          ],
+          "exported": true,
+          "lineCount": 152
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "HostListener",
+            "computed",
+            "effect",
+            "inject",
+            "input",
+            "output",
+            "signal"
+          ]
+        },
+        {
+          "source": "../services/engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "../services/llm.service",
+          "specifiers": [
+            "LlmService"
+          ]
+        }
+      ],
+      "exports": [
+        "SummaryPanelComponent"
+      ],
+      "totalLines": 587,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/transcript-line.component.css": {
+      "filePath": "ui/src/app/components/transcript-line.component.css",
+      "contentHash": "3113320917d95d7e7939ba8369f249f8ab0cf5573112b9b710cce6b44a5de633",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 68,
+      "hasStructuralAnalysis": false
+    },
+    "ui/src/app/components/transcript-line.component.ts": {
+      "filePath": "ui/src/app/components/transcript-line.component.ts",
+      "contentHash": "d0a63b009d5ca97e2d783897bc07fc4f89a57cf663f434cba719c9e998eb2223",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TranscriptLineComponent",
+          "methods": [],
+          "properties": [
+            "time",
+            "text",
+            "speaker",
+            "speakerColor",
+            "translation",
+            "partial",
+            "caret",
+            "bookmarked"
+          ],
+          "exported": true,
+          "lineCount": 14
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "input"
+          ]
+        }
+      ],
+      "exports": [
+        "TranscriptLineComponent"
+      ],
+      "totalLines": 74,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/components/translate-panel.component.ts": {
+      "filePath": "ui/src/app/components/translate-panel.component.ts",
+      "contentHash": "1739fa13e162b7469ec60d89558d6bb453810701ff2c4a5c8908751a3bd4ed8e",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TranslatePanelComponent",
+          "methods": [
+            "onTargetChange",
+            "translate",
+            "buildTexts",
+            "buildKnownNames",
+            "onClose",
+            "onEscape"
+          ],
+          "properties": [
+            "engine",
+            "llm",
+            "translationJob",
+            "sessionId",
+            "close",
+            "targets",
+            "targetName",
+            "hasTranscript",
+            "usesCloud"
+          ],
+          "exported": true,
+          "lineCount": 109
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "HostListener",
+            "computed",
+            "inject",
+            "input",
+            "output",
+            "signal"
+          ]
+        },
+        {
+          "source": "../services/engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "../services/llm.service",
+          "specifiers": [
+            "LlmService"
+          ]
+        },
+        {
+          "source": "../services/translation-job.service",
+          "specifiers": [
+            "TranslationJobService"
+          ]
+        }
+      ],
+      "exports": [
+        "TRANSLATE_TARGETS",
+        "TranslatePanelComponent"
+      ],
+      "totalLines": 493,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/services/engine.service.ts": {
+      "filePath": "ui/src/app/services/engine.service.ts",
+      "contentHash": "6fb7174b5f1f2bd94b9dd22469cecd8e3f48f375487e061ff20be225a67f0017",
+      "functions": [
+        {
+          "name": "stringifyError",
+          "params": [
+            "err"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 5
+        }
+      ],
+      "classes": [
+        {
+          "name": "EngineService",
+          "methods": [
+            "connect",
+            "startCapture",
+            "stopCapture",
+            "createBookmark",
+            "renameSpeakers",
+            "writeSummary",
+            "writeTranslation",
+            "writeTranslationLines",
+            "retrieve",
+            "takePendingRag",
+            "rejectAllPendingRag",
+            "applyOptimisticRename",
+            "clearTranscript",
+            "speakerIndexFor",
+            "speakerColorFor",
+            "send",
+            "dispatchFrame",
+            "applyMeetingTranscript",
+            "applySegment"
+          ],
+          "properties": [
+            "_connection",
+            "connection",
+            "_capture",
+            "capture",
+            "_heartbeat",
+            "heartbeat",
+            "_hello",
+            "hello",
+            "_ready",
+            "ready",
+            "_modelProgress",
+            "modelProgress",
+            "_lastError",
+            "lastError",
+            "segmentsMap",
+            "_segmentsTick",
+            "segments",
+            "errors$",
+            "warnings$",
+            "bookmarkCreated$",
+            "meetingSaved$",
+            "_lastMeetingSaved",
+            "lastMeetingSaved",
+            "_bookmarks",
+            "bookmarks",
+            "_ragIndexStatus",
+            "ragIndexStatus",
+            "socket",
+            "ragSeq",
+            "pendingRag",
+            "RAG_RETRIEVE_TIMEOUT_MS"
+          ],
+          "exported": true,
+          "lineCount": 708
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "Injectable",
+            "signal",
+            "computed",
+            "Signal"
+          ]
+        },
+        {
+          "source": "rxjs",
+          "specifiers": [
+            "Subject"
+          ]
+        },
+        {
+          "source": "./engine.types",
+          "specifiers": [
+            "WireEnvelope",
+            "MetaHelloPayload",
+            "MetaHeartbeatPayload",
+            "MetaReadyPayload",
+            "MetaModelProgressPayload",
+            "CaptureStartedPayload",
+            "CaptureStoppedPayload",
+            "SegmentPayload",
+            "SegmentSupersededPayload",
+            "ErrorPayload",
+            "WarningPayload",
+            "BookmarkCreatedPayload",
+            "MeetingSavedPayload",
+            "MeetingTranscriptPayload",
+            "RagResultChunk",
+            "RagResultsPayload",
+            "RagIndexStatusPayload",
+            "RagConnectionResult",
+            "DisplayedSegment",
+            "ConnectionState",
+            "CaptureState",
+            "EngineCommand"
+          ]
+        },
+        {
+          "source": "./preferences.service",
+          "specifiers": [
+            "Prefs",
+            "PrefsResult"
+          ]
+        },
+        {
+          "source": "./llm.types",
+          "specifiers": [
+            "LlmConfig",
+            "LlmStatus",
+            "LlmTestResult",
+            "SummarizeReq",
+            "SummarizeResult",
+            "AskReq",
+            "AskResult",
+            "TranslateReq",
+            "TranslateResult",
+            "TranslateSegmentReq",
+            "TranslateSegmentResult",
+            "CloudCallLogEntry"
+          ]
+        }
+      ],
+      "exports": [
+        "EngineService"
+      ],
+      "totalLines": 893,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/services/engine.types.ts": {
+      "filePath": "ui/src/app/services/engine.types.ts",
+      "contentHash": "5faefe7696945bc678461a284db35da738e62aeb8ba8dd9b17db8bc5da1c665f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "LANGUAGE_CHOICES"
+      ],
+      "totalLines": 472,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/services/llm.service.ts": {
+      "filePath": "ui/src/app/services/llm.service.ts",
+      "contentHash": "d915cad4417d5055619bb8ae75e052ffd8e98983ef11cbcaf7f2f95eb29eb1da",
+      "functions": [],
+      "classes": [
+        {
+          "name": "LlmService",
+          "methods": [
+            "constructor",
+            "refresh",
+            "setConfig",
+            "setApiKey",
+            "clearApiKey",
+            "test",
+            "summarize",
+            "resetSummary",
+            "translate",
+            "resetTranslation",
+            "translateSegment",
+            "flushLiveTranslate",
+            "ask",
+            "refreshCloudLog"
+          ],
+          "properties": [
+            "_status",
+            "status",
+            "configured",
+            "hasKey",
+            "config",
+            "testing",
+            "testResult",
+            "summarizing",
+            "summary",
+            "asking",
+            "cloudLog",
+            "translating",
+            "translation"
+          ],
+          "exported": true,
+          "lineCount": 272
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "Injectable",
+            "signal",
+            "computed"
+          ]
+        },
+        {
+          "source": "./llm.types",
+          "specifiers": [
+            "LlmConfig",
+            "LlmStatus",
+            "LlmTestResult",
+            "SummarizeReq",
+            "SummarizeResult",
+            "AskReq",
+            "AskResult",
+            "TranslateReq",
+            "TranslateResult",
+            "TranslateSegmentReq",
+            "TranslateSegmentResult",
+            "CloudCallLogEntry"
+          ]
+        }
+      ],
+      "exports": [
+        "LlmService"
+      ],
+      "totalLines": 306,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/services/llm.types.ts": {
+      "filePath": "ui/src/app/services/llm.types.ts",
+      "contentHash": "ecd5639ee5f362df2d64ae889d7b7af3ff9d4a5396fcca8dbfbb15e0ce9558a4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 229,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/services/preferences.service.ts": {
+      "filePath": "ui/src/app/services/preferences.service.ts",
+      "contentHash": "10a8c1e23df3a0702d2a8f42ac2f057052fa8a3d689047e2c4b0dfbc74d2c144",
+      "functions": [
+        {
+          "name": "normalizeTheme",
+          "params": [
+            "v"
+          ],
+          "returnType": "ThemeChoice",
+          "exported": false,
+          "lineCount": 3
+        }
+      ],
+      "classes": [
+        {
+          "name": "PreferencesService",
+          "methods": [
+            "constructor",
+            "load",
+            "setAudioDefaults",
+            "setTheme",
+            "setPrivacy",
+            "setRag",
+            "ragSnapshot",
+            "save",
+            "revealVault",
+            "revealPath",
+            "completeOnboarding",
+            "snapshot"
+          ],
+          "properties": [
+            "_mic",
+            "_system",
+            "_language",
+            "mic",
+            "system",
+            "language",
+            "_vaultPath",
+            "vaultPath",
+            "_hasCompletedOnboarding",
+            "hasCompletedOnboarding",
+            "_theme",
+            "theme",
+            "_keepAudio",
+            "_rememberSpeakers",
+            "_syncAudio",
+            "_syncSpeakers",
+            "keepAudio",
+            "rememberSpeakers",
+            "syncAudio",
+            "syncSpeakers",
+            "_ragBackend",
+            "_ragTransport",
+            "_ragEndpoint",
+            "_ragToolName",
+            "ragBackend",
+            "ragTransport",
+            "ragEndpoint",
+            "ragToolName",
+            "_loaded",
+            "loaded"
+          ],
+          "exported": true,
+          "lineCount": 238
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "Injectable",
+            "signal",
+            "Signal"
+          ]
+        }
+      ],
+      "exports": [
+        "PreferencesService"
+      ],
+      "totalLines": 323,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/services/retrieval.service.ts": {
+      "filePath": "ui/src/app/services/retrieval.service.ts",
+      "contentHash": "71d92dc59ccb1848f6d483af6de33fa4ad79af61e139034f57cbd3ec25f44b5b",
+      "functions": [],
+      "classes": [
+        {
+          "name": "RetrievalService",
+          "methods": [
+            "retrieve"
+          ],
+          "properties": [
+            "engine",
+            "prefs",
+            "isExternal"
+          ],
+          "exported": true,
+          "lineCount": 35
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "Injectable",
+            "inject",
+            "computed",
+            "Signal"
+          ]
+        },
+        {
+          "source": "./engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "./preferences.service",
+          "specifiers": [
+            "PreferencesService"
+          ]
+        },
+        {
+          "source": "./engine.types",
+          "specifiers": [
+            "RagResultChunk"
+          ]
+        }
+      ],
+      "exports": [
+        "RetrievalService"
+      ],
+      "totalLines": 57,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/services/theme.service.ts": {
+      "filePath": "ui/src/app/services/theme.service.ts",
+      "contentHash": "112bbf0c3e178cfda3ef09fbcc2ad3ffcfa8454c28da34abac80b6f7f2fcb203",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ThemeService",
+          "methods": [
+            "constructor",
+            "apply"
+          ],
+          "properties": [
+            "prefs",
+            "darkQuery"
+          ],
+          "exported": true,
+          "lineCount": 45
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "Injectable",
+            "effect",
+            "inject"
+          ]
+        },
+        {
+          "source": "./preferences.service",
+          "specifiers": [
+            "PreferencesService",
+            "ThemeChoice"
+          ]
+        }
+      ],
+      "exports": [
+        "ThemeService"
+      ],
+      "totalLines": 67,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/services/translation-job.service.ts": {
+      "filePath": "ui/src/app/services/translation-job.service.ts",
+      "contentHash": "c8c0657c5ada13524cbe639c3b76c27badb6cb2a06b1827ebaeb4ea01d900e9a",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TranslationJobService",
+          "methods": [
+            "start",
+            "dismiss",
+            "drain",
+            "run"
+          ],
+          "properties": [
+            "llm",
+            "engine",
+            "_job",
+            "job",
+            "percent",
+            "queue",
+            "running"
+          ],
+          "exported": true,
+          "lineCount": 86
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "Injectable",
+            "computed",
+            "inject",
+            "signal"
+          ]
+        },
+        {
+          "source": "./engine.service",
+          "specifiers": [
+            "EngineService"
+          ]
+        },
+        {
+          "source": "./llm.service",
+          "specifiers": [
+            "LlmService"
+          ]
+        }
+      ],
+      "exports": [
+        "TranslationJobService"
+      ],
+      "totalLines": 140,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/app/tray-popover.component.ts": {
+      "filePath": "ui/src/app/tray-popover.component.ts",
+      "contentHash": "77276b80b8c3b1c8b8f9b18345de7fca1f11402e5a8b9d7aded4bed7ec0e5521",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TrayPopoverComponent",
+          "methods": [
+            "ngOnInit",
+            "ngOnDestroy",
+            "emit"
+          ],
+          "properties": [
+            "state",
+            "recording",
+            "canStart",
+            "unsubState"
+          ],
+          "exported": true,
+          "lineCount": 49
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "OnDestroy",
+            "OnInit",
+            "computed",
+            "signal"
+          ]
+        }
+      ],
+      "exports": [
+        "TrayPopoverComponent"
+      ],
+      "totalLines": 449,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/index.html": {
+      "filePath": "ui/src/index.html",
+      "contentHash": "1b0596c2c72d01a18f8b8e8ce2b57368c7a08caecd05c6f60f0d63f7c424d88e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 35,
+      "hasStructuralAnalysis": false
+    },
+    "ui/src/main.ts": {
+      "filePath": "ui/src/main.ts",
+      "contentHash": "475e2fdb328d9af8023ecba4b64420dd52f0db7adb231242ff64c158ccec0937",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "@angular/platform-browser",
+          "specifiers": [
+            "bootstrapApplication"
+          ]
+        },
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "provideZoneChangeDetection"
+          ]
+        },
+        {
+          "source": "./app/app.component",
+          "specifiers": [
+            "AppComponent"
+          ]
+        },
+        {
+          "source": "./app/app.config",
+          "specifiers": [
+            "appConfig"
+          ]
+        },
+        {
+          "source": "./app/tray-popover.component",
+          "specifiers": [
+            "TrayPopoverComponent"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 41,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/harkd-spawn.ts": {
+      "filePath": "ui/src/main/harkd-spawn.ts",
+      "contentHash": "8998a9f4d5e321b88ff77be349b0f8a5aa604d2e7fae6f97ba7cd9064d06112e",
+      "functions": [
+        {
+          "name": "resolveBinaryPath",
+          "params": [],
+          "returnType": "Promise<string>",
+          "exported": false,
+          "lineCount": 29
+        },
+        {
+          "name": "spawnHarkd",
+          "params": [],
+          "returnType": "Promise<HarkdHandle>",
+          "exported": true,
+          "lineCount": 63
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawn",
+            "ChildProcess"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "* as path"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "electron",
+          "specifiers": [
+            "app"
+          ]
+        },
+        {
+          "source": "./port-file",
+          "specifiers": [
+            "waitForPortFile",
+            "PortFile"
+          ]
+        }
+      ],
+      "exports": [
+        "spawnHarkd"
+      ],
+      "totalLines": 126,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/llm/anthropic.ts": {
+      "filePath": "ui/src/main/llm/anthropic.ts",
+      "contentHash": "720496141df6d8231dc62275b12701efee98205483a2b729a80b4563af2c55d3",
+      "functions": [],
+      "classes": [
+        {
+          "name": "AnthropicProvider",
+          "methods": [
+            "constructor",
+            "testConnection",
+            "complete",
+            "extractText",
+            "isStatusDerived",
+            "stream"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 192
+        }
+      ],
+      "imports": [
+        {
+          "source": "./types",
+          "specifiers": [
+            "LlmConfig",
+            "LlmTestResult"
+          ]
+        },
+        {
+          "source": "./provider",
+          "specifiers": [
+            "LlmProvider",
+            "LlmCompleteOptions",
+            "LlmStreamChunk",
+            "CompleteReq",
+            "CompleteResult",
+            "LLM_REQUEST_TIMEOUT_MS",
+            "LLM_COMPLETE_TIMEOUT_MS",
+            "detailForStatus",
+            "notImplemented"
+          ]
+        }
+      ],
+      "exports": [
+        "AnthropicProvider"
+      ],
+      "totalLines": 221,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/llm/cloud-log.ts": {
+      "filePath": "ui/src/main/llm/cloud-log.ts",
+      "contentHash": "510c4ee62ce60a46e75f6edfe603003dbd9df59ea30b5f7dd454b50a723ad6e5",
+      "functions": [
+        {
+          "name": "cloudLogPath",
+          "params": [],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "readFile",
+          "params": [],
+          "returnType": "CloudLogFile",
+          "exported": false,
+          "lineCount": 26
+        },
+        {
+          "name": "normalizeEntry",
+          "params": [
+            "v"
+          ],
+          "returnType": "CloudCallLogEntry | null",
+          "exported": false,
+          "lineCount": 28
+        },
+        {
+          "name": "writeFile",
+          "params": [
+            "file"
+          ],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "appendCloudCall",
+          "params": [
+            "entry"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "readCloudLog",
+          "params": [],
+          "returnType": "CloudCallLogEntry[]",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "getCloudLogPath",
+          "params": [],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "app"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "* as path"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "* as fs"
+          ]
+        },
+        {
+          "source": "./types",
+          "specifiers": [
+            "CloudCallLogEntry"
+          ]
+        }
+      ],
+      "exports": [
+        "appendCloudCall",
+        "readCloudLog",
+        "getCloudLogPath"
+      ],
+      "totalLines": 139,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/llm/index.ts": {
+      "filePath": "ui/src/main/llm/index.ts",
+      "contentHash": "ad2c8af2c1ffd0251820570e3ff1e64776b9c49b6c1c059f0f5fa005a409d4a2",
+      "functions": [
+        {
+          "name": "readConfig",
+          "params": [],
+          "returnType": "LlmConfig | null",
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "computeConfigured",
+          "params": [
+            "config",
+            "hasKey"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "getStatus",
+          "params": [],
+          "returnType": "LlmStatus",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "isProviderId",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "setConfig",
+          "params": [
+            "raw"
+          ],
+          "returnType": "LlmStatus",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "setApiKey",
+          "params": [
+            "rawKey"
+          ],
+          "returnType": "LlmStatus",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "clearApiKey",
+          "params": [],
+          "returnType": "LlmStatus",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "testConnection",
+          "params": [],
+          "returnType": "Promise<LlmTestResult>",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "isLocalEgress",
+          "params": [
+            "config"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "summarize",
+          "params": [
+            "req"
+          ],
+          "returnType": "Promise<SummarizeResult>",
+          "exported": true,
+          "lineCount": 93
+        },
+        {
+          "name": "translateSystemPrompt",
+          "params": [
+            "targetLang"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "translate",
+          "params": [
+            "req"
+          ],
+          "returnType": "Promise<TranslateResult>",
+          "exported": true,
+          "lineCount": 94
+        },
+        {
+          "name": "segmentTranslateSystemPrompt",
+          "params": [
+            "targetLang"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "recordLiveTranslate",
+          "params": [
+            "args"
+          ],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 34
+        },
+        {
+          "name": "flushLiveTranslate",
+          "params": [],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "translateSegment",
+          "params": [
+            "req"
+          ],
+          "returnType": "Promise<TranslateSegmentResult>",
+          "exported": true,
+          "lineCount": 69
+        },
+        {
+          "name": "buildVaultUserMessage",
+          "params": [
+            "question",
+            "chunkTexts"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "freshZeroCounts",
+          "params": [],
+          "returnType": "RedactionCounts",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "ask",
+          "params": [
+            "req"
+          ],
+          "returnType": "Promise<AskResult>",
+          "exported": true,
+          "lineCount": 143
+        },
+        {
+          "name": "sumCounts",
+          "params": [
+            "a",
+            "b"
+          ],
+          "returnType": "RedactionCounts",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "logCloudCall",
+          "params": [
+            "args"
+          ],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 24
+        },
+        {
+          "name": "getCloudLog",
+          "params": [],
+          "returnType": "CloudCallLogEntry[]",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../prefs",
+          "specifiers": [
+            "loadPrefs",
+            "savePrefs"
+          ]
+        },
+        {
+          "source": "./types",
+          "specifiers": [
+            "LlmConfig",
+            "LlmStatus",
+            "LlmTestResult",
+            "LlmProviderId",
+            "SummarizeReq",
+            "SummarizeResult",
+            "AskReq",
+            "AskResult",
+            "TranslateReq",
+            "TranslateResult",
+            "TranslateSegmentReq",
+            "TranslateSegmentResult",
+            "RedactionCounts",
+            "CloudCallLogEntry"
+          ]
+        },
+        {
+          "source": "./types",
+          "specifiers": [
+            "LLM_PROVIDER_IDS"
+          ]
+        },
+        {
+          "source": "./keystore",
+          "specifiers": [
+            "* as keystore"
+          ]
+        },
+        {
+          "source": "./keystore",
+          "specifiers": [
+            "KeyStorageUnavailableError"
+          ]
+        },
+        {
+          "source": "./provider",
+          "specifiers": [
+            "makeProvider",
+            "LLM_LONG_COMPLETE_TIMEOUT_MS"
+          ]
+        },
+        {
+          "source": "./redaction",
+          "specifiers": [
+            "redact"
+          ]
+        },
+        {
+          "source": "./cloud-log",
+          "specifiers": [
+            "appendCloudCall",
+            "readCloudLog"
+          ]
+        }
+      ],
+      "exports": [
+        "getStatus",
+        "setConfig",
+        "setApiKey",
+        "clearApiKey",
+        "testConnection",
+        "summarize",
+        "translate",
+        "flushLiveTranslate",
+        "translateSegment",
+        "buildVaultUserMessage",
+        "ask",
+        "getCloudLog",
+        "getKeyStorePath",
+        "getCloudLogPath"
+      ],
+      "totalLines": 954,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/llm/keystore.ts": {
+      "filePath": "ui/src/main/llm/keystore.ts",
+      "contentHash": "2a3ac2acc32dd4d0123083c232a5c393d915c91020a41382d774371e61590dfd",
+      "functions": [
+        {
+          "name": "keyStorePath",
+          "params": [],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "readStore",
+          "params": [],
+          "returnType": "KeyStoreFile",
+          "exported": false,
+          "lineCount": 32
+        },
+        {
+          "name": "writeStore",
+          "params": [
+            "store"
+          ],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "hasKey",
+          "params": [
+            "provider"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "getKey",
+          "params": [
+            "provider"
+          ],
+          "returnType": "string | null",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "setKey",
+          "params": [
+            "provider",
+            "key"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "clearKey",
+          "params": [
+            "provider"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "getKeyStorePath",
+          "params": [],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [
+        {
+          "name": "KeyStorageUnavailableError",
+          "methods": [
+            "constructor"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 6
+        }
+      ],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "app",
+            "safeStorage"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "* as path"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "* as fs"
+          ]
+        },
+        {
+          "source": "./types",
+          "specifiers": [
+            "LlmProviderId"
+          ]
+        },
+        {
+          "source": "./types",
+          "specifiers": [
+            "LLM_PROVIDER_IDS"
+          ]
+        }
+      ],
+      "exports": [
+        "KeyStorageUnavailableError",
+        "hasKey",
+        "getKey",
+        "setKey",
+        "clearKey",
+        "getKeyStorePath"
+      ],
+      "totalLines": 170,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/llm/openai-compatible.ts": {
+      "filePath": "ui/src/main/llm/openai-compatible.ts",
+      "contentHash": "0504cfa611db5643d2b0a3202037c6bf96fff3786ea6c75996f851cfde5afe1a",
+      "functions": [],
+      "classes": [
+        {
+          "name": "OpenAiCompatibleProvider",
+          "methods": [
+            "constructor",
+            "normalizedBaseUrl",
+            "hostForDetail",
+            "testConnection",
+            "complete",
+            "extractText",
+            "isStatusDerived",
+            "stream"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 184
+        }
+      ],
+      "imports": [
+        {
+          "source": "./types",
+          "specifiers": [
+            "LlmConfig",
+            "LlmTestResult"
+          ]
+        },
+        {
+          "source": "./provider",
+          "specifiers": [
+            "LlmProvider",
+            "LlmCompleteOptions",
+            "LlmStreamChunk",
+            "CompleteReq",
+            "CompleteResult",
+            "LLM_REQUEST_TIMEOUT_MS",
+            "LLM_COMPLETE_TIMEOUT_MS",
+            "detailForStatus",
+            "notImplemented"
+          ]
+        }
+      ],
+      "exports": [
+        "OpenAiCompatibleProvider"
+      ],
+      "totalLines": 212,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/llm/provider.ts": {
+      "filePath": "ui/src/main/llm/provider.ts",
+      "contentHash": "2ddd6a62c8d2c1767e826febc457af8e6c34ae3f85bd18f2b5659ee447b3ee16",
+      "functions": [
+        {
+          "name": "makeProvider",
+          "params": [
+            "config",
+            "key"
+          ],
+          "returnType": "LlmProvider",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "detailForStatus",
+          "params": [
+            "status"
+          ],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "notImplemented",
+          "params": [
+            "method"
+          ],
+          "returnType": "never",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./types",
+          "specifiers": [
+            "LlmConfig",
+            "LlmTestResult"
+          ]
+        }
+      ],
+      "exports": [
+        "LLM_REQUEST_TIMEOUT_MS",
+        "LLM_COMPLETE_TIMEOUT_MS",
+        "LLM_LONG_COMPLETE_TIMEOUT_MS",
+        "makeProvider",
+        "detailForStatus",
+        "notImplemented"
+      ],
+      "totalLines": 157,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/llm/redaction.ts": {
+      "filePath": "ui/src/main/llm/redaction.ts",
+      "contentHash": "c280ce9662ed37ea0b5acfd7ed555611e0ceda20ddc7fd907579915b6057caca",
+      "functions": [
+        {
+          "name": "escapeRegExp",
+          "params": [
+            "s"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "redact",
+          "params": [
+            "text",
+            "knownNames"
+          ],
+          "returnType": "{ text: string; counts: RedactionCounts }",
+          "exported": true,
+          "lineCount": 43
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./types",
+          "specifiers": [
+            "RedactionCounts"
+          ]
+        }
+      ],
+      "exports": [
+        "redact"
+      ],
+      "totalLines": 119,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/llm/types.ts": {
+      "filePath": "ui/src/main/llm/types.ts",
+      "contentHash": "1e70ff79b1a3609a4f055ad0b5cfc7da6efa0dd8e9a1e2ac8248063c7560fde7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "LLM_PROVIDER_IDS"
+      ],
+      "totalLines": 271,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/main.ts": {
+      "filePath": "ui/src/main/main.ts",
+      "contentHash": "c29e0f660577dec2914980216ca8219619b43d5b52236f312e368193f342a7cb",
+      "functions": [
+        {
+          "name": "ensureVaultDir",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "resolveInitialBounds",
+          "params": [],
+          "returnType": "{\n  width: number;\n  height: number;\n  x?: number;\n  y?: number;\n}",
+          "exported": false,
+          "lineCount": 29
+        },
+        {
+          "name": "isRectOnSomeDisplay",
+          "params": [
+            "rect"
+          ],
+          "returnType": "boolean",
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "persistWindowBounds",
+          "params": [
+            "win"
+          ],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "scheduleBoundsSave",
+          "params": [
+            "win"
+          ],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "flushBoundsSave",
+          "params": [
+            "win"
+          ],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "toggleWindow",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "showMainWindow",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "quitApp",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "createWindow",
+          "params": [],
+          "returnType": "Promise<void>",
+          "exported": false,
+          "lineCount": 96
+        },
+        {
+          "name": "createTray",
+          "params": [],
+          "returnType": "void",
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "bootstrap",
+          "params": [],
+          "returnType": "Promise<void>",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "isTrayState",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 9
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "app",
+            "BrowserWindow",
+            "ipcMain",
+            "shell",
+            "systemPreferences",
+            "screen",
+            "Rectangle"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "* as path"
+          ]
+        },
+        {
+          "source": "node:os",
+          "specifiers": [
+            "* as os"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "* as fs"
+          ]
+        },
+        {
+          "source": "./harkd-spawn",
+          "specifiers": [
+            "spawnHarkd",
+            "HarkdHandle"
+          ]
+        },
+        {
+          "source": "./tray",
+          "specifiers": [
+            "HarkTray",
+            "TrayState",
+            "TrayAction"
+          ]
+        },
+        {
+          "source": "./tray-popover",
+          "specifiers": [
+            "TrayPopover"
+          ]
+        },
+        {
+          "source": "./prefs",
+          "specifiers": [
+            "loadPrefs",
+            "savePrefs",
+            "getPrefsPath",
+            "Prefs"
+          ]
+        },
+        {
+          "source": "./llm",
+          "specifiers": [
+            "* as llm"
+          ]
+        },
+        {
+          "source": "./llm/types",
+          "specifiers": [
+            "LlmStatus",
+            "LlmTestResult",
+            "SummarizeResult",
+            "AskResult",
+            "TranslateResult",
+            "TranslateSegmentResult",
+            "CloudCallLogEntry"
+          ]
+        },
+        {
+          "source": "./rag",
+          "specifiers": [
+            "* as rag"
+          ]
+        },
+        {
+          "source": "./rag/types",
+          "specifiers": [
+            "RetrievedChunk",
+            "RagConnectionResult"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 771,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/port-file.ts": {
+      "filePath": "ui/src/main/port-file.ts",
+      "contentHash": "d66cddf7602e47b1e4861180e03cbedff773adad591d2101c26f7da0f26d8d05",
+      "functions": [
+        {
+          "name": "portFilePath",
+          "params": [],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "readPortFile",
+          "params": [],
+          "returnType": "Promise<PortFile>",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "waitForPortFile",
+          "params": [
+            "opts"
+          ],
+          "returnType": "Promise<PortFile>",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "sleep",
+          "params": [
+            "ms"
+          ],
+          "returnType": "Promise<void>",
+          "exported": false,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:os",
+          "specifiers": [
+            "* as os"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "* as path"
+          ]
+        }
+      ],
+      "exports": [
+        "portFilePath",
+        "readPortFile",
+        "waitForPortFile"
+      ],
+      "totalLines": 75,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/prefs.ts": {
+      "filePath": "ui/src/main/prefs.ts",
+      "contentHash": "c446a98a5d8ab41b6ef4fbd9d93ff833a248cf2aff46040d291219fe72bb6911",
+      "functions": [
+        {
+          "name": "prefsPath",
+          "params": [],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "loadPrefs",
+          "params": [],
+          "returnType": "Prefs",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "savePrefs",
+          "params": [
+            "input"
+          ],
+          "returnType": "void",
+          "exported": true,
+          "lineCount": 56
+        },
+        {
+          "name": "getPrefsPath",
+          "params": [],
+          "returnType": "string",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "sanitize",
+          "params": [
+            "input"
+          ],
+          "returnType": "Prefs",
+          "exported": false,
+          "lineCount": 67
+        },
+        {
+          "name": "sanitizeRag",
+          "params": [
+            "input"
+          ],
+          "returnType": "Prefs['rag'] | undefined",
+          "exported": false,
+          "lineCount": 20
+        },
+        {
+          "name": "sanitizeLlm",
+          "params": [
+            "input"
+          ],
+          "returnType": "Prefs['llm'] | undefined",
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "sanitizeTheme",
+          "params": [
+            "input"
+          ],
+          "returnType": "Prefs['theme']",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "sanitizePrivacy",
+          "params": [
+            "input"
+          ],
+          "returnType": "Prefs['privacy']",
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "sanitizeWindow",
+          "params": [
+            "input"
+          ],
+          "returnType": "Prefs['window'] | undefined",
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "isFinitePositive",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "isRecord",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "app"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "* as path"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "* as fs"
+          ]
+        },
+        {
+          "source": "./llm/types",
+          "specifiers": [
+            "LlmProviderId"
+          ]
+        },
+        {
+          "source": "./llm/types",
+          "specifiers": [
+            "LLM_PROVIDER_IDS"
+          ]
+        },
+        {
+          "source": "./rag/types",
+          "specifiers": [
+            "RagTransport"
+          ]
+        }
+      ],
+      "exports": [
+        "DEFAULT_PREFS",
+        "loadPrefs",
+        "savePrefs",
+        "getPrefsPath"
+      ],
+      "totalLines": 452,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/preload.ts": {
+      "filePath": "ui/src/main/preload.ts",
+      "contentHash": "38f264f333e58f45cde2398df5dc4f403553c1a99d2f247df14f68b4e0747ac7",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "contextBridge",
+            "ipcRenderer",
+            "IpcRendererEvent"
+          ]
+        },
+        {
+          "source": "./prefs",
+          "specifiers": [
+            "Prefs"
+          ]
+        },
+        {
+          "source": "./llm/types",
+          "specifiers": [
+            "LlmConfig",
+            "LlmStatus",
+            "LlmTestResult",
+            "SummarizeReq",
+            "SummarizeResult",
+            "AskReq",
+            "AskResult",
+            "TranslateReq",
+            "TranslateResult",
+            "TranslateSegmentReq",
+            "TranslateSegmentResult",
+            "CloudCallLogEntry"
+          ]
+        },
+        {
+          "source": "./rag/types",
+          "specifiers": [
+            "RetrievedChunk",
+            "RagConnectionResult"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 316,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/rag/http.ts": {
+      "filePath": "ui/src/main/rag/http.ts",
+      "contentHash": "658a490c4beb7c77c83553cabf51ca3ad331c43f4bb3920214c53f46c182dfca",
+      "functions": [
+        {
+          "name": "httpRetrieve",
+          "params": [
+            "url",
+            "query",
+            "k",
+            "scope"
+          ],
+          "returnType": "Promise<ExternalChunk[]>",
+          "exported": true,
+          "lineCount": 35
+        },
+        {
+          "name": "httpTestConnection",
+          "params": [
+            "url"
+          ],
+          "returnType": "Promise<RagConnectionResult>",
+          "exported": true,
+          "lineCount": 32
+        },
+        {
+          "name": "mapFetchError",
+          "params": [
+            "err",
+            "host",
+            "statusPrefix"
+          ],
+          "returnType": "Error",
+          "exported": true,
+          "lineCount": 12
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./types",
+          "specifiers": [
+            "ExternalChunk",
+            "RagConnectionResult"
+          ]
+        },
+        {
+          "source": "./parse",
+          "specifiers": [
+            "coerceExternalChunks"
+          ]
+        }
+      ],
+      "exports": [
+        "httpRetrieve",
+        "httpTestConnection",
+        "mapFetchError"
+      ],
+      "totalLines": 109,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/rag/index.ts": {
+      "filePath": "ui/src/main/rag/index.ts",
+      "contentHash": "b8fe1ff7ac669a5b8dd71a84d3c3d3997b0a08ec1475f20d4e5c1b24e41b1ff0",
+      "functions": [
+        {
+          "name": "readRagConfig",
+          "params": [],
+          "returnType": "RagBackendConfig",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "clampK",
+          "params": [
+            "k"
+          ],
+          "returnType": "number",
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "mapChunk",
+          "params": [
+            "c"
+          ],
+          "returnType": "RetrievedChunk",
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "retrieve",
+          "params": [
+            "query",
+            "opts"
+          ],
+          "returnType": "Promise<RetrievedChunk[]>",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "testConnection",
+          "params": [],
+          "returnType": "Promise<RagConnectionResult>",
+          "exported": true,
+          "lineCount": 16
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../prefs",
+          "specifiers": [
+            "loadPrefs"
+          ]
+        },
+        {
+          "source": "./types",
+          "specifiers": [
+            "RagBackendConfig",
+            "RetrievedChunk",
+            "ExternalChunk",
+            "RagConnectionResult",
+            "RagTransport"
+          ]
+        },
+        {
+          "source": "./loopback",
+          "specifiers": [
+            "assertLoopbackEndpoint"
+          ]
+        },
+        {
+          "source": "./http",
+          "specifiers": [
+            "httpRetrieve",
+            "httpTestConnection"
+          ]
+        },
+        {
+          "source": "./mcp",
+          "specifiers": [
+            "mcpRetrieve",
+            "mcpTestConnection"
+          ]
+        }
+      ],
+      "exports": [
+        "readRagConfig",
+        "retrieve",
+        "testConnection",
+        "RagTransport",
+        "RagBackendConfig",
+        "RetrievedChunk",
+        "RagConnectionResult"
+      ],
+      "totalLines": 124,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/rag/loopback.ts": {
+      "filePath": "ui/src/main/rag/loopback.ts",
+      "contentHash": "2a288fc2691f8299d15c9340e33d8c532f620680df0ed2183a8110a8dda168ca",
+      "functions": [
+        {
+          "name": "isLoopbackHost",
+          "params": [
+            "host"
+          ],
+          "returnType": "boolean",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "assertLoopbackEndpoint",
+          "params": [
+            "endpoint"
+          ],
+          "returnType": "URL",
+          "exported": true,
+          "lineCount": 21
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "isLoopbackHost",
+        "assertLoopbackEndpoint"
+      ],
+      "totalLines": 44,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/rag/mcp.ts": {
+      "filePath": "ui/src/main/rag/mcp.ts",
+      "contentHash": "c617180fdedb7595a4b7d73c1cfb2c4fc0a2299a8a31c7bfb210fdb6796b2521",
+      "functions": [
+        {
+          "name": "isRecord",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "rpc",
+          "params": [
+            "session",
+            "method",
+            "params",
+            "id",
+            "timeoutMs"
+          ],
+          "returnType": "Promise<unknown>",
+          "exported": false,
+          "lineCount": 70
+        },
+        {
+          "name": "extractRpcFromSse",
+          "params": [
+            "raw",
+            "id"
+          ],
+          "returnType": "unknown",
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "safeJsonParse",
+          "params": [
+            "s"
+          ],
+          "returnType": "unknown",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "handshake",
+          "params": [
+            "url",
+            "timeoutMs"
+          ],
+          "returnType": "Promise<McpSession>",
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "mcpRetrieve",
+          "params": [
+            "url",
+            "toolName",
+            "query",
+            "k"
+          ],
+          "returnType": "Promise<ExternalChunk[]>",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "mcpTestConnection",
+          "params": [
+            "url",
+            "toolName"
+          ],
+          "returnType": "Promise<RagConnectionResult>",
+          "exported": true,
+          "lineCount": 30
+        },
+        {
+          "name": "extractToolJson",
+          "params": [
+            "result"
+          ],
+          "returnType": "unknown",
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "mapMcpError",
+          "params": [
+            "err",
+            "host"
+          ],
+          "returnType": "Error",
+          "exported": false,
+          "lineCount": 6
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./types",
+          "specifiers": [
+            "ExternalChunk",
+            "RagConnectionResult"
+          ]
+        },
+        {
+          "source": "./parse",
+          "specifiers": [
+            "coerceExternalChunks"
+          ]
+        },
+        {
+          "source": "./http",
+          "specifiers": [
+            "mapFetchError"
+          ]
+        }
+      ],
+      "exports": [
+        "mcpRetrieve",
+        "mcpTestConnection"
+      ],
+      "totalLines": 235,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/rag/parse.ts": {
+      "filePath": "ui/src/main/rag/parse.ts",
+      "contentHash": "2c9b7339ddc35a47833238d5798e84d4cfdc96511e35b7316baef45997979d62",
+      "functions": [
+        {
+          "name": "isRecord",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "coerceExternalChunks",
+          "params": [
+            "value"
+          ],
+          "returnType": "ExternalChunk[]",
+          "exported": true,
+          "lineCount": 18
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./types",
+          "specifiers": [
+            "ExternalChunk"
+          ]
+        }
+      ],
+      "exports": [
+        "coerceExternalChunks"
+      ],
+      "totalLines": 36,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/rag/types.ts": {
+      "filePath": "ui/src/main/rag/types.ts",
+      "contentHash": "fce67b0a2e6f2101f501252f63e4a2afeaccef8b0683fa4882814e6b2dbb2f37",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 68,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/tray-popover.ts": {
+      "filePath": "ui/src/main/tray-popover.ts",
+      "contentHash": "ff705983b114ad697c7cdf324ec656f5da669df3ac358879215beaca4d52e90b",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TrayPopover",
+          "methods": [
+            "ensureWindow",
+            "toggle",
+            "show",
+            "hide",
+            "pushState",
+            "computePosition",
+            "destroy"
+          ],
+          "properties": [
+            "win",
+            "lastState"
+          ],
+          "exported": true,
+          "lineCount": 179
+        }
+      ],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "app",
+            "BrowserWindow",
+            "screen",
+            "nativeTheme",
+            "Rectangle"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "* as path"
+          ]
+        },
+        {
+          "source": "./tray",
+          "specifiers": [
+            "TrayState"
+          ]
+        }
+      ],
+      "exports": [
+        "TrayPopover"
+      ],
+      "totalLines": 230,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/tray-preload.ts": {
+      "filePath": "ui/src/main/tray-preload.ts",
+      "contentHash": "bf815ba1daaa5a8d4f393599d1c77e1ef5c6893d3ea5c846a51c7809b16ea336",
+      "functions": [
+        {
+          "name": "isTrayPopoverState",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 10
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "contextBridge",
+            "ipcRenderer",
+            "IpcRendererEvent"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 73,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/main/tray.ts": {
+      "filePath": "ui/src/main/tray.ts",
+      "contentHash": "856a391f62846c92186a8cee3e821ce07a3f6879d06bf87076c1dc63058cc4df",
+      "functions": [
+        {
+          "name": "decode",
+          "params": [
+            "b64"
+          ],
+          "returnType": "Buffer",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "makeTemplateImage",
+          "params": [
+            "b1x",
+            "b2x"
+          ],
+          "returnType": "NativeImage",
+          "exported": false,
+          "lineCount": 9
+        }
+      ],
+      "classes": [
+        {
+          "name": "HarkTray",
+          "methods": [
+            "constructor",
+            "setState",
+            "getBounds",
+            "rebuildMenu",
+            "buildMenu",
+            "destroy"
+          ],
+          "properties": [
+            "tray",
+            "idleIcon",
+            "recIcon",
+            "state",
+            "onAction",
+            "onToggleWindow",
+            "onQuit",
+            "getWindow",
+            "onLeftClick",
+            "menu"
+          ],
+          "exported": true,
+          "lineCount": 114
+        }
+      ],
+      "imports": [
+        {
+          "source": "electron",
+          "specifiers": [
+            "Tray",
+            "Menu",
+            "nativeImage",
+            "NativeImage",
+            "BrowserWindow",
+            "Rectangle",
+            "MenuItemConstructorOptions"
+          ]
+        }
+      ],
+      "exports": [
+        "HarkTray"
+      ],
+      "totalLines": 200,
+      "hasStructuralAnalysis": true
+    },
+    "ui/src/styles.css": {
+      "filePath": "ui/src/styles.css",
+      "contentHash": "e1623f31044b16ee4bd658d20ff54a87e7c9d3412674a45387e3fd6a3a76ef2f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 41,
+      "hasStructuralAnalysis": false
+    },
+    "ui/src/styles/tokens.css": {
+      "filePath": "ui/src/styles/tokens.css",
+      "contentHash": "cc4c14e77dfa1ca448c4b8aa626e2cc815e92cd0869208d8e4627e42de3a9bbd",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 356,
+      "hasStructuralAnalysis": false
+    },
+    "ui/tailwind.config.js": {
+      "filePath": "ui/tailwind.config.js",
+      "contentHash": "e4afd04d7d64c760e80d4971bc3b7f17db880daa639777b9ded9a3f37f29df5b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 63,
+      "hasStructuralAnalysis": true
+    },
+    "ui/tsconfig.app.json": {
+      "filePath": "ui/tsconfig.app.json",
+      "contentHash": "991497dd6be4daef3570df221b6861bd472ae79e14225125cdc501866d445948",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 18,
+      "hasStructuralAnalysis": true
+    },
+    "ui/tsconfig.json": {
+      "filePath": "ui/tsconfig.json",
+      "contentHash": "ed97880a71d53722e8da0cca1b7bd76dd9c6d1a75b0654b7c991940682b8643a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 28,
+      "hasStructuralAnalysis": true
+    },
+    "ui/tsconfig.main.json": {
+      "filePath": "ui/tsconfig.main.json",
+      "contentHash": "e282fdb7c542760364c47dcad23cb584945402aeda115c853d2cc9b80531569a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 20,
+      "hasStructuralAnalysis": true
+    }
+  }
+}
