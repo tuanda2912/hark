@@ -84,14 +84,40 @@ hark/
 
 ## Build / run commands
 
-Empty until Phase 0 lands. Fill in as commands stabilize.
+Full runbook (local dev, packaging, code signing, notarization, troubleshooting):
+**[docs/BUILDING.md](docs/BUILDING.md)**. The essentials:
 
+```bash
+# Engine — run FIRST; the UI spawns the built harkd (no separate engine process)
+cd engine && swift build -c release        # build harkd + the hark-* CLIs
+cd engine && swift test                    # engine test suite
+
+# Front-end (Electron + Angular)
+cd ui && npm install                       # one-time
+cd ui && npm run dev                       # Angular dev server + Electron + harkd
+cd ui && npm run build                     # renderer + main → dist/
+cd ui && npm run pack                      # unpacked .app    (electron-builder --dir)
+cd ui && npm run dist                      # signed .dmg+.zip (electron-builder --mac)
 ```
-# (todo) bench:       run Phase 0 RTF harness
-# (todo) engine:dev:  launch Swift engine in debug mode
-# (todo) ui:dev:      launch Electron+Angular against a running engine
-# (todo) package:     build, sign, notarize the full app
+
+Engine-only capture tests use the `/test-tap` and `/smoke-harkd` skills (they
+wrap the binary in a signed bundle so Process Taps acquire the TCC grant — ADR-0011).
+Signing/notarization mechanics: ADR-0021 + ADR-0038, detailed in docs/BUILDING.md §6.
+
+## Design skills (Claude Code tooling)
+
+UI design work uses third-party **taste-skill** skills (the Vercel `skills` CLI).
+The `SKILL.md` folders under `.claude/skills/` are **gitignored**; the manifest
+`skills-lock.json` IS committed. Restore on a fresh checkout:
+
+```bash
+npx skills experimental_install     # re-fetch all skills from skills-lock.json
 ```
+
+Fallback if that verb changed (young CLI): re-add explicitly with
+`npx -y skills add leonxlnx/taste-skill --skill <name> --agent claude-code` for
+`design-taste-frontend`, `redesign-existing-projects`, `high-end-visual-design`.
+These steer UI work — dev tooling, not product code. See docs/BUILDING.md §8.
 
 ## Where things live
 

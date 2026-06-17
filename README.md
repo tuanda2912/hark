@@ -143,32 +143,32 @@ socket.** Full design rationale: [meetingmind-handoff.md](meetingmind-handoff.md
 
 ---
 
-## 🛠️ Building from source
+## 🛠️ Run it from source
 
-> Pre-v1: there's no released binary yet. These are the development build steps. Apple Silicon
-> + macOS 14.4+ required.
-
-**Engine** (`harkd` Swift daemon):
+> Pre-v1 — there's no released binary yet. **Apple Silicon + macOS 14.4+** required.
+> Prerequisites: Xcode + the Swift toolchain (engine), Node 20+ (front-end).
 
 ```bash
-cd engine
-swift build -c release            # builds harkd + the hark-* CLIs
-swift test                        # run the engine test suite
+git clone git@github.com:tuanda2912/hark.git
+cd hark
+
+# 1. Build the engine the UI spawns  (do this first)
+cd engine && swift build -c release && cd ..
+
+# 2. Run the full dev stack — Angular + Electron; Electron spawns harkd itself
+cd ui && npm install && npm run dev
 ```
 
-System-audio capture needs a signed bundle for TCC permission attribution — see
-[`engine/scripts/sign-dev-bundle.sh`](engine/scripts/sign-dev-bundle.sh) and the dev loop in
-[STATUS.md](STATUS.md).
+First launch downloads + ANE-compiles the model (**~90 s, ~626 MB**), and macOS
+prompts for **Microphone** + **System Audio Recording** — grant them to Electron,
+then relaunch. Subsequent launches are seconds.
 
-**Front-end** (Electron + Angular):
+**Packaging** (arm64-only): `npm run pack` builds an unpacked `.app`; `npm run
+dist` builds a signed `.dmg` + `.zip`. A free *Apple Development* cert runs
+locally; a paid *Developer ID* cert is needed to notarize for other Macs.
 
-```bash
-cd ui
-npm install
-npm run dev        # Angular dev server + Electron, against a running harkd
-npm run pack       # unpacked app bundle (electron-builder --dir)
-npm run dist       # signed/packaged .app (electron-builder --mac)
-```
+📖 **Full runbook — local dev, packaging, code signing, notarization & stapling,
+and troubleshooting: [docs/BUILDING.md](docs/BUILDING.md).**
 
 ---
 
@@ -191,6 +191,7 @@ hark/
 
 ## 📚 Documentation
 
+- **[docs/BUILDING.md](docs/BUILDING.md)** — run from source, package, sign & notarize.
 - **[STATUS.md](STATUS.md)** — what's done, what's next, the dev loop. Start here.
 - **[docs/decisions/](docs/decisions/)** — every non-trivial decision, with reasoning.
 - **[meetingmind-handoff.md](meetingmind-handoff.md)** — the original design rationale.
