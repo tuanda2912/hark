@@ -11,6 +11,15 @@
 # Claude Code — per-machine settings (allowlists etc.)
 .claude/settings.local.json
 
+# Third-party "taste-skill" design skills, installed locally via
+# `npx skills add leonxlnx/taste-skill ...` (see skills-lock.json). Vendored
+# dev tooling, not product code — re-installable, kept out of the repo.
+# (The project's OWN skills under .claude/skills/ stay tracked.)
+.claude/skills/design-taste-frontend/
+.claude/skills/redesign-existing-projects/
+.claude/skills/high-end-visual-design/
+skills-lock.json
+
 # Swift build outputs (engine/.gitignore covers nested)
 .build/
 

@@ -48,7 +48,7 @@ import {
   AnswerSource,
   AskScope,
 } from './components/ask-panel.component';
-import { EyebrowComponent } from './components/eyebrow.component';
+import { RipplesComponent } from './components/ripples.component';
 import { SpeakerTaggingComponent } from './components/speaker-tagging.component';
 import { PostMeetingReviewComponent } from './components/post-meeting-review.component';
 import { SummaryPanelComponent } from './components/summary-panel.component';
@@ -66,7 +66,7 @@ import { TranslatePanelComponent } from './components/translate-panel.component'
     OnboardingComponent,
     AttendeesPanelComponent,
     AskPanelComponent,
-    EyebrowComponent,
+    RipplesComponent,
     SpeakerTaggingComponent,
     PostMeetingReviewComponent,
     SummaryPanelComponent,

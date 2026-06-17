@@ -319,11 +319,22 @@
            and the existing <main> stack vertically. -->
       <div class="hark-col-center flex flex-col min-h-0 bg-bg">
         <div
-          class="flex items-center gap-3 px-6 py-2.5 border-b border-border"
+          class="flex items-center gap-2.5 px-6 py-2.5 border-b border-border"
         >
-          <hark-eyebrow>Live transcript</hark-eyebrow>
+          <span class="col-title">Live transcript</span>
           @if (isCapturing()) {
-            <span class="text-[11px] text-text-3">· auto-scroll</span>
+            <span class="status-pill is-live">
+              <span class="pill-dot" aria-hidden="true"></span>Listening
+            </span>
+            <span class="text-[11px] text-text-3">auto-scroll</span>
+          } @else if (isConnected()) {
+            <span class="status-pill is-accent">
+              <span class="pill-dot" aria-hidden="true"></span>Ready
+            </span>
+          } @else {
+            <span class="status-pill">
+              <span class="pill-dot" aria-hidden="true"></span>Connecting…
+            </span>
           }
         </div>
 
@@ -338,13 +349,26 @@
           class="flex-1 overflow-y-auto px-6 py-4 min-h-0"
         >
           @if (segments().length === 0) {
-            <div class="text-text-3 text-sm py-12 text-center">
+            <div class="tx-empty hark-fade-in">
               @if (!isConnected()) {
-                Waiting for engine…
+                <hark-ripples [size]="76" />
+                <div class="tx-empty-title">Waiting for the engine</div>
+                <div class="tx-empty-sub">
+                  Connecting to the on-device transcription engine…
+                </div>
               } @else if (!isCapturing()) {
-                Press Start to begin capture.
+                <hark-ripples [size]="76" />
+                <div class="tx-empty-title">Ready when you are</div>
+                <div class="tx-empty-sub">
+                  Press Start — every word is transcribed on this Mac and never
+                  leaves it.
+                </div>
               } @else {
-                Listening…
+                <hark-ripples [size]="76" [active]="true" />
+                <div class="tx-empty-title">Listening…</div>
+                <div class="tx-empty-sub">
+                  Your words appear here as they're heard.
+                </div>
               }
             </div>
           } @else {
@@ -413,7 +437,7 @@
   <!-- Transient bookmark confirmation. Auto-dismisses after 2.5s. -->
   @if (bookmarkToast(); as toast) {
     <div
-      class="fixed bottom-6 left-1/2 -translate-x-1/2 inline-flex items-center gap-2 px-4 py-2 rounded-card bg-surface-2 border border-border-2 text-text text-sm shadow-lg"
+      class="hark-fade-in fixed bottom-6 left-1/2 -translate-x-1/2 inline-flex items-center gap-2 px-4 py-2 rounded-card bg-surface-2 border border-border-2 text-text text-sm shadow-lg"
     >
       <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"
         class="text-accent" aria-hidden="true">
@@ -430,7 +454,7 @@
        finished/errored banner with × . -->
   @if (translationJobState(); as tj) {
     <div
-      class="fixed bottom-6 left-1/2 -translate-x-1/2 inline-flex items-center gap-3 px-4 py-2 rounded-card bg-surface-2 border border-border-2 text-text text-sm shadow-lg"
+      class="hark-fade-in fixed bottom-6 left-1/2 -translate-x-1/2 inline-flex items-center gap-3 px-4 py-2 rounded-card bg-surface-2 border border-border-2 text-text text-sm shadow-lg"
     >
       @if (tj.phase === 'running') {
         <span class="inline-flex items-center gap-2">
@@ -487,7 +511,7 @@
        the user may act on) until dismissed or the next capture start.
        Sits above the bookmark toast so the two never overlap. -->
   @if (meetingSaved(); as saved) {
-    <div class="fixed bottom-20 right-6">
+    <div class="hark-rise fixed bottom-20 right-6">
       <hark-meeting-saved-toast
         [saved]="saved"
         (dismiss)="dismissMeetingSaved()"

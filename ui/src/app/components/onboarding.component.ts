@@ -37,6 +37,7 @@ import {
   signal,
 } from '@angular/core';
 import { PreferencesService } from '../services/preferences.service';
+import { RipplesComponent } from './ripples.component';
 
 /** macOS Microphone TCC status, narrowed for the badge. Anything we don't
  *  recognise (or running outside Electron) collapses to 'unknown'. */
@@ -51,6 +52,7 @@ type MicStatus =
   selector: 'hark-onboarding',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [RipplesComponent],
   templateUrl: './onboarding.component.html',
   styleUrl: './onboarding.component.css',
 })

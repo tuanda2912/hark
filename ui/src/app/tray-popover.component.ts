@@ -26,6 +26,7 @@ import {
   computed,
   signal,
 } from '@angular/core';
+import { RipplesComponent } from './components/ripples.component';
 
 /** State snapshot pushed from main over the `harkTray` bridge. Mirrors
  *  TrayPopoverState in main/tray-preload.ts. */
@@ -55,6 +56,7 @@ declare global {
   selector: 'hark-tray-popover',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [RipplesComponent],
   styles: [
     `
       /* The transparent BrowserWindow shows whatever this paints. The host is
@@ -102,16 +104,6 @@ declare global {
         align-items: center;
         gap: 8px;
       }
-      .dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        flex-shrink: 0;
-      }
-      .dot.idle {
-        background: var(--text-3);
-      }
-      /* .rec-dot (pulsing red) is defined globally in tokens.css. */
       .status-label {
         font-family: var(--font-mono);
         font-size: 11px;
@@ -146,7 +138,15 @@ declare global {
         gap: 8px;
         justify-content: center;
         font-family: var(--font-ui);
-        transition: filter 120ms ease, background 120ms ease;
+        transition: filter 120ms ease, background 120ms ease,
+          transform var(--dur-press) var(--ease-spring);
+      }
+      .action:not(:disabled):active {
+        transform: translateY(0.5px) scale(0.99);
+      }
+      .action:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px var(--accent-soft);
       }
       .action-start {
         border: 1px solid var(--accent);
@@ -195,10 +195,18 @@ declare global {
         font-size: 12.5px;
         font-family: var(--font-ui);
         color: var(--text);
-        transition: background 120ms ease;
+        transition: background 120ms ease,
+          transform var(--dur-press) var(--ease-spring);
       }
       .row:hover {
         background: var(--highlight);
+      }
+      .row:active {
+        transform: scale(0.99);
+      }
+      .row:focus-visible {
+        outline: none;
+        box-shadow: inset 0 0 0 2px var(--accent-soft);
       }
       .row-icon {
         width: 14px;
@@ -233,6 +241,13 @@ declare global {
         display: inline-block;
         vertical-align: -0.15em;
       }
+
+      @media (prefers-reduced-motion: reduce) {
+        .action:not(:disabled):active,
+        .row:active {
+          transform: none;
+        }
+      }
     `,
   ],
   template: `
@@ -242,10 +257,10 @@ declare global {
         <div class="header-row">
           <div class="status">
             @if (recording()) {
-              <span class="rec-dot"></span>
+              <hark-ripples [size]="18" [active]="true" [color]="'var(--status-recording)'" />
               <span class="status-label recording">RECORDING</span>
             } @else {
-              <span class="dot idle"></span>
+              <hark-ripples [size]="18" />
               <span class="status-label idle">IDLE</span>
             }
           </div>

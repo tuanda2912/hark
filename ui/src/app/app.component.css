@@ -97,6 +97,34 @@
   }
 }
 
+/* ─── Transcript empty / resting state ───────────────────────────────
+ * Fills the transcript scroll area and centers the "Heard ripples" identity
+ * mark + a confident headline. Replaces the old single line of gray text —
+ * this is the surface the user stares at most before a meeting starts, so it
+ * carries the brand and the local-only promise. */
+.tx-empty {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
+  padding: 24px;
+}
+.tx-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.tx-empty-sub {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  max-width: 340px;
+}
+
 /* ─── Transcript measure ─────────────────────────────────────────────
  * A comfortable reading line length, centered in the transcript column so
  * very wide windows don't leave the text hugging the left with a large
@@ -175,4 +203,59 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/* ─── Tactile polish: controls bar + title-strip controls ─────────────
+ *
+ * The transport/config controls and the panel toggles use raw Tailwind
+ * utility classes (not the global `.btn` primitive), so the press + focus
+ * polish from tokens.css doesn't reach them. Re-apply it here, scoped to
+ * this component, so every interactive control in the shell shares ONE
+ * physical feel: a small press "give", a keyboard focus ring, and tabular
+ * figures for the live numeric readouts. Hover/active background + border
+ * stay where they already live (per-button in the template). */
+.controls-bar button,
+.controls-bar select,
+.titlebar-strip button {
+  transition: background-color 120ms ease, border-color 120ms ease,
+              color 120ms ease, transform var(--dur-press) var(--ease-spring);
+}
+.controls-bar button:not(:disabled):active,
+.titlebar-strip button:active {
+  transform: translateY(0.5px) scale(0.98);
+}
+.controls-bar button:focus-visible,
+.controls-bar select:focus-visible,
+.titlebar-strip button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Live numeric readouts (REC timer, RTF, bookmark count, idle) use tabular
+ * figures so digits hold their column as values tick — no horizontal jitter. */
+.controls-bar .font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Trust lozenge — a whisper of materiality: a 1px inner top highlight so the
+ * chip reads as physically seated in the bar (echoing the native traffic
+ * lights). Token-driven and deliberately barely-there, not a glow. */
+.ctl-lozenge {
+  box-shadow: inset 0 1px 0 var(--highlight);
+}
+
+/* Respect the system reduced-motion setting: keep color/background feedback,
+ * drop the transform motion. Matches the discipline already used in the
+ * onboarding + model-loading components. */
+@media (prefers-reduced-motion: reduce) {
+  .controls-bar button,
+  .controls-bar select,
+  .titlebar-strip button {
+    transition: background-color 120ms ease, border-color 120ms ease,
+                color 120ms ease;
+  }
+  .controls-bar button:not(:disabled):active,
+  .titlebar-strip button:active {
+    transform: none;
+  }
 }

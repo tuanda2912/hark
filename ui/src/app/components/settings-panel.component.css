@@ -124,6 +124,36 @@
   background: var(--accent-soft);
 }
 
+/* ─── Tactile polish: modal action buttons + form controls ───────────
+ * These use raw Tailwind utilities, so the shell's press + focus language
+ * (tokens.css) doesn't reach them. Apply it here, scoped to the card, but skip
+ * the controls that own their own press/focus treatment (the toggle switch and
+ * the segmented control). */
+.settings-card button:not(.setting-toggle):not(.rag-seg-btn) {
+  transition: background-color 120ms ease, border-color 120ms ease,
+    color 120ms ease, transform var(--dur-press) var(--ease-spring);
+}
+.settings-card button:not(.setting-toggle):not(.rag-seg-btn):not(:disabled):active {
+  transform: translateY(0.5px) scale(0.98);
+}
+.settings-card button:not(.setting-toggle):not(.rag-seg-btn):focus-visible,
+.settings-card select:focus-visible,
+.settings-card input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-card button:not(.setting-toggle):not(.rag-seg-btn) {
+    transition: background-color 120ms ease, border-color 120ms ease,
+      color 120ms ease;
+  }
+  .settings-card
+    button:not(.setting-toggle):not(.rag-seg-btn):not(:disabled):active {
+    transform: none;
+  }
+}
+
 /* ─── Test-connection spinner ─── */
 .rag-spinner {
   border: 2px solid var(--border-2);

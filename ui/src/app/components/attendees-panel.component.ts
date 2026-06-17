@@ -40,7 +40,7 @@ import {
 } from '@angular/core';
 import { EngineService } from '../services/engine.service';
 import { MeetingSpeaker } from '../services/engine.types';
-import { EyebrowComponent } from './eyebrow.component';
+import { RipplesComponent } from './ripples.component';
 
 /** A roster row enriched with its display name, palette index, and whether
  *  the engine matched it to a known person (Phase 5.1; null today). */
@@ -66,7 +66,7 @@ export interface TagSpeakerRequest {
   selector: 'hark-attendees-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [EyebrowComponent],
+  imports: [RipplesComponent],
   styles: [
     `
       :host {
@@ -176,36 +176,26 @@ export interface TagSpeakerRequest {
         background: var(--highlight);
       }
 
-      /* Honest empty / info state (no roster yet). */
+      /* Honest empty / info state (no roster yet) — centered, carrying the
+       * ripple identity so an empty column still feels designed, not blank. */
       .empty {
-        padding: 16px;
-        margin: 4px 8px;
-        border-radius: var(--r-panel);
-        border: 1px dashed var(--border-2);
-        background: var(--surface);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 10px;
+        padding: 28px 18px;
+        margin: 8px;
         color: var(--text-2);
-        font-size: 12px;
-        line-height: 1.5;
       }
       .empty .empty-title {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin-bottom: 6px;
         color: var(--text);
-        font-weight: 500;
+        font-weight: 600;
+        font-size: 13px;
       }
-      .empty .dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        flex-shrink: 0;
-      }
-      .empty .dot.live {
-        background: var(--status-recording);
-      }
-      .empty .dot.idle {
-        background: var(--text-3);
+      .empty .empty-text {
+        font-size: 12px;
+        line-height: 1.5;
       }
 
       .spacer {
@@ -226,7 +216,16 @@ export interface TagSpeakerRequest {
   ],
   template: `
     <div class="head">
-      <hark-eyebrow>{{ headerLabel() }}</hark-eyebrow>
+      <span class="col-title">Attendees</span>
+      @if (rows().length > 0) {
+        <span class="status-pill">
+          <span class="pill-dot" aria-hidden="true"></span>{{ rows().length }}
+        </span>
+      } @else if (capturing()) {
+        <span class="status-pill is-live">
+          <span class="pill-dot" aria-hidden="true"></span>Live
+        </span>
+      }
     </div>
 
     @if (rows().length > 0) {
@@ -279,19 +278,18 @@ export interface TagSpeakerRequest {
     } @else {
       <!-- No roster: distinguish live capture (diarization pending) from idle. -->
       <div class="empty">
+        <hark-ripples [size]="44" [active]="capturing()" />
         @if (capturing()) {
-          <div class="empty-title">
-            <span class="dot live" aria-hidden="true"></span>
-            Listening…
+          <div class="empty-title">Listening…</div>
+          <div class="empty-text">
+            Speakers are identified when the meeting is saved — diarization runs
+            offline after you press Stop.
           </div>
-          Speakers are identified when the meeting is saved — diarization runs
-          offline after you press Stop.
         } @else {
-          <div class="empty-title">
-            <span class="dot idle" aria-hidden="true"></span>
-            No attendees yet
+          <div class="empty-title">No attendees yet</div>
+          <div class="empty-text">
+            Speakers appear here once a meeting is recorded and saved.
           </div>
-          Speakers appear here once a meeting is recorded and saved.
         }
       </div>
     }
@@ -325,11 +323,6 @@ export class AttendeesPanelComponent {
     const saved = this.lastMeeting();
     if (!saved) return [];
     return saved.speakers.map((sp, i) => this.toRow(sp, i));
-  });
-
-  protected readonly headerLabel = computed(() => {
-    const n = this.rows().length;
-    return n > 0 ? `Attendees · ${n}` : 'Attendees';
   });
 
   /** Build the tag request from a row and emit it. The host opens the modal;

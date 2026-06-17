@@ -1,7 +1,11 @@
 /* Hark — design tokens. Spec lifted from 11-ui-visual-brief.md */
 
 :root {
-  /* Fonts — SF stack first, Inter / JetBrains as fallbacks loaded from Google Fonts */
+  /* Fonts — the native macOS system stack (SF Pro / SF Mono via -apple-system).
+     The named "Inter" / "JetBrains Mono" / "Berkeley Mono" entries are LOCAL
+     fallbacks only: they resolve solely if the user already has them installed.
+     Nothing is fetched — the CSP (`font-src 'self' data:`) blocks remote fonts,
+     and SF is the correct, premium choice for a native Mac app anyway. */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Berkeley Mono", Menlo, monospace;
@@ -25,6 +29,17 @@
   --r-panel: 6px;
   --r-card: 10px;
   --r-window: 12px;
+
+  /* Motion — one shared vocabulary so micro-interactions feel coherent.
+     `--ease-spring` is the weighted, slightly-overshooting curve used for
+     tactile press + element settle; `--ease-out` is a gentle decelerate for
+     entrances. Durations stay short — this is a calm native tool, not a
+     landing page. All motion that uses these is gated by
+     prefers-reduced-motion at the call site. */
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-press: 130ms;
+  --dur-enter: 260ms;
 
   /* Speaker palette — muted (shared across modes) */
   --sp-1: #d8a3ad;  /* warm pink */
@@ -152,9 +167,16 @@
   border: none;
   cursor: pointer;
   font-size: 14px;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background 120ms ease, color 120ms ease,
+              transform var(--dur-press) var(--ease-spring);
 }
 .icon-btn:hover { background: var(--highlight); color: var(--text); }
+.icon-btn:active { transform: scale(0.92); }
+.icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  color: var(--text);
+}
 
 /* Buttons */
 .btn {
@@ -169,8 +191,16 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease,
+              transform var(--dur-press) var(--ease-spring);
   white-space: nowrap;
+}
+/* Tactile press — a small, physical "give" on click. Excluded while
+   disabled so dead controls don't pretend to respond. */
+.btn:not(:disabled):active { transform: translateY(0.5px) scale(0.98); }
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .btn-primary {
   background: var(--accent);
@@ -207,8 +237,64 @@
   border-radius: var(--r-input);
   padding: 6px 10px;
   outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ─── Section header: column title + status pill ───
+   Used at the top of each MainWindow column (transcript / attendees / ask) to
+   replace the flat mono eyebrow with a present, sentence-case TITLE and an
+   optional STATUS PILL. Eyebrows stay for in-panel SUB-labels (Answer, Sources)
+   so the hierarchy reads: column title > eyebrow sub-label. */
+.col-title {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  box-shadow: inset 0 1px 0 var(--highlight);
+}
+.status-pill .pill-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.status-pill.is-accent {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in oklab, var(--accent) 30%, transparent);
+}
+.status-pill.is-live {
+  color: var(--status-recording);
+  background: color-mix(in oklab, var(--status-recording) 10%, transparent);
+  border-color: color-mix(in oklab, var(--status-recording) 35%, transparent);
+}
+.status-pill.is-live .pill-dot {
+  animation: hark-pulse-dot 1.6s ease-in-out infinite;
+}
+@keyframes hark-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-pill.is-live .pill-dot { animation: none; }
+}
 
 /* Speaker chip */
 .sp-chip {
@@ -327,22 +413,28 @@
 .scroll-y::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
 .scroll-y::-webkit-scrollbar-track { background: transparent; }
 
-/* Striped placeholder block for "drop product shot" zones */
-.placeholder-block {
-  background:
-    repeating-linear-gradient(
-      135deg,
-      var(--surface-2) 0 10px,
-      var(--bg-2) 10px 20px
-    );
-  border: 1px dashed var(--border-2);
-  border-radius: var(--r-panel);
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* Transient-surface entrance — toasts, the saved-meeting card, status
+   banners. A gentle rise + fade so things arrive softly instead of
+   snapping in. Opacity-only variant (.hark-fade-in) is for elements that
+   already carry a centering transform (e.g. -translate-x-1/2), where
+   animating translate would fight the centering. Both honor reduced motion. */
+@keyframes hark-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes hark-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.hark-rise    { animation: hark-rise var(--dur-enter) var(--ease-out) both; }
+.hark-fade-in { animation: hark-fade var(--dur-enter) var(--ease-out) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hark-rise,
+  .hark-fade-in { animation: none; }
+  /* Drop the tactile press transform too — keep color/background feedback. */
+  .btn:not(:disabled):active,
+  .icon-btn:active { transform: none; }
 }
 
 /* SF Symbol-like glyph helpers using unicode/CSS — we draw the simplest icons inline as SVG */

@@ -11,6 +11,21 @@
 .tx-line {
   padding: 10px 0;
   border-bottom: 1px solid var(--highlight);
+  /* Entrance — each newly-mounted line settles in with a gentle rise.
+   * Because the feed tracks by utteranceId, only NEW utterances animate;
+   * a partial updating its text in place never re-triggers. The rise is a
+   * transform (not layout), so it can't perturb the transcript's autoscroll
+   * measurement. Honors reduced motion below. */
+  animation: tx-line-in var(--dur-enter) var(--ease-out) both;
+}
+
+@keyframes tx-line-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tx-line { animation: none; }
 }
 
 .tx-line-meta {
@@ -24,6 +39,7 @@
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .tx-line-body {
@@ -42,11 +58,32 @@
   line-height: 1.5;
 }
 
+/* Live partial tail — an accent rail + faint wash marks the not-yet-final line
+ * the engine is still hearing. Negative margin = horizontal padding keeps the
+ * body text aligned with finalized history while the rail/wash bleed into the
+ * gutter; the history divider is suppressed so the live line reads as one piece. */
+.tx-partial {
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--accent) 55%, transparent);
+  border-bottom-color: transparent;
+  border-radius: var(--r-input);
+  margin: 0 -10px;
+  padding: 10px;
+}
+
 /* Live partial: italic, dimmed, with the blinking caret appended. The
  * caret element (.live-caret) gets its blink keyframe from tokens.css. */
 .tx-partial .tx-line-body {
   font-style: italic;
   color: var(--text-2);
+}
+
+/* Speaker chip — a hair larger than the shared 8px dot, with a faint inner
+ * ring so it reads as a seated marker against the line, not a flat blob. */
+.tx-speaker-chip {
+  width: 9px;
+  height: 9px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 
 .tx-partial-tag {

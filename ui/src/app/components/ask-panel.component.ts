@@ -43,6 +43,7 @@ import {
 } from '@angular/core';
 import { EyebrowComponent } from './eyebrow.component';
 import { CitationChipComponent } from './citation-chip.component';
+import { RipplesComponent } from './ripples.component';
 import type { RagIndexStatusPayload } from '../services/engine.types';
 
 /** What an Ask question is answered from (Phase 6 slice 4c, ADR-0032):
@@ -71,7 +72,7 @@ export interface AnswerSource {
   selector: 'hark-ask-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [EyebrowComponent, CitationChipComponent],
+  imports: [EyebrowComponent, CitationChipComponent, RipplesComponent],
   styles: [
     `
       :host {
@@ -361,17 +362,6 @@ export interface AnswerSource {
         font-weight: 500;
         font-size: 13px;
       }
-      .empty .glyph {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 24px;
-        height: 24px;
-        border-radius: var(--r-panel);
-        background: var(--accent-soft);
-        color: var(--accent);
-        flex-shrink: 0;
-      }
       .empty .hint {
         margin-top: 10px;
         font-size: 11.5px;
@@ -507,7 +497,7 @@ export interface AnswerSource {
   template: `
     <!-- ─── Header: ASK eyebrow · ⌘? hint · hide ─────────────────────── -->
     <div class="head">
-      <hark-eyebrow>Ask</hark-eyebrow>
+      <span class="col-title">Ask</span>
       <div class="spacer"></div>
       <span class="kbd" aria-hidden="true">⌘?</span>
       <button
@@ -667,21 +657,7 @@ export interface AnswerSource {
              configured we lead with "Connect a model first." -->
         <div class="empty">
           <div class="empty-title">
-            <span class="glyph" aria-hidden="true">
-              <svg
-                viewBox="0 0 24 24"
-                width="13"
-                height="13"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M7.5 8.5h9M7.5 12h6" />
-                <path d="M4 5h16v11H8l-4 3z" />
-              </svg>
-            </span>
+            <hark-ripples [size]="26" />
             @if (modelConfigured()) {
               @if (scope() === 'vault') {
                 Ask across your vault
