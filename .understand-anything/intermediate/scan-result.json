@@ -1,15 +1,18 @@
 {
   "name": "Hark",
-  "description": "Hark is a local-first, macOS-only meeting transcription app that delivers live captions, translation, and offline speaker diarization with WhisperKit on-device ASR, writing markdown notes to a user-owned vault — no cloud speech-to-text, no account, and no telemetry. It pairs a Swift sidecar daemon (harkd) for audio capture, transcription, and diarization with an Electron + Angular 21 desktop UI. Note: this project has over 100 source files; consider scoping analysis to a subdirectory for faster results.",
+  "description": "Hark — a local-first, macOS-only meeting transcription tool. A Swift sidecar daemon (harkd) handles on-device audio capture, WhisperKit ASR, and FluidAudio speaker diarization over a loopback WebSocket, while an Electron + Angular 21 front-end renders live captions, translation, and a markdown second-brain — all running entirely on the user's Mac with no cloud ASR. Note: this project has over 100 source files; consider scoping analysis to a subdirectory for faster results.",
   "languages": [
     "css",
+    "entitlements",
     "html",
     "javascript",
     "json",
     "python",
     "shell",
     "swift",
+    "txt",
     "typescript",
+    "unknown",
     "yaml"
   ],
   "frameworks": [
@@ -17,7 +20,6 @@
     "Electron",
     "Tailwind CSS",
     "RxJS",
-    "Swift Package Manager",
     "WhisperKit",
     "Swift NIO",
     "FluidAudio"
@@ -34,6 +36,36 @@
       "language": "json",
       "sizeLines": 1,
       "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/fingerprints.json",
+      "language": "json",
+      "sizeLines": 4472,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/intermediate/scan-result.json",
+      "language": "json",
+      "sizeLines": 1053,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/knowledge-graph.json",
+      "language": "json",
+      "sizeLines": 7991,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/meta.json",
+      "language": "json",
+      "sizeLines": 5,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/tmp/changed-files.txt",
+      "language": "txt",
+      "sizeLines": 18,
+      "fileCategory": "docs"
     },
     {
       "path": "engine/Package.swift",
@@ -378,6 +410,12 @@
       "fileCategory": "code"
     },
     {
+      "path": "skills-lock.json",
+      "language": "json",
+      "sizeLines": 23,
+      "fileCategory": "config"
+    },
+    {
       "path": "ui/.nvmrc",
       "language": "unknown",
       "sizeLines": 1,
@@ -410,13 +448,13 @@
     {
       "path": "ui/src/app/app.component.css",
       "language": "css",
-      "sizeLines": 178,
+      "sizeLines": 261,
       "fileCategory": "markup"
     },
     {
       "path": "ui/src/app/app.component.html",
       "language": "html",
-      "sizeLines": 577,
+      "sizeLines": 601,
       "fileCategory": "markup"
     },
     {
@@ -434,13 +472,13 @@
     {
       "path": "ui/src/app/components/ask-panel.component.ts",
       "language": "typescript",
-      "sizeLines": 881,
+      "sizeLines": 857,
       "fileCategory": "code"
     },
     {
       "path": "ui/src/app/components/attendees-panel.component.ts",
       "language": "typescript",
-      "sizeLines": 368,
+      "sizeLines": 361,
       "fileCategory": "code"
     },
     {
@@ -476,13 +514,13 @@
     {
       "path": "ui/src/app/components/onboarding.component.html",
       "language": "html",
-      "sizeLines": 481,
+      "sizeLines": 482,
       "fileCategory": "markup"
     },
     {
       "path": "ui/src/app/components/onboarding.component.ts",
       "language": "typescript",
-      "sizeLines": 210,
+      "sizeLines": 212,
       "fileCategory": "code"
     },
     {
@@ -492,9 +530,15 @@
       "fileCategory": "code"
     },
     {
+      "path": "ui/src/app/components/ripples.component.ts",
+      "language": "typescript",
+      "sizeLines": 110,
+      "fileCategory": "code"
+    },
+    {
       "path": "ui/src/app/components/settings-panel.component.css",
       "language": "css",
-      "sizeLines": 137,
+      "sizeLines": 167,
       "fileCategory": "markup"
     },
     {
@@ -536,7 +580,7 @@
     {
       "path": "ui/src/app/components/transcript-line.component.css",
       "language": "css",
-      "sizeLines": 67,
+      "sizeLines": 104,
       "fileCategory": "markup"
     },
     {
@@ -602,7 +646,7 @@
     {
       "path": "ui/src/app/tray-popover.component.ts",
       "language": "typescript",
-      "sizeLines": 448,
+      "sizeLines": 463,
       "fileCategory": "code"
     },
     {
@@ -758,7 +802,7 @@
     {
       "path": "ui/src/styles/tokens.css",
       "language": "css",
-      "sizeLines": 355,
+      "sizeLines": 447,
       "fileCategory": "markup"
     },
     {
@@ -786,12 +830,17 @@
       "fileCategory": "config"
     }
   ],
-  "totalFiles": 127,
-  "filteredByIgnore": 80,
+  "totalFiles": 134,
+  "filteredByIgnore": 81,
   "estimatedComplexity": "moderate",
   "importMap": {
     ".understand-anything/.understandignore": [],
     ".understand-anything/config.json": [],
+    ".understand-anything/fingerprints.json": [],
+    ".understand-anything/intermediate/scan-result.json": [],
+    ".understand-anything/knowledge-graph.json": [],
+    ".understand-anything/meta.json": [],
+    ".understand-anything/tmp/changed-files.txt": [],
     "engine/Package.swift": [],
     "engine/Results/.gitkeep": [],
     "engine/scripts/convert-embedder-coreml.py": [],
@@ -849,6 +898,7 @@
     "engine/Tests/HarkdTests/SummaryWriteTests.swift": [],
     "engine/Tests/HarkdTests/TranslationWriteTests.swift": [],
     "engine/Tests/HarkdTests/UtteranceLedgerTests.swift": [],
+    "skills-lock.json": [],
     "ui/.nvmrc": [],
     "ui/angular.json": [],
     "ui/electron-builder.yml": [],
@@ -859,11 +909,11 @@
     "ui/src/app/app.component.ts": [
       "ui/src/app/components/ask-panel.component.ts",
       "ui/src/app/components/attendees-panel.component.ts",
-      "ui/src/app/components/eyebrow.component.ts",
       "ui/src/app/components/meeting-saved-toast.component.ts",
       "ui/src/app/components/model-loading.component.ts",
       "ui/src/app/components/onboarding.component.ts",
       "ui/src/app/components/post-meeting-review.component.ts",
+      "ui/src/app/components/ripples.component.ts",
       "ui/src/app/components/settings-panel.component.ts",
       "ui/src/app/components/speaker-tagging.component.ts",
       "ui/src/app/components/status-banner.component.ts",
@@ -882,10 +932,11 @@
     "ui/src/app/components/ask-panel.component.ts": [
       "ui/src/app/components/citation-chip.component.ts",
       "ui/src/app/components/eyebrow.component.ts",
+      "ui/src/app/components/ripples.component.ts",
       "ui/src/app/services/engine.types.ts"
     ],
     "ui/src/app/components/attendees-panel.component.ts": [
-      "ui/src/app/components/eyebrow.component.ts",
+      "ui/src/app/components/ripples.component.ts",
       "ui/src/app/services/engine.service.ts",
       "ui/src/app/services/engine.types.ts"
     ],
@@ -900,6 +951,7 @@
     "ui/src/app/components/onboarding.component.css": [],
     "ui/src/app/components/onboarding.component.html": [],
     "ui/src/app/components/onboarding.component.ts": [
+      "ui/src/app/components/ripples.component.ts",
       "ui/src/app/services/preferences.service.ts"
     ],
     "ui/src/app/components/post-meeting-review.component.ts": [
@@ -907,6 +959,7 @@
       "ui/src/app/services/engine.service.ts",
       "ui/src/app/services/engine.types.ts"
     ],
+    "ui/src/app/components/ripples.component.ts": [],
     "ui/src/app/components/settings-panel.component.css": [],
     "ui/src/app/components/settings-panel.component.html": [],
     "ui/src/app/components/settings-panel.component.ts": [
@@ -957,7 +1010,9 @@
       "ui/src/app/services/engine.service.ts",
       "ui/src/app/services/llm.service.ts"
     ],
-    "ui/src/app/tray-popover.component.ts": [],
+    "ui/src/app/tray-popover.component.ts": [
+      "ui/src/app/components/ripples.component.ts"
+    ],
     "ui/src/index.html": [],
     "ui/src/main.ts": [
       "ui/src/app/app.component.ts",

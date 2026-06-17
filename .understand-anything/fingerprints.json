@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "8efdfde01c54f516bd6135e2edfd074b2bc8ee8c",
-  "generatedAt": "2026-06-05T04:04:48.878Z",
+  "gitCommitHash": "69d53bcb806e3f5f483d2b5b4ace61c50d05f933",
+  "generatedAt": "2026-06-17T16:52:08.955Z",
   "files": {
     ".understand-anything/.understandignore": {
       "filePath": ".understand-anything/.understandignore",
@@ -22,6 +22,56 @@
       "exports": [],
       "totalLines": 2,
       "hasStructuralAnalysis": true
+    },
+    ".understand-anything/fingerprints.json": {
+      "filePath": ".understand-anything/fingerprints.json",
+      "contentHash": "1fcbaa524539c46ce6090f96899e369e99e63336bf4ffa7561b778ef2456399d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 4473,
+      "hasStructuralAnalysis": true
+    },
+    ".understand-anything/intermediate/scan-result.json": {
+      "filePath": ".understand-anything/intermediate/scan-result.json",
+      "contentHash": "d8b9aba400123e5e2f79cb4b9a0f147f6baa516be7faf5d5dda13d9d4cc577dd",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1109,
+      "hasStructuralAnalysis": true
+    },
+    ".understand-anything/knowledge-graph.json": {
+      "filePath": ".understand-anything/knowledge-graph.json",
+      "contentHash": "e542a02735f54821e3437d2f186a13378b3ce1ba3cad43f655c31a9ff098aafd",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 7258,
+      "hasStructuralAnalysis": true
+    },
+    ".understand-anything/meta.json": {
+      "filePath": ".understand-anything/meta.json",
+      "contentHash": "622b9fca442e8799bb6371354d0d3a89158f5f09c6dd080b173e36f121dae66d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 6,
+      "hasStructuralAnalysis": true
+    },
+    ".understand-anything/tmp/changed-files.txt": {
+      "filePath": ".understand-anything/tmp/changed-files.txt",
+      "contentHash": "da12d3064626c5167cdc27f112e3c56cf3149637f44fe8c90169e2bb8759e101",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 19,
+      "hasStructuralAnalysis": false
     },
     "engine/Package.swift": {
       "filePath": "engine/Package.swift",
@@ -404,7 +454,7 @@
     },
     "engine/Sources/Harkd/EngineSession.swift": {
       "filePath": "engine/Sources/Harkd/EngineSession.swift",
-      "contentHash": "c84f59c864e09a5c201abbeb98824e3ffa0536e01fe88fddb31d6fb09bd992d8",
+      "contentHash": "8bef1bda547e96276aee1883314ac2f84fe2dab7e7ded2d56b69c27a0d40b133",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -454,7 +504,7 @@
     },
     "engine/Sources/Harkd/SlidingWindow.swift": {
       "filePath": "engine/Sources/Harkd/SlidingWindow.swift",
-      "contentHash": "82b4ba58ec4f23512b4ecbe20e63d149a672b1884e4858462bccd44af918bef9",
+      "contentHash": "7d2889c7adc09ba5c51163439477420f4c74bd07008a1fb48319f4f1a5385c40",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -702,6 +752,16 @@
       "totalLines": 340,
       "hasStructuralAnalysis": false
     },
+    "skills-lock.json": {
+      "filePath": "skills-lock.json",
+      "contentHash": "6661ecca639a469190b2fba275788dc29e229492d4dcaa152c761c61fb16fb40",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 24,
+      "hasStructuralAnalysis": true
+    },
     "ui/.nvmrc": {
       "filePath": "ui/.nvmrc",
       "contentHash": "5378796307535df3ec8d8b15a2e2dc5641419c3d3060cfe32238c0fa973f7aa3",
@@ -754,27 +814,27 @@
     },
     "ui/src/app/app.component.css": {
       "filePath": "ui/src/app/app.component.css",
-      "contentHash": "6543284047248b27a7684d416225e6e68f9abcee6970a5de8a709fae42842b54",
+      "contentHash": "ce17d7a91d9befc76bec3a81e16664a4a21aeb14a425bc2edfd0f500c758a9c9",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 179,
+      "totalLines": 262,
       "hasStructuralAnalysis": false
     },
     "ui/src/app/app.component.html": {
       "filePath": "ui/src/app/app.component.html",
-      "contentHash": "07e9537de2afdcab9d19ef96e28c59657e8409d3803ea31c2ca2b34a3765545c",
+      "contentHash": "2c4e7bfad95ebe6be6570059d5e56044dd6cd855f4507f11f25ed27950daa8c4",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 578,
+      "totalLines": 602,
       "hasStructuralAnalysis": false
     },
     "ui/src/app/app.component.ts": {
       "filePath": "ui/src/app/app.component.ts",
-      "contentHash": "7d701696f3b52c738a9d2c62b32a71e48bccadef4c63363b0c927e8feeb011be",
+      "contentHash": "0283cf0258a0b80d3c6aa18d5318aa00630ee844541756f1046cd0ef78fc600e",
       "functions": [],
       "classes": [
         {
@@ -1025,9 +1085,9 @@
           ]
         },
         {
-          "source": "./components/eyebrow.component",
+          "source": "./components/ripples.component",
           "specifiers": [
-            "EyebrowComponent"
+            "RipplesComponent"
           ]
         },
         {
@@ -1083,7 +1143,7 @@
     },
     "ui/src/app/components/ask-panel.component.ts": {
       "filePath": "ui/src/app/components/ask-panel.component.ts",
-      "contentHash": "1a57d640d2f72b6660d63fd1f72e80255b39010a35200d9f1528d5fd36b7127f",
+      "contentHash": "65cf699e8180270334197e73f8189941069a9f8ba3691f11e9fb8415b4d185b9",
       "functions": [],
       "classes": [
         {
@@ -1138,6 +1198,12 @@
           ]
         },
         {
+          "source": "./ripples.component",
+          "specifiers": [
+            "RipplesComponent"
+          ]
+        },
+        {
           "source": "../services/engine.types",
           "specifiers": [
             "RagIndexStatusPayload"
@@ -1147,12 +1213,12 @@
       "exports": [
         "AskPanelComponent"
       ],
-      "totalLines": 882,
+      "totalLines": 858,
       "hasStructuralAnalysis": true
     },
     "ui/src/app/components/attendees-panel.component.ts": {
       "filePath": "ui/src/app/components/attendees-panel.component.ts",
-      "contentHash": "902c80ad0fdd38a11059eb07fc7eb85d36fa0be55fec9aba3c9b976436237eb1",
+      "contentHash": "e3e468f75b85326d55122c277af61ca3d845925a016ee261588a2ddcb0cdbbb8",
       "functions": [
         {
           "name": "confidenceMeta",
@@ -1177,11 +1243,10 @@
             "capturing",
             "tagSpeaker",
             "lastMeeting",
-            "rows",
-            "headerLabel"
+            "rows"
           ],
           "exported": true,
-          "lineCount": 54
+          "lineCount": 49
         }
       ],
       "imports": [
@@ -1209,16 +1274,16 @@
           ]
         },
         {
-          "source": "./eyebrow.component",
+          "source": "./ripples.component",
           "specifiers": [
-            "EyebrowComponent"
+            "RipplesComponent"
           ]
         }
       ],
       "exports": [
         "AttendeesPanelComponent"
       ],
-      "totalLines": 369,
+      "totalLines": 362,
       "hasStructuralAnalysis": true
     },
     "ui/src/app/components/citation-chip.component.ts": {
@@ -1408,17 +1473,17 @@
     },
     "ui/src/app/components/onboarding.component.html": {
       "filePath": "ui/src/app/components/onboarding.component.html",
-      "contentHash": "a6d523f99572da1ac42bc2cea4fc02d64983d11410186d3678546b1422e9e111",
+      "contentHash": "191aa1b3b66c18a3bc402b7c11671e5af209e181dedf23c151b1f548567fdee3",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 482,
+      "totalLines": 483,
       "hasStructuralAnalysis": false
     },
     "ui/src/app/components/onboarding.component.ts": {
       "filePath": "ui/src/app/components/onboarding.component.ts",
-      "contentHash": "c0d3008f7ed59b54971644c24377f133c6544abf5aba78da8bfb397b1795ba49",
+      "contentHash": "13716bed448b11877acf267ce5511cac2496be2f4c200e28e67c9aa48d873bf2",
       "functions": [],
       "classes": [
         {
@@ -1472,12 +1537,18 @@
           "specifiers": [
             "PreferencesService"
           ]
+        },
+        {
+          "source": "./ripples.component",
+          "specifiers": [
+            "RipplesComponent"
+          ]
         }
       ],
       "exports": [
         "OnboardingComponent"
       ],
-      "totalLines": 211,
+      "totalLines": 213,
       "hasStructuralAnalysis": true
     },
     "ui/src/app/components/post-meeting-review.component.ts": {
@@ -1581,19 +1652,52 @@
       "totalLines": 901,
       "hasStructuralAnalysis": true
     },
+    "ui/src/app/components/ripples.component.ts": {
+      "filePath": "ui/src/app/components/ripples.component.ts",
+      "contentHash": "45d82ce3e7383675a0af790d4b7348a763be2edc7b310ceab107172a5e2cde0d",
+      "functions": [],
+      "classes": [
+        {
+          "name": "RipplesComponent",
+          "methods": [],
+          "properties": [
+            "size",
+            "active",
+            "color"
+          ],
+          "exported": true,
+          "lineCount": 9
+        }
+      ],
+      "imports": [
+        {
+          "source": "@angular/core",
+          "specifiers": [
+            "ChangeDetectionStrategy",
+            "Component",
+            "input"
+          ]
+        }
+      ],
+      "exports": [
+        "RipplesComponent"
+      ],
+      "totalLines": 111,
+      "hasStructuralAnalysis": true
+    },
     "ui/src/app/components/settings-panel.component.css": {
       "filePath": "ui/src/app/components/settings-panel.component.css",
-      "contentHash": "db353e479f32e0aa735fafb1eb5ed8de70ea2dc89ebb19b046ecde9950f0417a",
+      "contentHash": "b9ae83d5f7241d28c80842acd13a6b784c201e74c52d6de754f15225fd8f6b0d",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 138,
+      "totalLines": 168,
       "hasStructuralAnalysis": false
     },
     "ui/src/app/components/settings-panel.component.html": {
       "filePath": "ui/src/app/components/settings-panel.component.html",
-      "contentHash": "a385d1bde7d3edb873a37a3e01551e850474a0aac74d14945696f2c95254df84",
+      "contentHash": "7c2e2e18657b72b5cdbdc9e86799e6deb64bc89fa88bd3cb1819d4a47674b5d7",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -1970,12 +2074,12 @@
     },
     "ui/src/app/components/transcript-line.component.css": {
       "filePath": "ui/src/app/components/transcript-line.component.css",
-      "contentHash": "3113320917d95d7e7939ba8369f249f8ab0cf5573112b9b710cce6b44a5de633",
+      "contentHash": "b82359da23e3c9971c585b665e384eb481adc4fe663f780bba3c89f60c5a1e9b",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 68,
+      "totalLines": 105,
       "hasStructuralAnalysis": false
     },
     "ui/src/app/components/transcript-line.component.ts": {
@@ -2568,7 +2672,7 @@
     },
     "ui/src/app/tray-popover.component.ts": {
       "filePath": "ui/src/app/tray-popover.component.ts",
-      "contentHash": "77276b80b8c3b1c8b8f9b18345de7fca1f11402e5a8b9d7aded4bed7ec0e5521",
+      "contentHash": "234dd90b526b6987ae4dc5113f22f82cb846bb653f8b4b906bed5ba011901cb8",
       "functions": [],
       "classes": [
         {
@@ -2599,12 +2703,18 @@
             "computed",
             "signal"
           ]
+        },
+        {
+          "source": "./components/ripples.component",
+          "specifiers": [
+            "RipplesComponent"
+          ]
         }
       ],
       "exports": [
         "TrayPopoverComponent"
       ],
-      "totalLines": 449,
+      "totalLines": 464,
       "hasStructuralAnalysis": true
     },
     "ui/src/index.html": {
@@ -4421,12 +4531,12 @@
     },
     "ui/src/styles/tokens.css": {
       "filePath": "ui/src/styles/tokens.css",
-      "contentHash": "cc4c14e77dfa1ca448c4b8aa626e2cc815e92cd0869208d8e4627e42de3a9bbd",
+      "contentHash": "2c0f727391cdc19b51d932bd496c2a9e023e5e4b92eb61727b11527bde91b746",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 356,
+      "totalLines": 448,
       "hasStructuralAnalysis": false
     },
     "ui/tailwind.config.js": {
