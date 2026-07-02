@@ -74,6 +74,12 @@ struct HarkdCommand: AsyncParsableCommand {
         // capture continues in the SAME process, no relaunch. (Amends the
         // fail-fast gate of ADR-0006 §3 for the daemon; see ADR-0011.)
 
+        // Purge any audio spill files a prior crashed session left in app-support
+        // (ADR-0039, hard rule #2): a clean stop secure-deletes its own spill, so
+        // anything still in `tmp/` is orphaned raw audio and must go before we
+        // start. Best-effort, logs a COUNT only.
+        SessionAudioSpill.cleanStaleSpills()
+
         // Bring up the WS server + session FIRST, then write the port file, so
         // the UI can discover harkd IMMEDIATELY. The model loads behind it.
         let server = HarkdWebSocketServer()

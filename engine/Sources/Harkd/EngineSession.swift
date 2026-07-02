@@ -142,20 +142,25 @@ actor EngineSession {
     /// still flows partials with ADR-0009-stable utterance_ids, unchanged.
     private var committedUpTo: Double = 0
 
-    // ─── Offline diarization buffers (Phase 5, ADR-0016) ───────────────
+    // ─── Offline diarization buffer — spilled to temp WAV (Phase 5, ADR-0039) ──
     //
-    // Full-meeting 16 kHz mono audio retained in RAM for the post-stop
-    // diarization pass. Unlike `SlidingWindowBuffer` (speech-only, trimmed
-    // to 30 s) this is the CONTINUOUS recording — every mixed frame batch,
-    // including silence — so its sample-index timeline maps 1:1 to the
-    // wall-clock session time the segments are emitted against. That shared
-    // time axis is what makes the time-overlap speaker assignment correct.
+    // The post-stop diarization pass needs the CONTINUOUS full-meeting recording
+    // — every mixed frame batch INCLUDING silence — so its sample timeline maps
+    // 1:1 to the wall-clock session time the segments are emitted against (that
+    // shared time axis is what makes the time-overlap speaker assignment correct).
+    // Unlike `SlidingWindowBuffer` (speech-only, trimmed to 30 s) this is the
+    // whole meeting.
     //
-    // Memory bound (ADR-0016 §5): Float @ 16 kHz = 64 KB/s ≈ 3.84 MB/min;
-    // a 60-min meeting ≈ 230 MB. Acceptable for v1; spill-to-temp-WAV is the
-    // escape hatch if long meetings pressure memory. Cleared at capture.start
-    // and after the diarization pass at stop.
-    private var sessionAudio: [Float] = []
+    // ADR-0016 §5 originally held this in a live `[Float]` — but that grew
+    // ~3.75 MiB/min (with transient ~2× spikes during array-doubling) and pushed
+    // long meetings into swap. ADR-0039 replaced it with a STREAMING spill: frames
+    // are appended to a temp WAV under `~/Library/Application Support/Hark/tmp/`
+    // as they arrive (flat in-RAM footprint), and the whole buffer is read back
+    // ONCE, transiently, at stop to feed the diarizer + the opt-in keep-audio
+    // path. Created per session in `startCapture` (only when a diarizer is
+    // attached — else the buffer would be wasted), finalized + read + secure-
+    // deleted in `flushOnStop`, and secure-deleted on abnormal teardown / deinit.
+    private var audioSpill: SessionAudioSpill?
 
     /// Finalized utterances accumulated during the session, kept so the
     /// post-stop diarization pass can label them by time-overlap AND so the
@@ -239,6 +244,17 @@ actor EngineSession {
             ProcessInfo.processInfo.environment["HARK_ENROLL_THRESHOLD"])
         self.speakerStore = SpeakerStore(threshold: enrollThreshold)
         self.audioStore = AudioStore()
+    }
+
+    /// Abnormal-teardown safety net (ADR-0039, hard rule #2): if the session is
+    /// deallocated while an audio spill is still open — an error path or a shutdown
+    /// that never reached a clean `capture.stop` — secure-delete it so raw meeting
+    /// audio never lingers on disk. A clean stop already secure-deletes the spill
+    /// in `flushOnStop` and nils this, so this is a no-op on the normal path.
+    /// `deinit` is `nonisolated`, and `secureDelete` touches only the file (no
+    /// actor state), so calling it here is safe.
+    deinit {
+        audioSpill?.secureDelete()
     }
 
     /// Inject the model once it has finished loading. Until this runs,
@@ -546,10 +562,11 @@ actor EngineSession {
         self.committedUpTo = 0
         self.rtfSum = 0
         self.rtfSamples = 0
-        // NOTE: `finalizedUtterances`, `sessionAudio`, and `supersededIds` are
+        // NOTE: `finalizedUtterances`, `audioSpill`, and `supersededIds` are
         // NOT cleared here — the flush Task (which runs later on the actor)
-        // still needs them for the diarization pass + vault write. They're
-        // cleared inside `flushOnStop` after they've been consumed.
+        // still needs them for the diarization pass + vault write. The spill is
+        // finalized, read back, and secure-deleted inside `flushOnStop`; the
+        // other two are cleared there after they've been consumed.
         self.vad = EnergyVAD()
     }
 
@@ -993,13 +1010,22 @@ actor EngineSession {
         self.rtfSum = 0
         self.rtfSamples = 0
 
-        // Reset the offline-diarization buffers for the new session and
-        // pre-reserve ~10 min of audio so early growth doesn't reallocate.
-        // (10 min × 60 s × 16 kHz = 9.6M floats ≈ 38 MB.) Longer meetings
-        // grow past this via amortized doubling — still off the audio thread.
-        self.sessionAudio.removeAll(keepingCapacity: true)
+        // Open the offline-diarization audio spill for the new session (ADR-0039).
+        // A stale spill from a prior stop should never survive, but secure-delete
+        // any lingering handle defensively before opening a fresh one. We only open
+        // the spill when a diarizer is attached — else the file would be wasted I/O
+        // (the post-stop pass is the only consumer). A failed open is non-fatal:
+        // `audioSpill` stays nil, diarization degrades to unlabeled, capture is
+        // unaffected — same nil-tolerant spirit as the diarizer itself.
+        self.audioSpill?.secureDelete()
+        self.audioSpill = nil
         if diarizer != nil {
-            self.sessionAudio.reserveCapacity(16_000 * 60 * 10)
+            do {
+                self.audioSpill = try SessionAudioSpill()
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "harkd: audio spill open failed (\(type(of: error))); diarization will be skipped this session\n".utf8))
+            }
         }
         self.finalizedUtterances.removeAll(keepingCapacity: true)
         self.supersededIds.removeAll(keepingCapacity: true)
@@ -1026,17 +1052,24 @@ actor EngineSession {
     private func ingestFrames(_ frames: [Float]) {
         guard let window = window else { return }
 
-        // Retain the CONTINUOUS recording for the offline diarization pass
-        // (Phase 5). This runs on the actor's executor — NOT the audio pump
-        // thread (the pump bounces here via `Task { await ingestFrames }`), so
-        // a plain `append(contentsOf:)` is safe: it never blocks the audio
-        // callback, and array growth is amortized O(1). We only buffer while
-        // the diarizer exists (else it'd be wasted RAM) and only the raw mixed
-        // frames — pre-VAD — so the sample timeline stays continuous and maps
-        // 1:1 to wall-clock session time. See the `sessionAudio` declaration
-        // for the memory bound.
-        if diarizer != nil {
-            sessionAudio.append(contentsOf: frames)
+        // STREAM the CONTINUOUS recording to the temp-WAV spill for the offline
+        // diarization pass (Phase 5, ADR-0039). This runs on the actor's executor
+        // — NOT the audio pump thread (the pump bounces here via
+        // `Task { await ingestFrames }`), so the blocking file write never blocks
+        // the audio callback. We append only when the spill exists (opened only
+        // when a diarizer is attached) and only the raw mixed frames — pre-VAD —
+        // so the sample timeline stays continuous and maps 1:1 to wall-clock
+        // session time. A write error is non-fatal: log once, drop the spill, and
+        // let this session fall back to unlabeled diarization (capture continues).
+        if let spill = audioSpill {
+            do {
+                try spill.append(frames)
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "harkd: audio spill write failed (\(type(of: error))); diarization degraded this session\n".utf8))
+                spill.secureDelete()
+                audioSpill = nil
+            }
         }
 
         // Wall-clock session time for these frames. We use real elapsed
@@ -1296,21 +1329,15 @@ actor EngineSession {
                              durationSec: Double, rtfAvg: Double,
                              ledger: UtteranceLedger?, window: SlidingWindowBuffer?,
                              committedUpTo: Double) async {
-        // Snapshot + detach the full-session audio BEFORE the transcription
-        // drain's `await` (which suspends this actor and could let a fresh
-        // capture.start wipe the live buffer). The drain itself only appends
-        // to `finalizedUtterances`, not to `sessionAudio`, so taking the audio
-        // here is safe; we grab the finalized list after the drain.
-        //
-        // Slice B (ADR-0027): this same `capturedAudio` (the continuous 16 kHz
-        // mono PCM the diarization pass uses) is what we persist to the vault when
-        // the session opted in via `keepAudio` — no second full-meeting buffer.
-        // The actual write happens in `persistMeeting`, AFTER the `.md` write, so
-        // the `.wav` reuses the `.md`'s exact basename. When `keepAudio` is off
-        // (the default) it's discarded here exactly as before — `AudioStore`'s
-        // gate guarantees zero `.audio/` I/O on that path.
-        let capturedAudio = sessionAudio
-        sessionAudio.removeAll(keepingCapacity: false)
+        // Detach the audio spill BEFORE the transcription drain's `await` (which
+        // suspends this actor and could let a fresh capture.start open a NEW spill
+        // and secure-delete this one). Taking the reference here — synchronously —
+        // hands ownership to this flush; `self.audioSpill` is nilled so a
+        // subsequent start can't touch it. We defer the expensive full read-back
+        // (ADR-0039) to just before the diarization pass, so the ~225 MiB/hr of
+        // Float samples aren't held in RAM across the drain's re-transcription.
+        let spill = self.audioSpill
+        self.audioSpill = nil
         let keepAudio = self.keepAudio
 
         // The commit watermark is carried across the drain + hot-region
@@ -1378,6 +1405,30 @@ actor EngineSession {
                 rawCount, capturedUtterances.count, supersededCount).utf8))
         }
 
+        // Read the full-meeting audio back from the spill — the ONE transient full
+        // read (ADR-0039). Both consumers below need the whole `[Float]`: the
+        // diarizer (`OfflineDiarizerManager.process(audio:)` takes the full array)
+        // and, when `keepAudio` is on, the vault `AudioStore` (Float→Int16). We
+        // finalize (patch the WAV sizes) then read; on any failure we fall back to
+        // an empty buffer, which makes `runDiarizationPass` write the meeting
+        // unlabeled — capture/transcription are already safe. The read materializes
+        // the buffer only for THIS stop, not for the whole meeting.
+        //
+        // Slice B (ADR-0027): the SAME `capturedAudio` feeds the opt-in keep-audio
+        // write in `persistMeeting` (after the `.md` write, so the `.wav` reuses the
+        // `.md`'s exact basename). When `keepAudio` is off (default) it's discarded
+        // — `AudioStore`'s gate guarantees zero `.audio/` I/O on that path.
+        var capturedAudio: [Float] = []
+        if let spill = spill {
+            do {
+                try spill.finalizeForReadback()
+                capturedAudio = try spill.readAllSamples()
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "harkd: audio spill read-back failed (\(type(of: error))); diarization unlabeled this session\n".utf8))
+            }
+        }
+
         let outcome = await runDiarizationPass(
             audio: capturedAudio, utterances: capturedUtterances)
 
@@ -1387,6 +1438,12 @@ actor EngineSession {
             segmentCount: capturedUtterances.count,
             outcome: outcome,
             audio: capturedAudio, keepAudio: keepAudio)
+
+        // Secure-delete the spill now that both consumers (diarizer + keep-audio
+        // write) are done (ADR-0039, hard rule #2): raw meeting audio must not
+        // linger on disk. Zero-then-unlink, best-effort — see `secureDelete`. The
+        // transient `capturedAudio` copy goes out of scope here too.
+        spill?.secureDelete()
     }
 
     /// Collapse the append-only `finalizedUtterances` emission log into the set
