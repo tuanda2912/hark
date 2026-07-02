@@ -781,9 +781,10 @@ export class AppComponent implements OnInit, OnDestroy {
     if (!this.followTail || rows.length === 0) return;
     const vp = this.transcriptViewport();
     if (!vp) return;
-    // scrollToIndex brings the last row's top into view; nudging to the max
-    // offset afterwards lands us at the true bottom even for a tall last row.
-    vp.scrollToIndex(rows.length - 1, 'auto');
+    // The autosize scroll strategy does NOT support scrollToIndex (it throws
+    // at runtime), so pin to the bottom via the max offset instead. This
+    // effect re-runs on every row change, so it self-corrects as the newest
+    // row measures — landing at the true bottom even for a tall last row.
     vp.scrollTo({ bottom: 0 });
   });
 
