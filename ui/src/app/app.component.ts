@@ -748,8 +748,13 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly liveRows = computed<TranscriptRow[]>(() => {
     const clusters = this.collapseLiveByOverlap(this.liveSegments());
     const isBookmarked = this.bookmarkPredicate();
-    const lastLive = clusters.length - 1;
-    return clusters.map((s, i) => ({
+    // Drop a live cluster a finalized line already shows — the "finalized +
+    // lingering live echo" duplicate that survives when an utterance finalized
+    // under a different id than the live re-decodes still sitting in the bucket.
+    const finalized = this.finalizedSegments();
+    const visible = clusters.filter((c) => !this.finalizedCovers(finalized, c));
+    const lastLive = visible.length - 1;
+    return visible.map((s, i) => ({
       seg: s,
       // Time-anchored key (1 s bucket) so the live line persists across the
       // id churn of thin-window re-decodes; see TranscriptRow.key.
@@ -763,6 +768,25 @@ export class AppComponent implements OnInit, OnDestroy {
     }));
   });
 
+  /** True when a finalized line already shows this live cluster's words at a
+   *  near time — so we never render the finalized line AND a lingering live echo
+   *  of the same utterance. Text match (equal or containment) is gated by time
+   *  proximity so a legitimately repeated phrase later in the meeting is kept. */
+  private finalizedCovers(
+    finalized: readonly DisplayedSegment[],
+    c: DisplayedSegment,
+  ): boolean {
+    const cn = this.normLive(c.text);
+    if (!cn) return false;
+    return finalized.some((f) => {
+      const fn = this.normLive(f.text);
+      if (!fn) return false;
+      const textMatch = fn === cn || fn.includes(cn) || cn.includes(fn);
+      const timeNear = c.tStart < f.tEnd + 2.5 && f.tStart < c.tEnd + 2.5;
+      return textMatch && timeNear;
+    });
+  }
+
   /** Collapse the live (un-finalized) segments into one evolving caption per
    *  spoken utterance. A thin idle-flush window (perf/live-caption-latency) makes
    *  WhisperKit re-segment the same audio into shifting boundaries + fresh
@@ -775,51 +799,49 @@ export class AppComponent implements OnInit, OnDestroy {
     live: readonly DisplayedSegment[],
   ): DisplayedSegment[] {
     if (live.length <= 1) return [...live];
-    // `live` is already sorted by tStart (EngineService keeps the bucket sorted).
-    // A re-decode joins the current cluster only when it BOTH overlaps in time
-    // AND is text-related to it. The text gate is essential: pure time-overlap
-    // chain-merges back-to-back utterances (each re-decode extends the cluster's
-    // end, so the next distinct line starts "inside" it) into one wrong blob.
-    // Text-relatedness = one normalized text contains the other, or they share a
-    // 10-char prefix — true for re-segmentations of the same words, false for
-    // "Let's start…" vs "Revenue…".
-    const out: DisplayedSegment[] = [];
-    let startT = live[0].tStart;
-    let endT = live[0].tEnd;
-    let best = live[0];
-    let bestNorm = this.normLive(best.text);
-    const flush = () => out.push({ ...best, tStart: startT, tEnd: endT });
-    for (let i = 1; i < live.length; i++) {
-      const s = live[i];
+    // Each segment joins an EXISTING cluster when it is BOTH text-related and
+    // time-near to it — matched against ALL open clusters, not just the previous
+    // one, so a re-decode of the same words still merges even when a junk decode
+    // got wedged between the two copies (the "What is the status…" ×2 case). The
+    // text gate is essential: without it, time-overlap alone chain-merges
+    // back-to-back distinct utterances into one blob. Text-related = one
+    // normalized text contains the other, or they share a 12-char prefix — true
+    // for re-segmentations of the same words, false for "Let's start…" vs
+    // "Revenue…". Time-near tolerates a ~2.5 s gap (a re-decode can land just
+    // after the prior copy ends); the text gate keeps that from over-merging.
+    interface Cluster {
+      startT: number;
+      endT: number;
+      best: DisplayedSegment;
+      bestNorm: string;
+    }
+    const clusters: Cluster[] = [];
+    for (const s of live) {
       const sNorm = this.normLive(s.text);
-      // Allow a short gap (not just strict overlap): a re-decode of the same
-      // words sometimes lands a second or two after the prior decode ends with
-      // no overlap. The text gate below still prevents chaining across DISTINCT
-      // utterances, so widening the time window can only merge same-words decodes.
-      const timeClose = s.tStart < endT + 2.5;
-      const textRel =
-        !!sNorm &&
-        !!bestNorm &&
-        (sNorm.includes(bestNorm) ||
-          bestNorm.includes(sNorm) ||
-          sNorm.slice(0, 10) === bestNorm.slice(0, 10));
-      if (timeClose && textRel) {
-        endT = Math.max(endT, s.tEnd);
-        startT = Math.min(startT, s.tStart);
-        if ((s.text?.length ?? 0) >= (best.text?.length ?? 0)) {
-          best = s;
-          bestNorm = sNorm;
+      const match = clusters.find((c) => {
+        const textRel =
+          !!sNorm &&
+          !!c.bestNorm &&
+          (sNorm.includes(c.bestNorm) ||
+            c.bestNorm.includes(sNorm) ||
+            (sNorm.length >= 12 && sNorm.slice(0, 12) === c.bestNorm.slice(0, 12)));
+        const timeNear = s.tStart < c.endT + 2.5 && c.startT < s.tEnd + 2.5;
+        return textRel && timeNear;
+      });
+      if (match) {
+        match.endT = Math.max(match.endT, s.tEnd);
+        match.startT = Math.min(match.startT, s.tStart);
+        if ((s.text?.length ?? 0) >= (match.best.text?.length ?? 0)) {
+          match.best = s;
+          match.bestNorm = sNorm;
         }
       } else {
-        flush();
-        startT = s.tStart;
-        endT = s.tEnd;
-        best = s;
-        bestNorm = sNorm;
+        clusters.push({ startT: s.tStart, endT: s.tEnd, best: s, bestNorm: sNorm });
       }
     }
-    flush();
-    return out;
+    return clusters
+      .sort((a, b) => a.startT - b.startT)
+      .map((c) => ({ ...c.best, tStart: c.startT, tEnd: c.endT }));
   }
 
   /** Normalize caption text for the live-collapse similarity test: lowercase,

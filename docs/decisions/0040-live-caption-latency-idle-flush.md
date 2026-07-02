@@ -56,7 +56,8 @@ Result on M1: first caption after a spoken line dropped from ~8s to ~2s; live du
 
 ## Open questions
 
-- Suppressing plain-text silence hallucinations without re-introducing latency — candidates: a stronger VAD energy/duration gate before an idle-flush, or `temperatureFallbackCount: 1`. Deferred to its own change.
+- Suppressing hallucinations without re-introducing latency. **Partly addressed** (2026-07-03): `isNonSpeechDecode()` now gates every decoded segment on the decoder's own confidence signals (`noSpeechProb > 0.6`, `compressionRatio > 2.4`, `avgLogprob < -1.0` — WhisperKit's own fallback thresholds; measured real speech sits far inside all three). This catches silence/noise decodes and runaway-repetition junk at zero latency cost. Still open: **short, confident** hallucinations that the decoder itself scores as speech (`noSpeechProb ≈ 0`, e.g. "Okay."/"So" invented over background media) — no confidence signal flags them, and a phrase denylist would clip real speech. In a clean meeting (no other system audio) these don't occur; the remaining lever is source selection or a stronger VAD gate.
+- The renderer collapses the live bucket to one line per utterance (`collapseLiveByOverlap`) and drops a live cluster a finalized line already shows (`finalizedCovers`) — handling the id-churn duplicates the idle-flush introduces.
 - Whether a two-tier/streaming decode is worth it to push live partials below ~1s. Revisit if M1 users still feel lag.
 
 ## References

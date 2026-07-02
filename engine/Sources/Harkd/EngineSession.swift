@@ -1210,7 +1210,18 @@ actor EngineSession {
         for r in results {
             for s in r.segments {
                 let cleaned = stripWhisperSpecials(s.text).trimmingCharacters(in: .whitespaces)
+                // PERF: log the decoder's own confidence signals per segment so
+                // we can separate real speech from silence/noise hallucinations
+                // empirically before gating on them (perf/live-caption-latency).
+                if ProcessInfo.processInfo.environment["HARK_PERF_LOG"] != nil {
+                    FileHandle.standardError.write(Data(String(
+                        format: "harkd-seg noSpeech=%.3f avgLogp=%.3f compRatio=%.2f  «%@»\n",
+                        s.noSpeechProb, s.avgLogprob, s.compressionRatio, cleaned).utf8))
+                }
                 if cleaned.isEmpty || isLikelyHallucination(cleaned) { continue }
+                if isNonSpeechDecode(noSpeechProb: s.noSpeechProb,
+                                     avgLogprob: s.avgLogprob,
+                                     compressionRatio: s.compressionRatio) { continue }
                 // s.start / s.end are window-relative (seconds since the
                 // start of the 30 s window). Map back to absolute session
                 // time via the SlidingWindow's anchor table.
@@ -2004,6 +2015,9 @@ actor EngineSession {
             for s in r.segments {
                 let cleaned = stripWhisperSpecials(s.text).trimmingCharacters(in: .whitespaces)
                 if cleaned.isEmpty || isLikelyHallucination(cleaned) { continue }
+                if isNonSpeechDecode(noSpeechProb: s.noSpeechProb,
+                                     avgLogprob: s.avgLogprob,
+                                     compressionRatio: s.compressionRatio) { continue }
                 // Absolute session time when we have anchors; fall back to the
                 // raw window-relative offset only if the anchor table is gone.
                 let tStart: Double
@@ -2651,6 +2665,28 @@ func isLikelyHallucination(_ text: String) -> Bool {
     let openers: Set<Character> = ["*", "(", "[", "{", "♪"]
     let closers: Set<Character> = ["*", ")", "]", "}", "♪"]
     return openers.contains(first) && closers.contains(last)
+}
+
+/// Reject a decoded segment as non-speech / hallucination using the DECODER's
+/// own confidence signals — the same thresholds WhisperKit's temperature
+/// fallback used before we turned it off for latency (ADR-0040). With fallback
+/// off the decoder no longer re-rolls low-confidence output, so it emits
+/// plausible text on silence/noise ("Thank you." on a gap, repeated phrases).
+///
+/// Measured real speech sits FAR inside all three gates (noSpeechProb ≈ 0.00,
+/// avgLogprob > -0.2, compressionRatio < 1.5 — see the HARK_PERF_LOG per-segment
+/// values), so these only fire on genuine non-speech:
+///   - `noSpeechProb > 0.6`  — the decoder itself flags the window as silence.
+///   - `compressionRatio > 2.4` — runaway repetition ("you you you").
+///   - `avgLogprob < -1.0` — very-low-confidence garbage.
+/// Note: this does NOT filter real background audio the tap captures (media has
+/// low noSpeechProb — it IS speech, just not the meeting); that's source
+/// selection, not a confidence problem.
+func isNonSpeechDecode(noSpeechProb: Float, avgLogprob: Float, compressionRatio: Float) -> Bool {
+    if noSpeechProb > 0.6 { return true }
+    if compressionRatio > 2.4 { return true }
+    if avgLogprob < -1.0 { return true }
+    return false
 }
 
 // ─── At-stop dedup model + text normalization ────────────────────────────
