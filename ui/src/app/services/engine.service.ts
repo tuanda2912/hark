@@ -220,18 +220,49 @@ export class EngineService {
   readonly lastError: Signal<ErrorPayload | null> = this._lastError.asReadonly();
 
   /**
-   * Internal segments map keyed by utterance_id. Mutated by handlers,
-   * snapshotted into the signal so Angular can detect changes.
+   * Displayed-segment store, maintained INCREMENTALLY to keep the live hot
+   * path O(log N) per frame instead of O(N log N).
+   *
+   * Two ordered buckets — finalized (history) and live (in-flight partials) —
+   * each kept sorted by tStart as frames arrive, plus a `segmentsIndex` from
+   * utterance_id → its current location so an update/delete is a lookup, not a
+   * scan. Every incoming `segment.partial`/`segment.final` used to re-sort the
+   * whole map AND re-filter it twice; now a partial updates one row in place (or
+   * binary-inserts a new one) and a partial→final promotion moves one row from
+   * `live` to `finalized`.
+   *
+   * The buckets are exposed as their OWN readonly array signals so the
+   * transcript template (finalized history vs live tail) reads each directly —
+   * no per-frame `.filter()`. Each bucket's array reference changes only when
+   * THAT bucket changes, so under OnPush the finalized list doesn't re-render
+   * when only a live partial ticks. The public `segments()` (finalized ++ live)
+   * is preserved for the text consumers (Ask transcript, speaker-index
+   * fallback, canClear); both buckets are internally tStart-ordered and live
+   * partials are always the newest, so the concatenation is equivalent to the
+   * old whole-set tStart sort for real engine data.
    */
-  private readonly segmentsMap = new Map<string, DisplayedSegment>();
-  private readonly _segmentsTick = signal(0);
-  readonly segments: Signal<readonly DisplayedSegment[]> = computed(() => {
-    // Touch the tick so this re-evaluates when the map is mutated.
-    this._segmentsTick();
-    return Array.from(this.segmentsMap.values()).sort(
-      (a, b) => a.tStart - b.tStart,
-    );
-  });
+  private readonly segmentsIndex = new Map<
+    string,
+    { seg: DisplayedSegment; bucket: 'final' | 'live' }
+  >();
+  private readonly _finalized = signal<readonly DisplayedSegment[]>([]);
+  private readonly _live = signal<readonly DisplayedSegment[]>([]);
+
+  /** Finalized utterances (history), tStart-ordered. Reference-stable across
+   *  frames that only touch live partials. */
+  readonly finalizedSegments: Signal<readonly DisplayedSegment[]> =
+    this._finalized.asReadonly();
+  /** In-flight partials (live tail), tStart-ordered. */
+  readonly liveSegments: Signal<readonly DisplayedSegment[]> =
+    this._live.asReadonly();
+
+  /** All displayed segments, finalized history first then the live tail —
+   *  equivalent to the old whole-set tStart sort for real data. Kept for the
+   *  text consumers (buildAskTranscript, speakerIndexFor fallback, canClear). */
+  readonly segments: Signal<readonly DisplayedSegment[]> = computed(() => [
+    ...this._finalized(),
+    ...this._live(),
+  ]);
 
   // RxJS surface for the things signals don't fit well: error toasts,
   // warning banners, bookmark confirmations. Subjects keep the event
@@ -602,31 +633,49 @@ export class EngineService {
     // the on-screen lines (and their colors, which key off the now-advanced
     // roster label) update with the roster. The label keys match because the
     // labeled transcript rows carry the SAME "Speaker N" labels as the roster.
-    let touched = false;
-    for (const [key, seg] of this.segmentsMap) {
-      const next = seg.speaker ? names[seg.speaker] : undefined;
-      if (next === undefined || next === seg.speaker) continue;
-      this.segmentsMap.set(key, { ...seg, speaker: next });
-      touched = true;
+    // A rename only touches `speaker` — never tStart or finality — so bucket
+    // membership and ordering are unchanged; we map each bucket in place and
+    // keep the index pointing at the fresh objects.
+    this.relabelSpeakers(names);
+  }
+
+  /** Apply a label→newLabel remap to the `speaker` of every displayed segment
+   *  in both buckets, updating the index. Re-emits only a bucket that actually
+   *  changed (reference-stable otherwise, so OnPush skips the untouched one). */
+  private relabelSpeakers(names: Record<string, string>): void {
+    for (const bucket of ['final', 'live'] as const) {
+      const sig = this.bucketSignal(bucket);
+      const arr = sig();
+      let changed = false;
+      const next = arr.map((seg) => {
+        const to = seg.speaker ? names[seg.speaker] : undefined;
+        if (to === undefined || to === seg.speaker) return seg;
+        changed = true;
+        const updated = { ...seg, speaker: to };
+        this.segmentsIndex.set(updated.utteranceId, { seg: updated, bucket });
+        return updated;
+      });
+      if (changed) sig.set(next);
     }
-    if (touched) this._segmentsTick.update((v) => v + 1);
   }
 
   /**
    * Reset the on-screen transcript view to empty — the "New meeting" /
    * clear-screen action, and the auto-reset at the top of startCapture().
    *
-   * Clears: the displayed segments map (+ tick so `segments()` recomputes to
-   * empty), the retained `meeting.saved` card state, the per-session bookmark
-   * highlights, and the last engine error banner.
+   * Clears: the displayed segments (both buckets + the index, so
+   * `finalizedSegments()`/`liveSegments()`/`segments()` all go empty), the
+   * retained `meeting.saved` card state, the per-session bookmark highlights,
+   * and the last engine error banner.
    *
    * Does NOT touch the WebSocket connection, readiness, or capture state —
    * this is view-only. The saved vault files are untouched (each
    * capture.start→stop is its own meeting file).
    */
   clearTranscript(): void {
-    this.segmentsMap.clear();
-    this._segmentsTick.update((v) => v + 1);
+    this.segmentsIndex.clear();
+    this._finalized.set([]);
+    this._live.set([]);
     this._bookmarks.set([]);
     this._lastMeetingSaved.set(null);
     this._lastError.set(null);
@@ -761,11 +810,10 @@ export class EngineService {
         // `superseded_by` arrives (or has arrived) via its own segment.*
         // frames through the normal upsert path, so we don't touch it here.
         const p = env.payload as SegmentSupersededPayload;
-        if (this.segmentsMap.delete(p.utterance_id)) {
-          // Bump the same tick applySegment() uses so the segments()
-          // computed re-evaluates after this map mutation.
-          this._segmentsTick.update((v) => v + 1);
-        }
+        // deleteSegment() re-emits only the bucket the utterance lived in, so
+        // the affected list (finalized or live) re-renders and the other is
+        // left reference-stable.
+        this.deleteSegment(p.utterance_id);
         break;
       }
       case 'bookmark.created': {
@@ -848,21 +896,27 @@ export class EngineService {
    * a later speaker.rename can relabel these rows by matching speaker.
    */
   private applyMeetingTranscript(p: MeetingTranscriptPayload): void {
-    this.segmentsMap.clear();
-    for (const u of p.utterances) {
-      this.segmentsMap.set(u.id, {
-        utteranceId: u.id,
-        segmentId: null,
-        tStart: u.t_start,
-        tEnd: u.t_start,
-        text: u.text,
-        language: null,
-        speaker: u.speaker,
-        translation: null,
-        isFinal: true,
-      });
+    // Wholesale swap: the payload IS the new displayed set. Rebuild both
+    // buckets from scratch (all finalized) rather than diffing — this fires
+    // once per meeting, not on the hot path. The engine sends utterances in
+    // transcript order; we keep that order (already tStart-monotonic).
+    const finalized = p.utterances.map<DisplayedSegment>((u) => ({
+      utteranceId: u.id,
+      segmentId: null,
+      tStart: u.t_start,
+      tEnd: u.t_start,
+      text: u.text,
+      language: null,
+      speaker: u.speaker,
+      translation: null,
+      isFinal: true,
+    }));
+    this.segmentsIndex.clear();
+    for (const seg of finalized) {
+      this.segmentsIndex.set(seg.utteranceId, { seg, bucket: 'final' });
     }
-    this._segmentsTick.update((v) => v + 1);
+    this._finalized.set(finalized);
+    this._live.set([]);
   }
 
   private applySegment(p: SegmentPayload, isFinal: boolean): void {
@@ -880,9 +934,128 @@ export class EngineService {
       translation: p.translation,
       isFinal,
     };
-    this.segmentsMap.set(p.utterance_id, seg);
-    this._segmentsTick.update((v) => v + 1);
+    this.upsertSegment(seg);
   }
+
+  // ─── Incremental segment store ──────────────────────────────────────
+  //
+  // These keep `_finalized` / `_live` correct with per-frame work bounded by
+  // the size of ONE bucket's re-emit, not a full re-sort of every segment ever
+  // seen. The index map makes "where does utterance X currently live?" O(1),
+  // and each bucket stays tStart-ordered via binary insert.
+
+  /** The bucket an utterance belongs in, by its finality. */
+  private bucketFor(isFinal: boolean): 'final' | 'live' {
+    return isFinal ? 'final' : 'live';
+  }
+
+  /** Insert-or-update one displayed segment, keeping both buckets tStart-ordered
+   *  and the index in sync. Handles a partial→final promotion (bucket change)
+   *  and an in-place text/speaker update. Emits a new array ONLY for the
+   *  bucket(s) that actually changed, so an unchanged bucket keeps its reference
+   *  (OnPush skips it). */
+  private upsertSegment(seg: DisplayedSegment): void {
+    const targetBucket = this.bucketFor(seg.isFinal);
+    const existing = this.segmentsIndex.get(seg.utteranceId);
+
+    if (existing && existing.bucket === targetBucket) {
+      // Same bucket → replace in place at its current position. tStart is
+      // stable across a partial's updates in practice, but re-order defensively
+      // if it moved so the bucket stays sorted.
+      this.replaceInBucket(targetBucket, seg);
+      this.segmentsIndex.set(seg.utteranceId, { seg, bucket: targetBucket });
+      return;
+    }
+
+    if (existing) {
+      // Bucket change (partial → final): remove from the old bucket, insert
+      // into the new one. Both buckets re-emit.
+      this.removeFromBucket(existing.bucket, seg.utteranceId);
+    }
+    this.insertIntoBucket(targetBucket, seg);
+    this.segmentsIndex.set(seg.utteranceId, { seg, bucket: targetBucket });
+  }
+
+  /** Drop one utterance from wherever it lives (used by segment.superseded).
+   *  Returns true if it was present. */
+  private deleteSegment(utteranceId: string): boolean {
+    const existing = this.segmentsIndex.get(utteranceId);
+    if (!existing) return false;
+    this.removeFromBucket(existing.bucket, utteranceId);
+    this.segmentsIndex.delete(utteranceId);
+    return true;
+  }
+
+  private bucketSignal(bucket: 'final' | 'live') {
+    return bucket === 'final' ? this._finalized : this._live;
+  }
+
+  /** Binary-insert `seg` into its bucket at the tStart-ordered position (ties go
+   *  after existing entries, preserving arrival order for equal timestamps). */
+  private insertIntoBucket(bucket: 'final' | 'live', seg: DisplayedSegment): void {
+    const sig = this.bucketSignal(bucket);
+    const arr = sig();
+    const at = upperBoundByTStart(arr, seg.tStart);
+    const next = arr.slice();
+    next.splice(at, 0, seg);
+    sig.set(next);
+  }
+
+  /** Replace the entry with the same utterance_id inside `bucket`. If tStart
+   *  changed enough to break ordering, re-place it; otherwise swap in position. */
+  private replaceInBucket(bucket: 'final' | 'live', seg: DisplayedSegment): void {
+    const sig = this.bucketSignal(bucket);
+    const arr = sig();
+    const idx = arr.findIndex((s) => s.utteranceId === seg.utteranceId);
+    if (idx < 0) {
+      // Shouldn't happen (index said it's here), but self-heal by inserting.
+      this.insertIntoBucket(bucket, seg);
+      return;
+    }
+    const orderOk =
+      (idx === 0 || arr[idx - 1].tStart <= seg.tStart) &&
+      (idx === arr.length - 1 || seg.tStart <= arr[idx + 1].tStart);
+    const next = arr.slice();
+    if (orderOk) {
+      next[idx] = seg;
+      sig.set(next);
+      return;
+    }
+    // tStart moved out of order — remove then binary-insert.
+    next.splice(idx, 1);
+    const at = upperBoundByTStart(next, seg.tStart);
+    next.splice(at, 0, seg);
+    sig.set(next);
+  }
+
+  /** Remove the entry with `utteranceId` from `bucket` (no index update — the
+   *  caller owns the index). */
+  private removeFromBucket(bucket: 'final' | 'live', utteranceId: string): void {
+    const sig = this.bucketSignal(bucket);
+    const arr = sig();
+    const idx = arr.findIndex((s) => s.utteranceId === utteranceId);
+    if (idx < 0) return;
+    const next = arr.slice();
+    next.splice(idx, 1);
+    sig.set(next);
+  }
+}
+
+/** First index `i` in a tStart-ascending array where `arr[i].tStart > tStart`
+ *  — i.e. the insertion point that keeps the array sorted with ties placed
+ *  AFTER existing equal-tStart entries (stable arrival order). O(log N). */
+function upperBoundByTStart(
+  arr: readonly DisplayedSegment[],
+  tStart: number,
+): number {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (arr[mid].tStart <= tStart) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 function stringifyError(err: unknown): string {

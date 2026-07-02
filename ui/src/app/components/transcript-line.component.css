@@ -24,6 +24,11 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Suppress the entrance for rows the virtual viewport materializes while
+ * scrolling through finalized history — they aren't "new", so re-running the
+ * rise on every recycle would flicker. The live tail leaves this off. */
+.tx-line.tx-no-anim { animation: none; }
+
 @media (prefers-reduced-motion: reduce) {
   .tx-line { animation: none; }
 }

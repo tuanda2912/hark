@@ -22,7 +22,11 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrl: './transcript-line.component.css',
   template: `
-    <div class="tx-line" [class.tx-partial]="partial()">
+    <div
+      class="tx-line"
+      [class.tx-partial]="partial()"
+      [class.tx-no-anim]="!animateIn()"
+    >
       <div class="tx-line-meta">
         @if (speaker()) {
           <span
@@ -70,4 +74,12 @@ export class TranscriptLineComponent {
   readonly caret = input<boolean>(false);
   /** Pin glyph — this line's time range contains a bookmark. */
   readonly bookmarked = input<boolean>(false);
+  /**
+   * Play the `tx-line-in` entrance animation. Default true (a freshly-mounted
+   * line rises in). Set FALSE for rows inside the virtual-scroll viewport that
+   * are materialized by scrolling through history — those aren't "new", so
+   * re-running the entrance on every recycle/materialization would be wrong.
+   * The live tail keeps it true so an arriving utterance still settles in.
+   */
+  readonly animateIn = input<boolean>(true);
 }

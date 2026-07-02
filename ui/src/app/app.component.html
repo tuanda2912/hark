@@ -338,17 +338,22 @@
           }
         </div>
 
-        <!-- Transcript feed: finalized history, then live partials at the
-             bottom. Replace-by-utterance-id is handled in EngineService;
-             here we just split on isFinal so partials render with the
-             live-tail (italic + caret) treatment and "commit" into history
-             on finalize. -->
-        <main
-          #transcriptScroll
-          (scroll)="onTranscriptScroll()"
-          class="flex-1 overflow-y-auto px-6 py-4 min-h-0"
-        >
-          @if (segments().length === 0) {
+        <!-- Transcript feed. VIRTUALIZED: only the rows in view have a live
+             component + DOM subtree (cdk-virtual-scroll-viewport, autosize
+             strategy for variable-height lines), so a long meeting no longer
+             retains thousands of finalized lines in the DOM. One combined,
+             ordered row list feeds the viewport — finalized history first, then
+             the live tail — so both scroll as a single region. Each row carries
+             its presentation flags (partial/caret/animateIn/bookmarked); the
+             live-tail (italic + caret) treatment and the "commit into history on
+             finalize" behavior are unchanged. Replace-by-utterance-id and the
+             finalized/live split are handled in EngineService.
+
+             The empty-state guard keeps rendering the resting ripples surface
+             when there are no rows; the viewport mounts only when there are, so
+             it never measures an empty scroller. -->
+        @if (segments().length === 0) {
+          <main class="flex-1 overflow-y-auto px-6 py-4 min-h-0">
             <div class="tx-empty hark-fade-in">
               @if (!isConnected()) {
                 <hark-ripples [size]="76" />
@@ -371,30 +376,36 @@
                 </div>
               }
             </div>
-          } @else {
-            <div class="transcript-measure mx-auto">
-              @for (s of finalizedSegments(); track s.utteranceId) {
-                <hark-transcript-line
-                  [time]="formatTime(s.tStart)"
-                  [text]="s.text"
-                  [speaker]="s.speaker"
-                  [speakerColor]="speakerColorFor(s.speaker)"
-                  [bookmarked]="isBookmarked(s)"
-                />
-              }
-              @for (s of liveSegments(); track s.utteranceId; let last = $last) {
-                <hark-transcript-line
-                  [time]="formatTime(s.tStart)"
-                  [text]="s.text"
-                  [speaker]="s.speaker"
-                  [partial]="true"
-                  [caret]="last"
-                  [bookmarked]="isBookmarked(s)"
-                />
-              }
+          </main>
+        } @else {
+          <cdk-virtual-scroll-viewport
+            #transcriptViewport
+            autosize
+            [minBufferPx]="600"
+            [maxBufferPx]="900"
+            (scroll)="onTranscriptScroll()"
+            class="tx-viewport flex-1 min-h-0"
+          >
+            <div
+              *cdkVirtualFor="
+                let row of transcriptRows();
+                trackBy: trackRow
+              "
+              class="transcript-measure mx-auto"
+            >
+              <hark-transcript-line
+                [time]="formatTime(row.seg.tStart)"
+                [text]="row.seg.text"
+                [speaker]="row.seg.speaker"
+                [speakerColor]="speakerColorFor(row.seg.speaker)"
+                [partial]="row.partial"
+                [caret]="row.caret"
+                [animateIn]="row.animateIn"
+                [bookmarked]="row.bookmarked"
+              />
             </div>
-          }
-        </main>
+          </cdk-virtual-scroll-viewport>
+        }
       </div>
 
       <!-- RIGHT: Ask / Q&A. Live once a model is configured. The scope toggle

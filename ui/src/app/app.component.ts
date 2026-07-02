@@ -11,7 +11,6 @@ import {
   ChangeDetectionStrategy,
   Component,
   effect,
-  ElementRef,
   HostListener,
   OnDestroy,
   OnInit,
@@ -20,6 +19,14 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
+import {
+  CdkVirtualScrollViewport,
+  ScrollingModule,
+} from '@angular/cdk/scrolling';
+// Autosize strategy (variable-height rows) lives in cdk-experimental. Both
+// packages are first-party Angular, build-time only, and open no runtime
+// network socket — consistent with the loopback-only privacy posture.
+import { CdkAutoSizeVirtualScroll } from '@angular/cdk-experimental/scrolling';
 import { Subscription } from 'rxjs';
 import { EngineService } from './services/engine.service';
 import { PreferencesService } from './services/preferences.service';
@@ -54,10 +61,25 @@ import { PostMeetingReviewComponent } from './components/post-meeting-review.com
 import { SummaryPanelComponent } from './components/summary-panel.component';
 import { TranslatePanelComponent } from './components/translate-panel.component';
 
+/** One rendered transcript row: the segment plus the presentation flags the
+ *  virtual `@for` needs. `partial`/`caret` reproduce the old live-tail split
+ *  (finalized upright, in-flight italic + a single blinking caret); `animateIn`
+ *  is TRUE only for live rows so a finalized row materialized by scrolling
+ *  doesn't re-run the entrance; `bookmarked` is resolved once here. */
+interface TranscriptRow {
+  seg: DisplayedSegment;
+  partial: boolean;
+  caret: boolean;
+  animateIn: boolean;
+  bookmarked: boolean;
+}
+
 @Component({
   selector: 'hark-root',
   standalone: true,
   imports: [
+    ScrollingModule,
+    CdkAutoSizeVirtualScroll,
     TranscriptLineComponent,
     StatusBannerComponent,
     SettingsPanelComponent,
@@ -676,32 +698,93 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly nowMs = signal<number>(0);
   private timerId: ReturnType<typeof setInterval> | null = null;
 
-  // Finalized utterances (history) vs in-flight partials (live tail).
-  readonly finalizedSegments = computed(() =>
-    this.segments().filter((s) => s.isFinal),
-  );
-  readonly liveSegments = computed(() =>
-    this.segments().filter((s) => !s.isFinal),
-  );
+  // Finalized utterances (history) vs in-flight partials (live tail). Read
+  // straight off EngineService, which maintains the two buckets incrementally
+  // (no per-frame whole-array filter) — each list's reference changes only when
+  // that bucket changes, so under OnPush the finalized history doesn't re-render
+  // when only a live partial ticks.
+  readonly finalizedSegments = this.engine.finalizedSegments;
+  readonly liveSegments = this.engine.liveSegments;
+
+  // ─── Virtualized transcript rows ────────────────────────────────────
+  //
+  // The transcript is windowed with a CDK virtual-scroll viewport: only the
+  // handful of rows in view have a live component + DOM subtree, so an
+  // hour-long meeting no longer retains tens of thousands of DOM nodes. We feed
+  // the viewport ONE combined, ordered list — finalized history first, then the
+  // live tail — so both scroll as a single region and auto-scroll can jump to
+  // the true bottom (past history into the newest partial). Each row carries its
+  // own presentation flags so the template stays declarative: `partial` styles
+  // the live-tail treatment, `caret` marks the single newest live line,
+  // `animateIn` is TRUE only for live rows (a finalized row materialized by
+  // scrolling isn't "new", so it must not re-run the entrance), and `bookmarked`
+  // is resolved here rather than per-render. track = utteranceId (see trackRow),
+  // matching the previous @for.
+  //
+  // Split into two memoized halves so a live partial ticking several times a
+  // second does NOT re-allocate a row object for every finalized line — the hot
+  // path. `finalizedRows` recomputes only when finalized segments or bookmarks
+  // change (bookmarks change on a user action, not per frame); `liveRows` is
+  // tiny. A live tick therefore rebuilds only `liveRows` (a handful of objects)
+  // and the concat below (an N-length reference copy — cheap, no per-row work).
+  private readonly finalizedRows = computed<TranscriptRow[]>(() => {
+    const finalized = this.finalizedSegments();
+    const isBookmarked = this.bookmarkPredicate();
+    return finalized.map((s) => ({
+      seg: s,
+      partial: false,
+      caret: false,
+      animateIn: false,
+      bookmarked: isBookmarked(s),
+    }));
+  });
+  private readonly liveRows = computed<TranscriptRow[]>(() => {
+    const live = this.liveSegments();
+    const isBookmarked = this.bookmarkPredicate();
+    const lastLive = live.length - 1;
+    return live.map((s, i) => ({
+      seg: s,
+      partial: true,
+      caret: i === lastLive,
+      animateIn: true,
+      bookmarked: isBookmarked(s),
+    }));
+  });
+  readonly transcriptRows = computed<TranscriptRow[]>(() => [
+    ...this.finalizedRows(),
+    ...this.liveRows(),
+  ]);
+
+  /** A bookmark hit-test bound to the current bookmark set. Extracted so both
+   *  row computeds share it and depend on `bookmarks()` uniformly. */
+  private bookmarkPredicate(): (s: DisplayedSegment) => boolean {
+    const bookmarks = this.bookmarks();
+    return (s) => bookmarks.some((b) => b.t >= s.tStart && b.t < s.tEnd);
+  }
 
   // ─── Transcript auto-scroll (follow the tail) ───────────────────────
-  /** The scrollable transcript container (the <main>). */
-  private readonly transcriptScroll =
-    viewChild<ElementRef<HTMLElement>>('transcriptScroll');
+  /** The CDK virtual-scroll viewport (the scrollable transcript region). */
+  private readonly transcriptViewport =
+    viewChild<CdkVirtualScrollViewport>('transcriptViewport');
   /** Whether to keep the view pinned to the newest line. Goes false when the
    *  user scrolls up to read history (so we don't yank them back down), and
    *  true again when they return to the bottom. */
   private followTail = true;
-  // Pin to the latest line as the transcript grows — but only while the user
-  // is at the bottom. afterRenderEffect runs AFTER the DOM updates, so
-  // scrollHeight already reflects the new content; it re-runs only when
-  // segments() changes (it never reads the per-second REC tick, so the clock
-  // doesn't cause scrolling).
+  // Pin to the latest line as the transcript grows — but only while the user is
+  // at the bottom. afterRenderEffect runs AFTER the DOM updates, so the viewport
+  // has already measured the new content; it re-runs only when the row list
+  // changes (it never reads the per-second REC tick, so the clock doesn't cause
+  // scrolling). With virtualization we can't read scrollHeight directly (most
+  // rows aren't in the DOM), so we ask the viewport to scroll to the last row.
   private readonly _autoscroll = afterRenderEffect(() => {
-    this.segments();
-    if (!this.followTail) return;
-    const el = this.transcriptScroll()?.nativeElement;
-    if (el) el.scrollTop = el.scrollHeight;
+    const rows = this.transcriptRows();
+    if (!this.followTail || rows.length === 0) return;
+    const vp = this.transcriptViewport();
+    if (!vp) return;
+    // scrollToIndex brings the last row's top into view; nudging to the max
+    // offset afterwards lands us at the true bottom even for a tall last row.
+    vp.scrollToIndex(rows.length - 1, 'auto');
+    vp.scrollTo({ bottom: 0 });
   });
 
   // ─── Menu-bar tray state push ───────────────────────────────────────
@@ -816,11 +899,14 @@ export class AppComponent implements OnInit, OnDestroy {
 
   /** Re-evaluate whether to keep following the tail from the user's scroll
    *  position. Within ~48px of the bottom counts as "at the bottom", so a
-   *  user reading back up isn't pulled down by new segments. */
+   *  user reading back up isn't pulled down by new segments. The viewport's
+   *  `measureScrollOffset('bottom')` is the remaining distance to the content
+   *  end — the virtualization-safe equivalent of the old
+   *  scrollHeight − scrollTop − clientHeight. */
   onTranscriptScroll(): void {
-    const el = this.transcriptScroll()?.nativeElement;
-    if (!el) return;
-    this.followTail = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    const vp = this.transcriptViewport();
+    if (!vp) return;
+    this.followTail = vp.measureScrollOffset('bottom') < 48;
   }
 
   connectionLabel(): string {
@@ -844,6 +930,12 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.formatClock(seconds);
   }
 
+  /** `*cdkVirtualFor` trackBy — key rows by utterance_id (matching the previous
+   *  `@for ... track s.utteranceId`) so the viewport reuses a row's view across
+   *  ticks: a partial updating its text, or a partial→final promotion, keeps the
+   *  SAME view (no re-mount, no entrance re-fire). */
+  trackRow = (_: number, row: TranscriptRow): string => row.seg.utteranceId;
+
   /** Speaker → palette CSS-var, delegated to the EngineService single source of
    *  truth so the transcript line's chip/name color matches the Attendees panel
    *  for the same speaker. Reads the roster + segments signals internally, so a
@@ -851,13 +943,6 @@ export class AppComponent implements OnInit, OnDestroy {
    *  surfaces together under OnPush. */
   speakerColorFor(label: string | null): string {
     return this.engine.speakerColorFor(label);
-  }
-
-  /** True if any bookmark's moment falls within this segment's range,
-   *  so the line shows a pin. This is how a time-only bookmark becomes
-   *  visually anchored to the content the user was hearing. */
-  isBookmarked(s: DisplayedSegment): boolean {
-    return this.bookmarks().some((b) => b.t >= s.tStart && b.t < s.tEnd);
   }
 
   private formatClock(totalSeconds: number): string {

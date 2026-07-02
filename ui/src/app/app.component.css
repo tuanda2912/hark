@@ -134,6 +134,26 @@
   max-width: 46rem;
 }
 
+/* ─── Virtual-scroll transcript viewport ─────────────────────────────
+ * The cdk-virtual-scroll-viewport IS the scroll container now (it replaces the
+ * old <main class="overflow-y-auto">). It must fill the center column's
+ * remaining height and scroll vertically; the row padding that used to sit on
+ * <main> (px-6 py-4) moves onto each virtualized row's wrapper so it survives
+ * CDK's absolute item positioning. */
+.tx-viewport {
+  display: block;
+  overflow-y: auto;
+  contain: strict;
+}
+/* CDK absolutely-positions each item wrapper; give the measure wrapper the
+ * former <main> horizontal rhythm so text keeps its 24px gutter + centered
+ * reading measure. Vertical breathing room on the content wrapper lives in the
+ * global stylesheet — that wrapper is CDK-owned DOM (not this component's
+ * template), so an emulated-encapsulation descendant selector can't reach it. */
+.tx-viewport .transcript-measure {
+  padding: 0 24px;
+}
+
 /* ─── 3-column MainWindow grid (Attendees | Transcript | Ask) ───────────
  *
  * The center column is the flexible track; the side columns SHRINK between

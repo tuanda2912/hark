@@ -38,3 +38,14 @@ html[data-surface="tray"],
 html[data-surface="tray"] body {
   background: transparent;
 }
+
+/* Transcript virtual-scroll: vertical breathing room around the row list.
+ * The old <main> carried py-4 (16px) top/bottom; the CDK viewport's content
+ * wrapper is CDK-owned DOM the AppComponent's emulated-scoped stylesheet can't
+ * target, so this one rule lives here (global). The wrapper is CDK's internal
+ * class; scoping it under `.tx-viewport` keeps it to the transcript viewport
+ * and off any other virtual-scroll surface. */
+.tx-viewport .cdk-virtual-scroll-content-wrapper {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
