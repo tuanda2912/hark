@@ -68,6 +68,12 @@ import { TranslatePanelComponent } from './components/translate-panel.component'
  *  doesn't re-run the entrance; `bookmarked` is resolved once here. */
 interface TranscriptRow {
   seg: DisplayedSegment;
+  /** Stable trackBy key. Finalized rows key by utterance_id (a locked segment's
+   *  id never changes). Live rows key by their cluster's start TIME, not by
+   *  utterance_id — a thin idle-flush window makes WhisperKit re-segment the
+   *  same audio under fresh ids every ~1.5 s (ADR-0009), so a time anchor keeps
+   *  the one evolving live line stable while its text refreshes underneath. */
+  key: string;
   partial: boolean;
   caret: boolean;
   animateIn: boolean;
@@ -732,6 +738,7 @@ export class AppComponent implements OnInit, OnDestroy {
     const isBookmarked = this.bookmarkPredicate();
     return finalized.map((s) => ({
       seg: s,
+      key: s.utteranceId,
       partial: false,
       caret: false,
       animateIn: false,
@@ -739,17 +746,93 @@ export class AppComponent implements OnInit, OnDestroy {
     }));
   });
   private readonly liveRows = computed<TranscriptRow[]>(() => {
-    const live = this.liveSegments();
+    const clusters = this.collapseLiveByOverlap(this.liveSegments());
     const isBookmarked = this.bookmarkPredicate();
-    const lastLive = live.length - 1;
-    return live.map((s, i) => ({
+    const lastLive = clusters.length - 1;
+    return clusters.map((s, i) => ({
       seg: s,
+      // Time-anchored key (1 s bucket) so the live line persists across the
+      // id churn of thin-window re-decodes; see TranscriptRow.key.
+      key: 'live@' + Math.round(s.tStart),
       partial: true,
       caret: i === lastLive,
-      animateIn: true,
+      // Don't re-fire the entrance animation when a re-decode nudges the anchor;
+      // the caret + italic already mark it live. Entrance is for finalized lines.
+      animateIn: false,
       bookmarked: isBookmarked(s),
     }));
   });
+
+  /** Collapse the live (un-finalized) segments into one evolving caption per
+   *  spoken utterance. A thin idle-flush window (perf/live-caption-latency) makes
+   *  WhisperKit re-segment the same audio into shifting boundaries + fresh
+   *  utterance_ids (ADR-0009), so one spoken line arrives as several overlapping
+   *  live segments — rendering each as its own row is what stacked the duplicate
+   *  lines. We cluster by time-overlap and keep the most-complete (longest-text)
+   *  member of each cluster, anchored to the cluster's earliest start. Finalized
+   *  history is untouched (the engine commit-watermark already dedups it). */
+  private collapseLiveByOverlap(
+    live: readonly DisplayedSegment[],
+  ): DisplayedSegment[] {
+    if (live.length <= 1) return [...live];
+    // `live` is already sorted by tStart (EngineService keeps the bucket sorted).
+    // A re-decode joins the current cluster only when it BOTH overlaps in time
+    // AND is text-related to it. The text gate is essential: pure time-overlap
+    // chain-merges back-to-back utterances (each re-decode extends the cluster's
+    // end, so the next distinct line starts "inside" it) into one wrong blob.
+    // Text-relatedness = one normalized text contains the other, or they share a
+    // 10-char prefix — true for re-segmentations of the same words, false for
+    // "Let's start…" vs "Revenue…".
+    const out: DisplayedSegment[] = [];
+    let startT = live[0].tStart;
+    let endT = live[0].tEnd;
+    let best = live[0];
+    let bestNorm = this.normLive(best.text);
+    const flush = () => out.push({ ...best, tStart: startT, tEnd: endT });
+    for (let i = 1; i < live.length; i++) {
+      const s = live[i];
+      const sNorm = this.normLive(s.text);
+      // Allow a short gap (not just strict overlap): a re-decode of the same
+      // words sometimes lands a second or two after the prior decode ends with
+      // no overlap. The text gate below still prevents chaining across DISTINCT
+      // utterances, so widening the time window can only merge same-words decodes.
+      const timeClose = s.tStart < endT + 2.5;
+      const textRel =
+        !!sNorm &&
+        !!bestNorm &&
+        (sNorm.includes(bestNorm) ||
+          bestNorm.includes(sNorm) ||
+          sNorm.slice(0, 10) === bestNorm.slice(0, 10));
+      if (timeClose && textRel) {
+        endT = Math.max(endT, s.tEnd);
+        startT = Math.min(startT, s.tStart);
+        if ((s.text?.length ?? 0) >= (best.text?.length ?? 0)) {
+          best = s;
+          bestNorm = sNorm;
+        }
+      } else {
+        flush();
+        startT = s.tStart;
+        endT = s.tEnd;
+        best = s;
+        bestNorm = sNorm;
+      }
+    }
+    flush();
+    return out;
+  }
+
+  /** Normalize caption text for the live-collapse similarity test: lowercase,
+   *  drop punctuation, collapse whitespace. Keeps letters/digits/spaces so a
+   *  re-segmentation ("finished over the weekend." vs "The migration finished
+   *  over the weekend") still matches by substring. */
+  private normLive(t: string | undefined): string {
+    return (t ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
   readonly transcriptRows = computed<TranscriptRow[]>(() => [
     ...this.finalizedRows(),
     ...this.liveRows(),
@@ -931,11 +1014,12 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.formatClock(seconds);
   }
 
-  /** `*cdkVirtualFor` trackBy — key rows by utterance_id (matching the previous
-   *  `@for ... track s.utteranceId`) so the viewport reuses a row's view across
-   *  ticks: a partial updating its text, or a partial→final promotion, keeps the
-   *  SAME view (no re-mount, no entrance re-fire). */
-  trackRow = (_: number, row: TranscriptRow): string => row.seg.utteranceId;
+  /** `*cdkVirtualFor` trackBy — key rows by `row.key` so the viewport reuses a
+   *  row's view across ticks: a finalized line keeps its utterance_id, and a
+   *  live line keeps its time anchor while its text refreshes underneath (a
+   *  partial updating in place keeps the SAME view — no re-mount, no entrance
+   *  re-fire). See TranscriptRow.key for why live rows are time-anchored. */
+  trackRow = (_: number, row: TranscriptRow): string => row.key;
 
   /** Speaker → palette CSS-var, delegated to the EngineService single source of
    *  truth so the transcript line's chip/name color matches the Attendees panel

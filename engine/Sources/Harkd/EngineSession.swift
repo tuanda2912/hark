@@ -190,6 +190,21 @@ actor EngineSession {
     private var startingCapture = false
     private var lastTranscribeRTF: Double = 0
     private var pendingDroppedHops: Int = 0
+    /// Idle-flush hop timing (perf/live-caption-latency). `lastLiveHopAt` is the
+    /// session-relative wall time (seconds) of the last transcription dispatch;
+    /// a partial-only idle-flush fires when `liveHopMinInterval` has elapsed with
+    /// speech still pending, so a short utterance before a pause captions in
+    /// ~1.5 s instead of waiting for a full 5 s of speech to accumulate. Cheap
+    /// now that temperature fallback is off (RTF ~0.13). `-1` = "flush eagerly".
+    private var lastLiveHopAt: Double = -1
+    private let liveHopMinInterval: Double = 1.5
+    /// Minimum NEW speech (seconds) that must accumulate before an idle-flush
+    /// fires. Guards against transcribing a near-silent window built from a thin
+    /// VAD false-positive sliver — WhisperKit hallucinates sound-effect tags
+    /// ("*crickets*", "[BLANK_AUDIO]") on such windows, and with temperature
+    /// fallback off those low-confidence decodes aren't suppressed. 1 s keeps the
+    /// latency win (fires ~1 s after real speech) while cutting the hallucinations.
+    private let liveHopMinSpeechSeconds: Double = 1.0
     /// Running average of per-hop transcription RTF across the session, for the
     /// `meeting.saved` stats. We accumulate sum + count rather than keep only a
     /// last/current value so `rtfAvg` is an honest session mean, not a snapshot.
@@ -992,6 +1007,7 @@ actor EngineSession {
         self.sessionStartDate = Date()
         self.captureWallStart = Date()
         self.sessionTimeSeconds = 0
+        self.lastLiveHopAt = -1
         self.window = SlidingWindowBuffer(windowSeconds: 30, hopSeconds: 5, sampleRate: 16_000)
         self.ledger = UtteranceLedger()
         self.vad = EnergyVAD()
@@ -1087,31 +1103,60 @@ actor EngineSession {
             sessionTimeSeconds = now
         }
 
-        // Check for hop trigger and kick a transcription if not in flight.
-        guard let hop = window.popHopIfReady() else { return }
+        // Hop trigger. TWO ways to fire (perf/live-caption-latency):
+        //   • NATURAL hop — a full `hopSeconds` of speech accumulated (ADR-0008
+        //     quantum). This pass runs the full commit-watermark reconciliation
+        //     and FINALIZES the aged-out region (ADR-0019).
+        //   • IDLE-FLUSH hop — less than a full hop of speech, but `liveHopMinInterval`
+        //     of wall-clock has elapsed with new speech pending. This pass emits
+        //     PARTIALS ONLY for a low-latency live caption; finalization stays with
+        //     the natural hop on its unchanged 5 s cadence, so the ADR-0019/0036
+        //     finalization behaviour is untouched. Affordable because compute is
+        //     cheap now that temperature fallback is off (RTF ~0.13).
+        // Without the idle-flush, in a real meeting (~40 % speech duty cycle) a
+        // transcription fires only every ~13 s of wall-clock, so a spoken line
+        // waits 10–20 s — or never appears live and surfaces only at the at-stop
+        // drain. See the perf/live-caption-latency measurement.
+        var finalizeThisHop = true
+        var popped = window.popHopIfReady()
+        if popped == nil,
+           window.pendingHopSeconds >= liveHopMinSpeechSeconds,
+           now - lastLiveHopAt >= liveHopMinInterval {
+            popped = window.popHopForced()
+            finalizeThisHop = false
+        }
+        guard let hop = popped else { return }
+        lastLiveHopAt = now
 
         if transcribeInFlight {
-            // Backpressure: drop this hop rather than queue. ADR-0008 §3.
-            pendingDroppedHops += 1
-            broadcast(WireEnvelope(type: "warning", payload: WarningPayload(
-                code: "rtf_high",
-                message: "transcription falling behind; dropped 1 window (RTF=\(String(format: "%.2f", lastTranscribeRTF)))",
-                severity: "medium"
-            )))
+            // Backpressure: drop this hop rather than queue. ADR-0008 §3. A dropped
+            // idle-flush is benign (the next pass re-decodes the same window — no
+            // speech is lost), so only a NATURAL hop raises the rtf_high signal.
+            if finalizeThisHop {
+                pendingDroppedHops += 1
+                broadcast(WireEnvelope(type: "warning", payload: WarningPayload(
+                    code: "rtf_high",
+                    message: "transcription falling behind; dropped 1 window (RTF=\(String(format: "%.2f", lastTranscribeRTF)))",
+                    severity: "medium"
+                )))
+            }
             return
         }
 
         transcribeInFlight = true
         let snapshot = hop
+        let finalize = finalizeThisHop
         Task { [weak self] in
             await self?.runTranscription(samples: snapshot.samples,
-                                         windowStartSessionTime: snapshot.windowStartSessionTime)
+                                         windowStartSessionTime: snapshot.windowStartSessionTime,
+                                         finalize: finalize)
         }
     }
 
     // ─── Transcription path ─────────────────────────────────────────────
 
-    private func runTranscription(samples: [Float], windowStartSessionTime: Double) async {
+    private func runTranscription(samples: [Float], windowStartSessionTime: Double,
+                                  finalize: Bool = true) async {
         let started = Date()
         let audioSeconds = Double(samples.count) / 16_000.0
         let results: [TranscriptionResult]
@@ -1121,6 +1166,13 @@ actor EngineSession {
                 // §2: `.translate` → English for any source; else faithful transcribe.
                 task: self.liveTranslateToEnglish ? .translate : .transcribe,
                 language: self.sessionLanguage,  // nil = auto; "vi"/"en"/… = source hint
+                // LIVE-latency (perf/live-caption-latency): no temperature fallback.
+                // WhisperKit's default re-decodes a low-confidence window up to 5×
+                // (temperatureFallbackCount: 5), which spikes RTF and drops windows
+                // under load. The live caption is latency-first; the at-stop vault
+                // re-decode (runFinalTranscription) keeps full-quality fallback for
+                // the saved transcript. Speed-over-accuracy, per product decision.
+                temperatureFallbackCount: 0,
                 withoutTimestamps: false
             )
             results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: opts)
@@ -1137,13 +1189,28 @@ actor EngineSession {
             self.rtfSamples += 1
         }
 
+        // PERF instrumentation (perf/live-caption-latency), env-gated so it's
+        // zero-cost in normal runs. The window fills 0→30 s over the first ~30 s
+        // of speech, so logging (fill, elapsed, tokens) each hop reveals the fixed
+        // encoder cost (intercept) vs the per-token decoder cost (slope) on THIS
+        // hardware — i.e. whether shrinking the window actually cuts latency, or
+        // whether the fixed 30 s-mel encoder dominates and only a smaller model
+        // helps. Stderr only (local log; no wire/vault surface).
+        if ProcessInfo.processInfo.environment["HARK_PERF_LOG"] != nil {
+            let tokenCount = results.reduce(0) { $0 + $1.segments.reduce(0) { $0 + $1.tokens.count } }
+            let segCount = results.reduce(0) { $0 + $1.segments.count }
+            FileHandle.standardError.write(Data(String(
+                format: "harkd-perf hop fill=%.2f elapsed=%.3f rtf=%.3f tokens=%d segs=%d\n",
+                audioSeconds, elapsed, rtf, tokenCount, segCount).utf8))
+        }
+
         // Map WhisperKit segments → reconciled emissions.
         let language = results.first?.language
         var winSegments: [WindowSegment] = []
         for r in results {
             for s in r.segments {
                 let cleaned = stripWhisperSpecials(s.text).trimmingCharacters(in: .whitespaces)
-                if cleaned.isEmpty { continue }
+                if cleaned.isEmpty || isLikelyHallucination(cleaned) { continue }
                 // s.start / s.end are window-relative (seconds since the
                 // start of the 30 s window). Map back to absolute session
                 // time via the SlidingWindow's anchor table.
@@ -1189,6 +1256,27 @@ actor EngineSession {
         let commitHorizon = windowStartSessionTime + hopSeconds
 
         guard let ledger = self.ledger else {
+            self.transcribeInFlight = false
+            return
+        }
+
+        // IDLE-FLUSH pass (perf/live-caption-latency): partial-only, low-latency
+        // refresh between natural hops. Resolve each segment to a stable
+        // utterance_id (ADR-0009) and emit it as a `segment.partial` — but do NOT
+        // finalize, do NOT advance `committedUpTo`, and do NOT prune. Finalization
+        // stays entirely with the natural `hopSeconds`-of-speech hop, so the
+        // ADR-0019 commit-watermark and ADR-0036 grow behaviour are byte-for-byte
+        // unchanged; this only adds fresher partials for the live caption. Any
+        // supersessions the `resolve` mints are drained so the retraction signal
+        // still reaches the UI.
+        if !finalize {
+            for seg in winSegments {
+                let uid = ledger.resolve(tStart: seg.tStart, tEnd: seg.tEnd, text: seg.text)
+                if ledger.isFinalized(utteranceId: uid) { continue }
+                _ = ledger.updateText(seg.text, utteranceId: uid)
+                emitSegment(uid: uid, isFinal: false, seg: seg)
+            }
+            drainAndEmitSupersessions(ledger)
             self.transcribeInFlight = false
             return
         }
@@ -1915,7 +2003,7 @@ actor EngineSession {
         for r in results {
             for s in r.segments {
                 let cleaned = stripWhisperSpecials(s.text).trimmingCharacters(in: .whitespaces)
-                if cleaned.isEmpty { continue }
+                if cleaned.isEmpty || isLikelyHallucination(cleaned) { continue }
                 // Absolute session time when we have anchors; fall back to the
                 // raw window-relative offset only if the anchor table is gone.
                 let tStart: Double
@@ -2537,6 +2625,32 @@ func stripWhisperSpecials(_ s: String) -> String {
     return _harkdSpecialTokenRegex.stringByReplacingMatches(
         in: s, options: [], range: range, withTemplate: ""
     )
+}
+
+/// True when `text` is almost certainly a WhisperKit hallucination on
+/// non-speech rather than a real transcription — the sound-effect / silence
+/// annotations the decoder emits when handed a near-silent window ("*crickets*",
+/// "[BLANK_AUDIO]", "(music playing)", "♪♪♪"), or a fragment that is pure
+/// punctuation. These proliferated once idle-flush passes began transcribing
+/// thin windows AND temperature fallback (which used to re-roll such
+/// low-confidence decodes) was disabled for latency. Conservative by design: it
+/// only drops a segment that is ENTIRELY a bracketed/asterisked tag or has no
+/// letters or digits at all, so real speech — even "(laughs) okay" — survives.
+func isLikelyHallucination(_ text: String) -> Bool {
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if t.isEmpty { return true }
+    // No letter or digit anywhere → punctuation/musical-note noise, not speech.
+    let hasAlnum = t.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
+    if !hasAlnum { return true }
+    guard let first = t.first, let last = t.last else { return false }
+    // Leads with an asterisk or musical note → a sound-effect annotation, even
+    // when the closing mark is missing on a mid-decode ("*Minds of the"). Real
+    // speech never opens with these, so it's safe to drop unconditionally.
+    if first == "*" || first == "♪" { return true }
+    // Fully enclosed in a sound-tag bracket pair → non-speech annotation.
+    let openers: Set<Character> = ["*", "(", "[", "{", "♪"]
+    let closers: Set<Character> = ["*", ")", "]", "}", "♪"]
+    return openers.contains(first) && closers.contains(last)
 }
 
 // ─── At-stop dedup model + text normalization ────────────────────────────

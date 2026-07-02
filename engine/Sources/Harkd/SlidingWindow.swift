@@ -612,6 +612,26 @@ final class SlidingWindowBuffer {
         return (Array(windowSamples), windowStartSessionTime)
     }
 
+    /// Speech seconds accumulated since the last hop pop. `> 0` means there's
+    /// un-decoded speech that an idle-flush pass could refine into a fresher
+    /// partial. Drives the idle-flush trigger (perf/live-caption-latency).
+    var pendingHopSeconds: Double { Double(samplesSinceLastHop) / Double(sampleRate) }
+
+    /// Pop the current window for an idle-flush transcription even though a full
+    /// `hopSeconds` of speech hasn't accumulated yet — PROVIDED some new speech is
+    /// pending. Same snapshot + counter-reset as `popHopIfReady`, minus the
+    /// threshold gate. Lets a short utterance before a pause caption promptly
+    /// instead of waiting for 5 s of speech to pile up. Returns nil when there's
+    /// no new speech (nothing to refine) or no anchor yet.
+    func popHopForced() -> (samples: [Float], windowStartSessionTime: Double)? {
+        guard samplesSinceLastHop > 0 else { return nil }
+        samplesSinceLastHop = 0
+        guard let first = anchors.first else { return nil }
+        let firstOffsetSeconds = Double(first.offsetInWindow) / Double(sampleRate)
+        let windowStartSessionTime = first.sessionTime - firstOffsetSeconds
+        return (Array(windowSamples), windowStartSessionTime)
+    }
+
     /// Session time of the oldest sample currently in the buffer, computed the
     /// same way `popHopIfReady` derives `windowStartSessionTime`. `nil` if the
     /// buffer is empty. Used by the at-stop drain (ADR-0019) to map the final
